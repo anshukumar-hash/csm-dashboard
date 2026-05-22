@@ -1,0 +1,15 @@
+# Intermediate / source data — keep out of the repo
+workbook.xlsx
+workbook_unzip/
+sheet_export.csv
+vini_bundle.json
+vini_summary.json
+vini_rid_csm.json
+merged_data.json
+
+# Local Claude project state
+.claude/
+
+# OS junk
+Thumbs.db
+.DS_Store
