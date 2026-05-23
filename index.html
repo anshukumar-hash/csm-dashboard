@@ -370,7 +370,13 @@ const VINI_TIX = D.vini_tix || {};
 //
 // VINI_STAGE = raw array of all 124 (rooftop × agent) rows.
 // VINI_SUMMARY = aggregated to per-rooftop: MRR/ARR summed across agents.
-const VINI_STAGE = D.vini_stage || [];
+//
+// PowerShell's ConvertTo-Json wraps System.Collections.ArrayList as
+// `{value:[...], Count:N}` instead of a plain JSON array. Unwrap defensively
+// so the page doesn't crash if the bundle was generated that way.
+const VINI_STAGE = Array.isArray(D.vini_stage)
+  ? D.vini_stage
+  : (D.vini_stage && Array.isArray(D.vini_stage.value) ? D.vini_stage.value : []);
 const VINI_SUMMARY = {};
 VINI_STAGE.forEach(s => {
   const rid = s.rid;
