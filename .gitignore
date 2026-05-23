@@ -5,6 +5,11 @@ sheet_export.csv
 vini_bundle.json
 vini_summary.json
 vini_rid_csm.json
+vini_static.json
+vini_tix_by_ent.json
+stage_data.json
+tickets_data.json
+shared_strings.txt
 merged_data.json
 
 # Local Claude project state
