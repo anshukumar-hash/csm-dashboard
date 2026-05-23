@@ -715,31 +715,37 @@ const S_COLS_SHARED = [
 function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const n = rows.length;
   const ents = uniqueSet(rows, r => r[S_COL.en]).size;
+  // Identity (Final Status + MRR/ARR) — count ALL rooftops including churned
   const mrr = sumBy(rows, r => r[S_COL.mrr]);
   const arr = sumBy(rows, r => r[S_COL.arr]);
   const rag = countBy(rows, r => r[S_COL.rag]);
   const churned = rows.filter(r => String(r[S_COL.churn]||'').toLowerCase().includes('churn')).length;
-  const av = sumBy(rows, r => r[S_COL.av]);
-  const cv = sumBy(rows, r => r[S_COL.cv]);
-  const acv = sumBy(rows, r => r[S_COL.acv]);
-  const uf = avgBy(rows, r => r[S_COL.uf]);
-  const pen = sumBy(rows, r => r[S_COL.pen]);
-  const ws = avgBy(rows, r => r[S_COL.ws]);
-  const isc = avgBy(rows, r => r[S_COL.isc]);
-  const rs = countBy(rows, r => r[S_COL.rs]);
+
+  // Operational metrics (Usage / RoI / Payment / Tickets / Comm / Leadership)
+  // exclude churned rooftops per spec — churned accounts shouldn't pollute
+  // active-team performance numbers.
+  const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
+  const av = sumBy(active, r => r[S_COL.av]);
+  const cv = sumBy(active, r => r[S_COL.cv]);
+  const acv = sumBy(active, r => r[S_COL.acv]);
+  const uf = avgBy(active, r => r[S_COL.uf]);
+  const pen = sumBy(active, r => r[S_COL.pen]);
+  const ws = avgBy(active, r => r[S_COL.ws]);
+  const isc = avgBy(active, r => r[S_COL.isc]);
+  const rs = countBy(active, r => r[S_COL.rs]);
   const rsNo = rs.No || 0;
-  const t1 = countBy(rows, r => r[S_COL.t1]);
-  const t2 = countBy(rows, r => r[S_COL.t2]);
-  const t3 = countBy(rows, r => r[S_COL.t3]);
-  const prag = countBy(rows, r => r[S_COL.prag]);
-  const unr = sumBy(rows, r => r[S_COL.unr]);
-  const cr = sumBy(rows, r => r[S_COL.cr]);
-  const ota = avgBy(rows, r => r[S_COL.ota]);
-  const res = avgBy(rows, r => r[S_COL.res]);
-  const trag = countBy(rows, r => computeTicketRAG({ op: r[S_COL.unr], ota: r[S_COL.ota], res: r[S_COL.res], cr: r[S_COL.cr] }));
-  const cf = countBy(rows, r => r[S_COL.cf]);
+  const t1 = countBy(active, r => r[S_COL.t1]);
+  const t2 = countBy(active, r => r[S_COL.t2]);
+  const t3 = countBy(active, r => r[S_COL.t3]);
+  const prag = countBy(active, r => r[S_COL.prag]);
+  const unr = sumBy(active, r => r[S_COL.unr]);
+  const cr = sumBy(active, r => r[S_COL.cr]);
+  const ota = avgBy(active, r => r[S_COL.ota]);
+  const res = avgBy(active, r => r[S_COL.res]);
+  const trag = countBy(active, r => computeTicketRAG({ op: r[S_COL.unr], ota: r[S_COL.ota], res: r[S_COL.res], cr: r[S_COL.cr] }));
+  const cf = countBy(active, r => r[S_COL.cf]);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
-  const mbr = countBy(rows, r => r[S_COL.mbr]);
+  const mbr = countBy(active, r => r[S_COL.mbr]);
 
   const lblCell = isTotal ? `<strong>${label}</strong>`
     : (drillKey ? `<a class="drill" data-drill="${drillKey}" data-value="${drillValue}">${label}</a>` : label);
@@ -826,37 +832,41 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const n = rows.length;
   const agents = uniqueSet(rows, r => r.agent).size;  // distinct Agent Types in group
   const ents = uniqueSet(rows, r => r.en).size;
+  // Identity (Final Status + MRR/ARR) — count ALL rooftops including churned
   const mrr = sumBy(rows, r => r.mrr);
   const arr = sumBy(rows, r => r.arr);
   const rag = countBy(rows, r => r.rag);
-  // Churned from CS_Vini_Stage: stage === 'Churned' on the per-rooftop snapshot
   const churned = rows.filter(r => String(r.stage||'').toLowerCase() === 'churned').length;
-  const touched = sumBy(rows, r => r.touched);
-  const qualified = sumBy(rows, r => r.qualified);
-  const appts = sumBy(rows, r => r.appts);
+
+  // Operational metrics (Usage / RoI / Payment / Tickets / Comm / Leadership)
+  // exclude churned rooftops per spec — churned accounts shouldn't pollute
+  // active-team performance numbers.
+  const active = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+  const touched = sumBy(active, r => r.touched);
+  const qualified = sumBy(active, r => r.qualified);
+  const appts = sumBy(active, r => r.appts);
   const convRate = qualified>0 ? (appts/qualified*100).toFixed(1)+'%' : '—';
-  const apptValue = sumBy(rows, r => r.apptValue);
-  const roi = mrr>0 ? (apptValue/mrr).toFixed(2)+'x' : '—';
-  const rs = countBy(rows, r => r.rs);
+  const apptValue = sumBy(active, r => r.apptValue);
+  // RoI: numerator (Appt Value) and denominator (MRR) both from active only
+  const activeMrr = sumBy(active, r => r.mrr);
+  const roi = activeMrr>0 ? (apptValue/activeMrr).toFixed(2)+'x' : '—';
+  const rs = countBy(active, r => r.rs);
   const rsNo = rs.No || 0;
-  const t1 = countBy(rows, r => r.t1);
-  const t2 = countBy(rows, r => r.t2);
-  const t3 = countBy(rows, r => r.t3);
-  // Payment Score now comes directly from CS_Vini_Stage (column O) — already
-  // populated as Green/Amber/Red/NA per the sheet's own formula.
-  const ps = countBy(rows, r => r.ps);
-  const cr = sumBy(rows, r => r.cr);
-  const op = sumBy(rows, r => r.op);
-  const ota = avgBy(rows, r => r.otaMax);
-  const res = avgBy(rows, r => r.avgRes);
-  // Vini Ticket RAG — computed from open ageing + avg resolution (new rule):
-  // <8h Green, <24h Amber, else Red. Sheet's trag column is now ignored.
-  const trag = countBy(rows, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
-  const red = countBy(rows, r => r.red);
+  const t1 = countBy(active, r => r.t1);
+  const t2 = countBy(active, r => r.t2);
+  const t3 = countBy(active, r => r.t3);
+  // Payment Score from CS_Vini_Stage column O (active-only)
+  const ps = countBy(active, r => r.ps);
+  const cr = sumBy(active, r => r.cr);
+  const op = sumBy(active, r => r.op);
+  const ota = avgBy(active, r => r.otaMax);
+  const res = avgBy(active, r => r.avgRes);
+  const trag = countBy(active, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+  const red = countBy(active, r => r.red);
   const redN = red.Red || 0;
-  const cf = countBy(rows, r => r.cf);
+  const cf = countBy(active, r => r.cf);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
-  const mbr = countBy(rows, r => r.mbr);
+  const mbr = countBy(active, r => r.mbr);
 
   const lblCell = isTotal ? `<strong>${label}</strong>`
     : (drillKey ? `<a class="drill" data-drill="${drillKey}" data-value="${drillValue}">${label}</a>` : label);
@@ -910,20 +920,24 @@ function buildViniTable(target, firstColLabel, groupingFn, drillKey) {
 // ============================================================
 function renderKpiStudio(rows, targetId) {
   const n = rows.length;
+  // Identity (Total ARR) — all rooftops
   const arr = sumBy(rows, r => r[S_COL.arr]);
   const mrr = sumBy(rows, r => r[S_COL.mrr]);
-  const av = sumBy(rows, r => r[S_COL.av]);
-  const pen = sumBy(rows, r => r[S_COL.pen]);
-  const prag = countBy(rows, r => r[S_COL.prag]);
-  const res = avgBy(rows, r => r[S_COL.res]);
-  // Communication score = % of rows with Contact Freq populated (not blank)
-  const commScore = n > 0 ? rows.filter(r => r[S_COL.cf]).length / n * 100 : 0;
+  // Operational metrics — active rooftops only (skip churned per spec)
+  const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
+  const activeN = active.length;
+  const av = sumBy(active, r => r[S_COL.av]);
+  const pen = sumBy(active, r => r[S_COL.pen]);
+  const prag = countBy(active, r => r[S_COL.prag]);
+  const res = avgBy(active, r => r[S_COL.res]);
+  // Communication score = % of active rows with Contact Freq populated
+  const commScore = activeN > 0 ? active.filter(r => r[S_COL.cf]).length / activeN * 100 : 0;
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid six';
   el.innerHTML = `
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
-    <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${n} rooftops</div></div>
+    <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (&gt;12h)</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
     <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragStack(prag)}</div><div class="kpi-sub">${prag.Green||0} Green · ${prag.Red||0} Red</div></div>
     <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
@@ -932,25 +946,25 @@ function renderKpiStudio(rows, targetId) {
 }
 function renderKpiVini(rows, targetId) {
   const n = rows.length;
+  // Identity (Total ARR, Churned ARR) — uses ALL rooftops
   const arr = sumBy(rows, r => r.arr);
   const mrr = sumBy(rows, r => r.mrr);
-  const appts = sumBy(rows, r => r.appts);
-  const touched = sumBy(rows, r => r.touched);
-  const qualified = sumBy(rows, r => r.qualified);
-  const convRate = qualified>0 ? appts/qualified*100 : 0;
-  const apptValue = sumBy(rows, r => r.apptValue);
-  const roi = mrr>0 ? apptValue/mrr : 0;
-  // Payment Score comes directly from CS_Vini_Stage (column O) — already
-  // populated as Green/Amber/Red/NA per the sheet's own formula.
-  const ps = countBy(rows, r => r.ps);
-  const res = avgBy(rows, r => r.avgRes);
-  const commScore = n > 0 ? rows.filter(r => r.cf).length / n * 100 : 0;
-  // Churned ARR — sum of ARR for rooftops in any churn stage. Sourced from
-  // CS_Vini_Stage.Stage column. Treat any stage string containing "churn"
-  // (Churned, Future Churn, OB Churn, Contract-Initiated-Churn) as churned.
   const churnRows = rows.filter(r => String(r.stage || '').toLowerCase().includes('churn'));
   const churnedArr = sumBy(churnRows, r => r.arr);
   const churnedN = churnRows.length;
+  // Operational metrics — active rooftops only (skip churned per spec)
+  const active = rows.filter(r => !String(r.stage || '').toLowerCase().includes('churn'));
+  const activeN = active.length;
+  const activeMrr = sumBy(active, r => r.mrr);
+  const appts = sumBy(active, r => r.appts);
+  const touched = sumBy(active, r => r.touched);
+  const qualified = sumBy(active, r => r.qualified);
+  const convRate = qualified>0 ? appts/qualified*100 : 0;
+  const apptValue = sumBy(active, r => r.apptValue);
+  const roi = activeMrr>0 ? apptValue/activeMrr : 0;
+  const ps = countBy(active, r => r.ps);
+  const res = avgBy(active, r => r.avgRes);
+  const commScore = activeN > 0 ? active.filter(r => r.cf).length / activeN * 100 : 0;
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid seven';   // 7 tiles now
