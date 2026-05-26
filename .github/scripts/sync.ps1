@@ -142,6 +142,7 @@ $pi = @{
     stage=Find-Col $pCols @('Stage'); t1=Find-Col $pCols @('Payment T1','T1')
     t2=Find-Col $pCols @('Payment T2','T2'); t3=Find-Col $pCols @('Payment T3','T3')
     ps=Find-Col $pCols @('Payment Score')
+    go_live=Find-Col $pCols @('Go-Live Date','Go Live Date','GoLive Date')
 }
 
 # Meta from v_rows: most-recent CSM/region/seg per (rid,agent) and per en
@@ -208,6 +209,8 @@ foreach ($row in $payTab.rows) {
     $rec['t2']=[string](Gviz-Val $c[$pi.t2]); $rec['t3']=[string](Gviz-Val $c[$pi.t3])
     $rec['ps']=[string](Gviz-Val $c[$pi.ps]); $rec['csm']=$csm
     $rec['region']=$region; $rec['seg']=$seg
+    # Go-Live Date (ISO YYYY-MM-DD); '' if missing
+    $rec['go_live'] = if ($pi.go_live -ge 0 -and $c.Count -gt $pi.go_live) { Gviz-Date $c[$pi.go_live] } else { '' }
     [void]$viniStage.Add($rec)
 }
 Write-Host "  vini_stage rows: $($viniStage.Count) | enterprises: $($payEids.Count)"
@@ -303,7 +306,7 @@ for ($i=0;$i -lt $viniStage.Count;$i++) {
     if ($i -gt 0) { [void]$sb2.Append(',') }
     $rec=$viniStage[$i]
     $parts=New-Object System.Collections.Generic.List[string]
-    foreach ($k in 'rid','en','rn','eid','stage','agent','t1','t2','t3','ps','csm','region','seg') { $parts.Add((JsEscape $k) + ':' + (JsEscape $rec[$k])) }
+    foreach ($k in 'rid','en','rn','eid','stage','agent','t1','t2','t3','ps','csm','region','seg','go_live') { $parts.Add((JsEscape $k) + ':' + (JsEscape $rec[$k])) }
     foreach ($k in 'mrr','arr') { $parts.Add((JsEscape $k) + ':' + (JsNum $rec[$k])) }
     [void]$sb2.Append('{' + ($parts -join ',') + '}')
 }
