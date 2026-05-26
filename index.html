@@ -101,30 +101,30 @@
      during horizontal scroll. Using `min-width` alone allowed cells to grow
      past the planned offset, causing the FINAL STATUS group header to drift
      over the frozen ARR cell when scrolled right. */
-  table.data .frozen-1{left:0;     width:40px;  min-width:40px;  max-width:40px}
-  table.data .frozen-2{left:40px;  width:220px; min-width:220px; max-width:220px}
-  table.data .frozen-3{left:260px; width:70px;  min-width:70px;  max-width:70px}
-  table.data .frozen-4{left:330px; width:80px;  min-width:80px;  max-width:80px}
-  table.data .frozen-5{left:410px; width:90px;  min-width:90px;  max-width:90px}
-  table.data .frozen-6{left:500px; width:90px;  min-width:90px;  max-width:90px; box-shadow:1px 0 0 var(--border)}
+  table.data .frozen-1{left:0;     width:32px;  min-width:32px;  max-width:32px}
+  table.data .frozen-2{left:32px;  width:180px; min-width:180px; max-width:180px}
+  table.data .frozen-3{left:212px; width:60px;  min-width:60px;  max-width:60px}
+  table.data .frozen-4{left:272px; width:64px;  min-width:64px;  max-width:64px}
+  table.data .frozen-5{left:336px; width:72px;  min-width:72px;  max-width:72px}
+  table.data .frozen-6{left:408px; width:76px;  min-width:76px;  max-width:76px; box-shadow:1px 0 0 var(--border)}
   /* When Vini's 7-frozen layout is active, drop the shadow on column 6 and
      put it on column 7 instead so the visual boundary sits past ARR. */
   table.data.vini-7 .frozen-6{box-shadow:none}
-  table.data.vini-7 .frozen-7{left:590px; width:90px; min-width:90px; max-width:90px; box-shadow:1px 0 0 var(--border)}
+  table.data.vini-7 .frozen-7{left:484px; width:76px; min-width:76px; max-width:76px; box-shadow:1px 0 0 var(--border)}
   /* Rooftop View layout: # / Rooftop / Enterprise / Agent / MRR / ARR.
      Rooftop and Agent Type both carry real strings so each needs room. Tuned
      widths: Rooftop 180 (was 220), Enterprise 160, Agent Type 160 (was 120),
      MRR 90, ARR 90. Activated by class `.rooftop-layout` on the table. */
-  table.data.rooftop-layout .frozen-2{width:180px; min-width:180px; max-width:180px}
-  table.data.rooftop-layout .frozen-3{left:220px; width:160px; min-width:160px; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  table.data.rooftop-layout .frozen-4{left:380px; width:160px; min-width:160px; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  table.data.rooftop-layout .frozen-5{left:540px; width:90px;  min-width:90px;  max-width:90px}
-  table.data.rooftop-layout .frozen-6{left:630px; width:90px;  min-width:90px;  max-width:90px}
+  table.data.rooftop-layout .frozen-2{width:160px; min-width:160px; max-width:160px}
+  table.data.rooftop-layout .frozen-3{left:192px; width:140px; min-width:140px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout .frozen-4{left:332px; width:140px; min-width:140px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout .frozen-5{left:472px; width:76px;  min-width:76px;  max-width:76px}
+  table.data.rooftop-layout .frozen-6{left:548px; width:76px;  min-width:76px;  max-width:76px}
   /* Long content in NAME column must ellipsis to honor the locked width */
   table.data .frozen-2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   table.data tbody tr:hover .frozen{background:#FAFAFA}
   table.data tr.total-row .frozen{background:#F9FAFB}
-  table.data thead tr.group th{padding:7px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-2);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
+  table.data thead tr.group th{padding:6px 3px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
   table.data thead tr.group th:first-child{border-left:none}
   table.data thead tr.group th.g-final{background:var(--grp-final)}
   table.data thead tr.group th.g-usage{background:var(--grp-usage)}
@@ -133,7 +133,7 @@
   table.data thead tr.group th.g-tickets{background:var(--grp-tickets)}
   table.data thead tr.group th.g-comm{background:var(--grp-comm)}
   table.data thead tr.group th.g-leader{background:var(--grp-leader)}
-  table.data thead tr.cols th{padding:8px 6px;font-size:10.5px;font-weight:600;color:var(--text-2);text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
+  table.data thead tr.cols th{padding:6px 3px;font-size:10px;font-weight:600;color:var(--text-2);text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
   table.data thead tr.cols th.left{text-align:left}
   table.data thead tr.cols th.cell-final{background:#FFFBEB}
   table.data thead tr.cols th.cell-usage{background:#EFF6FF}
@@ -142,7 +142,7 @@
   table.data thead tr.cols th.cell-tickets{background:#EEF2FF}
   table.data thead tr.cols th.cell-comm{background:#FFF7ED}
   table.data thead tr.cols th.cell-leader{background:#FAF5FF}
-  table.data tbody td{padding:9px 6px;text-align:right;border-bottom:1px solid #F3F4F6;white-space:nowrap}
+  table.data tbody td{padding:6px 3px;text-align:right;border-bottom:1px solid #F3F4F6;white-space:nowrap;font-size:11px}
   table.data tbody td.left{text-align:left}
   table.data tbody tr:hover{background:#FAFAFA}
   table.data tbody td.cell-final{background:#FFFEF7}
@@ -969,7 +969,7 @@ const V_GROUPS = [
   { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
   { l:'Final Status', span:2, c:'g-final' },       // RAG · Churned (count of churned agents)
   { l:'Usage',        span:5, c:'g-usage' },
-  { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (RoI Factor removed; MTD replaces it)
+  { l:'RoI?',         span:4, c:'g-roi' },          // L2L · LM · MTD · RAG (MTD-based traffic light)
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
   { l:'Tickets',      span:5, c:'g-tickets' },
   { l:'Communication', span:1, c:'g-comm' },       // RAG only (the Red signal)
@@ -985,7 +985,7 @@ const V_COLS_SHARED = [
   {l:'RAG', cc:'cell-final'}, {l:'Churned', cc:'cell-final'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
   {l:'Conv Rate', cc:'cell-usage'}, {l:'Appt Value ($)', cc:'cell-usage'},
-  {l:'L2L Month', cc:'cell-roi'}, {l:'Last Month', cc:'cell-roi'}, {l:'MTD', cc:'cell-roi'},
+  {l:'L2L Month', cc:'cell-roi'}, {l:'Last Month', cc:'cell-roi'}, {l:'MTD', cc:'cell-roi'}, {l:'RAG', cc:'cell-roi'},
   {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'}, {l:'Payment Score', cc:'cell-payment'},
   {l:'# Created', cc:'cell-tickets'}, {l:'# Open', cc:'cell-tickets'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'}, {l:'Ticket RAG', cc:'cell-tickets'},
@@ -1025,7 +1025,14 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const apptsMTD = sumBy(active, r => r.appts_mtd || 0);
   const roiL2L = activeMrr>0 ? ((apptsL2L * 100) / activeMrr).toFixed(2)+'x' : '—';
   const roiLM  = activeMrr>0 ? ((apptsLM  * 100) / activeMrr).toFixed(2)+'x' : '—';
-  const roiMTD = activeMrr>0 ? ((apptsMTD * 100) / activeMrr).toFixed(2)+'x' : '—';
+  const roiMTDNum = activeMrr>0 ? (apptsMTD * 100) / activeMrr : null;
+  const roiMTD = roiMTDNum !== null ? roiMTDNum.toFixed(2)+'x' : '—';
+  // RoI RAG (traffic-light based on MTD value):
+  //   >=4 Green | 2 <= x < 4 Amber | <2 Red | null NA
+  const roiRag = roiMTDNum === null ? 'NA'
+               : roiMTDNum >= 4    ? 'Green'
+               : roiMTDNum >= 2    ? 'Amber'
+               :                     'Red';
   // Payment is tracked at the Enterprise level (the company invoices per
   // enterprise) and applies to ALL enterprises — churned-only enterprises
   // still appear in payment buckets (they may owe money). So the payment
@@ -1078,7 +1085,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-final">${ragStack(rag)}</td><td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
-    <td class="cell-roi">${roiL2L}</td><td class="cell-roi">${roiLM}</td><td class="cell-roi">${roiMTD}</td>
+    <td class="cell-roi">${roiL2L}</td><td class="cell-roi">${roiLM}</td><td class="cell-roi">${roiMTD}</td><td class="cell-roi">${ragSingle(roiRag)}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(ps)}</td>
     <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
@@ -1440,7 +1447,7 @@ function renderRooftop() {
       '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
       '<th colspan="2" class="g-final">Final Status</th>' +
       '<th colspan="5" class="g-usage">Usage</th>' +
-      '<th colspan="1" class="g-roi">RoI?</th>' +            // span 2 -> 1 (only RoI Factor remains here)
+      '<th colspan="2" class="g-roi">RoI?</th>' +            // RoI Factor + RAG (MTD-based traffic light)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
       '<th colspan="1" class="g-comm">Communication</th>' +
@@ -1456,7 +1463,7 @@ function renderRooftop() {
       '<th class="cell-final">RAG</th><th class="cell-final">Churned</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
       '<th class="cell-usage">Conv Rate</th><th class="cell-usage">Appt Value</th>' +
-      '<th class="cell-roi">RoI Factor</th>' +
+      '<th class="cell-roi">RoI Factor</th><th class="cell-roi">RAG</th>' +
       '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Pay Score</th>' +
       '<th class="cell-tickets">#Created</th><th class="cell-tickets">#Open</th>' +
       '<th class="cell-tickets">Open Ageing</th><th class="cell-tickets">Avg Res</th><th class="cell-tickets">Ticket RAG</th>' +
@@ -1480,6 +1487,7 @@ function renderRooftop() {
         <td class="cell-usage">${(r.convRate*100).toFixed(1)}%</td>
         <td class="cell-usage">${r.apptValue?fmtMoney(r.apptValue):'—'}</td>
         <td class="cell-roi">${r.roi?r.roi.toFixed(2)+'x':'—'}</td>
+        <td class="cell-roi">${ragSingle(r.roi == null ? 'NA' : (r.roi >= 4 ? 'Green' : r.roi >= 2 ? 'Amber' : 'Red'))}</td>
         <td class="cell-payment">${payTile(r.t1)}</td>
         <td class="cell-payment">${payTile(r.t2)}</td>
         <td class="cell-payment">${payTile(r.t3)}</td>
