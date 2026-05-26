@@ -1,0 +1,48 @@
+name: Sync dashboard from Google Sheets
+
+# Triggers:
+#  - schedule: every 15 minutes (cron is UTC, "best-effort" — GH may delay
+#    by 5-15 min on busy queues; that's normal)
+#  - workflow_dispatch: manual "Run workflow" button in the Actions tab
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+# Concurrency: only one sync runs at a time. If a new run is queued while
+# one is in flight, cancel the older one — avoids commit-race conflicts.
+concurrency:
+  group: sync-dashboard
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # needed so GITHUB_TOKEN can push commits back
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # fetch-depth=1 is the default; we just need HEAD to commit on top of.
+
+      - name: Fetch all 3 tabs via gviz and update index.html
+        shell: pwsh
+        run: ./.github/scripts/sync.ps1
+
+      - name: Commit and push if data changed
+        run: |
+          # Show what changed (for the workflow log)
+          git status --short
+          if [[ -z "$(git status --porcelain index.html CSM_Dashboard.html)" ]]; then
+            echo "No changes — sheets data is identical to repo. Skipping commit."
+            exit 0
+          fi
+          # Configure the bot identity
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html CSM_Dashboard.html
+          ts=$(date -u +'%Y-%m-%d %H:%M UTC')
+          git commit -m "Auto-sync from Google Sheets ($ts) [skip ci]"
+          git push
+          echo "Pushed update to origin/main"
