@@ -676,8 +676,11 @@ function viniAggregateRooftops() {
 
   // Per-spec: Appt Value = appts × ($-per-appt for this agent type) and
   // RoI = Appt Value / MRR. Per-agent multipliers live in APPT_VALUE_BY_AGENT.
-  // Ticket overlay (per Enterprise ID, Vini-only) — broadcast onto each agent
-  // row of the enterprise. KPI sums dedupe by EID to avoid 4× inflation.
+  // Tickets are enterprise-level in the source: the daily Vini sheet broadcasts
+  // the same Tickets#Created / #Open / Open Ageing / Avg Res onto each agent
+  // row of the enterprise. The fold loop above sums those daily values per
+  // (rid×agent); the KPI/grouped paths dedupe to one row per EID to avoid 4×
+  // inflation across agent types.
   Object.values(byKey).forEach(a => {
     const $perAppt = apptValuePerAppt(a.agent);
     a.apptValue = a.appts * $perAppt;
@@ -689,14 +692,24 @@ function viniAggregateRooftops() {
     a.roi_lm  = a.mrr > 0 ? a.apptValue_lm  / a.mrr : 0;
     a.roi_l2l = a.mrr > 0 ? a.apptValue_l2l / a.mrr : 0;
 
+    // Average Resolution = mean of daily readings collected during the fold.
+    // Daily v_rows have Avg Res per row only when there's ticket activity.
+    a.avgRes = a.resVals.length
+      ? a.resVals.reduce((s,v)=>s+v,0) / a.resVals.length
+      : 0;
+
+    // Optional Ticket_Dump overlay (per-enterprise authoritative values).
+    // sync.ps1 does NOT currently build a vini_tix dict — when it does, the
+    // overlay below takes precedence over the daily-fold values. Until then,
+    // the fold values are used as-is. We only OVERRIDE per field (not zero
+    // the row on absence); the prior `else { a.cr = 0; … }` branch was the
+    // bug that wiped tickets to 0 / NA across the dashboard.
     const tx = a.eid && VINI_TIX[a.eid];
     if (tx) {
-      a.cr     = Number(tx.cr)  || 0;
-      a.op     = Number(tx.op)  || 0;
-      a.otaMax = Number(tx.ota) || 0;
-      a.avgRes = Number(tx.res) || 0;
-    } else {
-      a.cr = 0; a.op = 0; a.otaMax = 0; a.avgRes = 0;
+      if (tx.cr  != null) a.cr     = Number(tx.cr)  || a.cr;
+      if (tx.op  != null) a.op     = Number(tx.op)  || a.op;
+      if (tx.ota != null) a.otaMax = Number(tx.ota) || a.otaMax;
+      if (tx.res != null) a.avgRes = Number(tx.res) || a.avgRes;
     }
   });
   return Object.values(byKey);
