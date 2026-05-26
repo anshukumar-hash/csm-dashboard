@@ -395,6 +395,24 @@ const VINI_TIX = D.vini_tix || {};
 // CSAT_BY_EID  keys on company_external_id (matches Vini eid)
 // CSAT_BY_NAME keys on UPPERCASE-trimmed company_name (Studio fallback when
 //   the studio rooftop's enterprise has no external id)
+// ============================================================
+// APPOINTMENT-VALUE PER AGENT TYPE
+// ============================================================
+// Each booked appointment is imputed an opportunity-value, but the value
+// differs by agent type — outbound conversations are worth more than
+// inbound recalls, sales calls are worth more than service touches.
+// Used by viniAggregateRooftops to compute a.apptValue and the per-period
+// apptValue_mtd / apptValue_lm / apptValue_l2l.
+const APPT_VALUE_BY_AGENT = {
+  'Sales Inbound':    100,
+  'Sales Outbound':   250,
+  'Service Inbound':   50,
+  'Service Outbound':  75
+};
+function apptValuePerAppt(agent) {
+  return APPT_VALUE_BY_AGENT[agent] != null ? APPT_VALUE_BY_AGENT[agent] : 100;
+}
+
 const CSAT_BY_EID      = D.csat_by_eid      || {};
 const CSAT_BY_NAME     = D.csat_by_name     || {};
 // Per-enterprise CSAT history (all readings). Used by Rooftop View so a row
@@ -598,8 +616,11 @@ function viniAggregateRooftops() {
       csm: (s.csm && s.csm.trim()) || VINI_RID_TO_CSM[s.rid] || 'Unassigned CSM',
       // Daily-summed / snapshot fields (filled below from v_rows)
       touched: 0, qualified: 0, appts: 0, apptValue: 0,
-      // Per-period appts for the RoI columns (MTD / Last Month / Last-to-Last Month)
+      // Per-period appts AND apptValue for the RoI columns. Tracking apptValue
+      // per period is required because the $-per-appt multiplier varies by
+      // agent type, so a group sum of appts can't be uniformly × $100.
       appts_mtd: 0, appts_lm: 0, appts_l2l: 0,
+      apptValue_mtd: 0, apptValue_lm: 0, apptValue_l2l: 0,
       cr: 0, op: 0, otaMax: 0, resVals: [],
       rag: '', churn: '', rs: '', trag: '', red: '', mbr: '', cf: '',
       latestDay: ''
@@ -617,9 +638,10 @@ function viniAggregateRooftops() {
     const a = byKey[key];
     if (!a) return;  // Daily row for an (rid,agent) not in the stage snapshot — skip
     const apptsRow = Number(r[V_COL.a]) || 0;
-    if (inRange(day, rngMTD)) a.appts_mtd += apptsRow;
-    if (inRange(day, rngLM))  a.appts_lm  += apptsRow;
-    if (inRange(day, rngL2L)) a.appts_l2l += apptsRow;
+    const $perAppt = apptValuePerAppt(a.agent);  // varies by agent type
+    if (inRange(day, rngMTD)) { a.appts_mtd += apptsRow; a.apptValue_mtd += apptsRow * $perAppt; }
+    if (inRange(day, rngLM))  { a.appts_lm  += apptsRow; a.apptValue_lm  += apptsRow * $perAppt; }
+    if (inRange(day, rngL2L)) { a.appts_l2l += apptsRow; a.apptValue_l2l += apptsRow * $perAppt; }
     // Current-period accumulators (existing behavior)
     if (day < from || day > to) return;
     a.touched   += Number(r[V_COL.t])  || 0;
@@ -642,17 +664,20 @@ function viniAggregateRooftops() {
     }
   });
 
-  // Per-spec: derive Appt Value = appointments × $100 and RoI = Appt Value / MRR.
+  // Per-spec: Appt Value = appts × ($-per-appt for this agent type) and
+  // RoI = Appt Value / MRR. Per-agent multipliers live in APPT_VALUE_BY_AGENT.
   // Ticket overlay (per Enterprise ID, Vini-only) — broadcast onto each agent
   // row of the enterprise. KPI sums dedupe by EID to avoid 4× inflation.
   Object.values(byKey).forEach(a => {
-    a.apptValue = a.appts * 100;
+    const $perAppt = apptValuePerAppt(a.agent);
+    a.apptValue = a.appts * $perAppt;
     a.convRate  = a.qualified > 0 ? a.appts/a.qualified : 0;
     a.roi       = a.mrr > 0 ? a.apptValue / a.mrr : 0;
-    // Per-period RoI (always the 3 fixed calendar periods)
-    a.roi_mtd = a.mrr > 0 ? (a.appts_mtd * 100) / a.mrr : 0;
-    a.roi_lm  = a.mrr > 0 ? (a.appts_lm  * 100) / a.mrr : 0;
-    a.roi_l2l = a.mrr > 0 ? (a.appts_l2l * 100) / a.mrr : 0;
+    // Per-period RoI (calendar MTD / Last Month / L2L Month). Numerator uses
+    // the period's apptValue (already weighted by agent type during fold).
+    a.roi_mtd = a.mrr > 0 ? a.apptValue_mtd / a.mrr : 0;
+    a.roi_lm  = a.mrr > 0 ? a.apptValue_lm  / a.mrr : 0;
+    a.roi_l2l = a.mrr > 0 ? a.apptValue_l2l / a.mrr : 0;
 
     const tx = a.eid && VINI_TIX[a.eid];
     if (tx) {
@@ -1018,14 +1043,14 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const rs = countBy(active, r => r.rs);
   const rsNo = rs.No || 0;
   // Per-period RoI Factor for the 3 fixed comparison columns (always L2L / LM / MTD
-  // regardless of MTD/Last Month toggle). Numerator: sum of period apptValue;
-  // denominator: active MRR (same denominator for fair comparison).
-  const apptsL2L = sumBy(active, r => r.appts_l2l || 0);
-  const apptsLM  = sumBy(active, r => r.appts_lm  || 0);
-  const apptsMTD = sumBy(active, r => r.appts_mtd || 0);
-  const roiL2L = activeMrr>0 ? ((apptsL2L * 100) / activeMrr).toFixed(2)+'x' : '—';
-  const roiLM  = activeMrr>0 ? ((apptsLM  * 100) / activeMrr).toFixed(2)+'x' : '—';
-  const roiMTDNum = activeMrr>0 ? (apptsMTD * 100) / activeMrr : null;
+  // regardless of MTD/Last Month toggle). Numerator sums per-row apptValue_X
+  // (already weighted by agent type at aggregation), denominator is active MRR.
+  const apptValueL2L = sumBy(active, r => r.apptValue_l2l || 0);
+  const apptValueLM  = sumBy(active, r => r.apptValue_lm  || 0);
+  const apptValueMTD = sumBy(active, r => r.apptValue_mtd || 0);
+  const roiL2L = activeMrr>0 ? (apptValueL2L / activeMrr).toFixed(2)+'x' : '—';
+  const roiLM  = activeMrr>0 ? (apptValueLM  / activeMrr).toFixed(2)+'x' : '—';
+  const roiMTDNum = activeMrr>0 ? apptValueMTD / activeMrr : null;
   const roiMTD = roiMTDNum !== null ? roiMTDNum.toFixed(2)+'x' : '—';
   // RoI RAG (traffic-light based on MTD value):
   //   >=4 Green | 2 <= x < 4 Amber | <2 Red | null NA
