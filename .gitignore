@@ -16,6 +16,13 @@ merged_data.json
 # Local Claude project state
 .claude/
 
+# Working snapshots / build artifacts — these regenerate from the patchers,
+# no value in versioning them and they bloat the repo.
+csm_dashboard_rework/CSM_Dashboard.backup.html
+csm_dashboard_rework/dashboard_data.json
+csm-dashboard.zip
+**/tool-results/
+
 # OS junk
 Thumbs.db
 .DS_Store

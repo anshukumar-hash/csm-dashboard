@@ -1,0 +1,118 @@
+Enterprise ID	Account	Team ID	Rooftop Name	Agent Opted	MRR	ARR	Stage	T1	T2	T3	Payment Score
+ef889a294	Bridge Auto Group	f89ae024ba	Bridge Auto Group	Sales Inbound	$299	$3,588	Live	overdue	overdue	paid	Red
+62f962c8e	CallSource	838e507a-e	CallSource	Service Inbound	$504	$6,045	Churned	paid	paid	no invoice raised	Green
+670e21f69	I-40 Autos, LLC	b4df3297f5	I-40 Autos, LLC	Sales Inbound	$699	$8,388	Live	overdue	overdue	paid	Red
+d3216c3e4	John Hiester Chevrolet	0dcef03834	John Hiester Chevrolet	Service Inbound	$499	$5,988	Live	paid	paid	paid	Green
+acb5f83e1	McGrath Acura of Westmont (Mcgrath Imports)	bf524480-3	McGrath Acura	Service Inbound	$1,500	$18,000	Live	overdue	paid	paid	Amber
+acb5f83e1	McGrath Acura of Westmont (Mcgrath Imports)	987d7cb5f5	McGrath Acura	Sales Inbound	$1,500	$18,000	Live	overdue	paid	paid	Amber
+21de286e9	Paragon Motors of Woodside Inc dba Paragon Honda	5895de05b	Paragon Honda	Service Outbound	$2,000	$24,000	Live	overdue	overdue	overdue	Red
+21de286e9	Paragon Motors of Woodside Inc dba Paragon Honda	5895de05b	Paragon Honda	Sales Inbound	$1,000	$12,000	Live	overdue	overdue	overdue	Red
+13c1f7e2b	Warren Chrysler Dodge Jeep Ram	8d3117cf-b	Warren Chrysler Dodge Jeep Ram	Sales Inbound	$419	$5,024	Churned	paid	paid	paid	Green
+a08cdd6df	Worldwide Motors LTD dba Paragon Acura	432257cd02	Paragon Acura	Service Outbound	$1,500	$18,000	Live	overdue	overdue	overdue	Red
+48e021652	Rainbow Motor Sales	526cc6bf64	Rainbow Motor Sales	Sales Inbound	$910	$10,915	Churned	paid	paid	paid	Green
+dbda6894a	Feldman Chevrolet of Novi	e9401d52e5	Feldman Chevrolet of Novi	Sales Inbound	$750	$9,000	Churned	paid	paid	paid	Green
+dbda6894a	Feldman Chevrolet of Novi	09a20b81a4	Feldman Kia of Novi	Sales Inbound	$750	$9,000	Churned	paid	paid	paid	Green
+06e65fbde	Feldmann Imports, Inc.	5480771b21	Feldmann Imports, Inc.	Sales Inbound	$750	$9,000	Live	overdue	paid	paid	Amber
+9016eb535	Bridgeton Auto Mall	6d828d314	Bridgeton Auto Mall	Sales Inbound	$999	$11,988	Live	overdue	overdue	overdue	Red
+9016eb535	Bridgeton Auto Mall	6d828d314	Bridgeton Auto Mall	Service Inbound	$999	$11,988	Live	overdue	overdue	overdue	Red
+e258a7579	Bob King Mazda	a9e37101ea	Bob King Mazda	Service Inbound	$999	$11,988	Live	paid	paid	paid	Green
+9016eb535	Bridgeton Auto Mall	6d828d314	Bridgeton Auto Mall	Service Outbound	$1,499	$17,988	Churned	overdue	overdue	overdue	Red
+9016eb535	Bridgeton Auto Mall	6d828d314	Bridgeton Auto Mall	Sales Outbound	$1,499	$17,988	Live	overdue	overdue	overdue	Red
+3884c7156	Edwards Auto Group	8559da8aef	Edwards Chevrolet 280	Sales Inbound	$899	$10,789	Live	paid	paid	no invoice raised	Green
+3884c7156	Edwards Auto Group	4e24c50b58	Edwards Chevrolet Downtown	Sales Inbound	$899	$10,789	Live	paid	paid	no invoice raised	Green
+3884c7156	Edwards Auto Group	d6947fc2e0	Edwards Honda	Sales Inbound	$899	$10,789	Live	paid	paid	no invoice raised	Green
+06e65fbde	Feldmann Imports, Inc.	5480771b21	Feldmann Imports, Inc.	Service Inbound	$750	$9,000	Live	overdue	paid	paid	Amber
+b96afd190	Nissan of Boone	695a247be2	Nissan of Boone	Sales Inbound	$599	$7,188	Churned	overdue	overdue	paid	Red
+b96afd190	Nissan of Boone	695a247be2	Nissan of Boone	Service Inbound	$699	$8,388	Churned	overdue	overdue	paid	Red
+48e021652	Rainbow Motor Sales	526cc6bf64	Rainbow Motor Sales	Sales Outbound	$1,240	$14,880	Churned	paid	paid	paid	Green
+ef09d889d	Victory Automotive Group	bf718528af	Victory Toyota of Midtown	Service Inbound	$999	$11,988	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	d14b8b8338	Wolfchase Honda	Service Recall	$720	$8,640	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	d14b8b8338	Wolfchase Honda	Service Recall	$720	$8,640	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	d14b8b8338	Wolfchase Honda	Sales Outbound	$800	$9,600	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	d14b8b8338	Wolfchase Nissan	Sales Outbound	$800	$9,600	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	d14b8b8338	Wolfchase Nissan	Sales Inbound	$480	$5,760	Live	overdue	overdue	paid	Red
+6548557c2	Wolfchase Honda & Nissan	405beccbe9	Wolfchase Nissan	Sales Inbound	$480	$5,760	Live	overdue	overdue	paid	Red
+4f772edd8	World Car Auto Group	cefa13f833	World Car Kia South	Service Inbound	$500	$6,000	Live	overdue	overdue	overdue	Red
+4f772edd8	World Car Auto Group	d2999d21-c	World Car Kia San Antonio	Service Inbound	$750	$9,000	Live	overdue	overdue	overdue	Red
+4f772edd8	World Car Auto Group	d4c824c0-9	World Car Mazda San Antonio	Service Inbound	$750	$9,000	Live	overdue	overdue	overdue	Red
+4f772edd8	World Car Auto Group	cefa13f833	World Car Kia South	Service Outbound	$825	$9,900	Live	overdue	overdue	overdue	Red
+4f772edd8	World Car Auto Group	d2999d21-c	World Car Kia San Antonio	Service Outbound	$750	$9,000	Live	overdue	overdue	overdue	Red
+4f772edd8	World Car Auto Group	d4c824c0-9	World Car Mazda San Antonio	Service Outbound	$750	$9,000	Live	overdue	overdue	overdue	Red
+216348ce1	Austin Ford CDJR	672982a947	Austin Ford CDJR	Sales Outbound	$1,250	$15,000	Churned	overdue	paid	paid	Amber
+595631394	Pinnacle Peak Auto Sales	e8cf6f4867	Pinnacle Peak Auto Sales	Sales Inbound	$499	$5,988	Churned	overdue	paid	paid	Amber
+89caf2cee	James Martin Chevrolet Buick, Inc.	a942066891	James Martin Chevrolet Buick, Inc.	Sales Inbound	$900	$10,800	Live	overdue	paid	no invoice raised	Amber
+89caf2cee	James Martin Chevrolet Buick, Inc.	a942066891	James Martin Chevrolet Buick, Inc.	Sales Outbound	$1,250	$15,000	Live	overdue	paid	no invoice raised	Amber
+d5237b68e	Nissan of Ardmore	a4bc5d1392	Nissan of Ardmore	Sales Outbound	$699	$8,388	Churned	no invoice raised	no invoice raised	no invoice raised	NA
+bfa9559e2	Guam AutoSpot	33a108cec9	Guam AutoSpot	Sales Inbound	$1,275	$15,300	Live	no invoice raised	no invoice raised	no invoice raised	NA
+bfa9559e2	Guam AutoSpot	33a108cec9	Guam AutoSpot	Service Inbound	$1,275	$15,300	Live	no invoice raised	no invoice raised	no invoice raised	NA
+21de286e9	Paragon Motors of Woodside Inc dba Paragon Honda	e9e19bca63	Paragon Acura	Service Inbound	$2,000	$24,000	Live	overdue	overdue	overdue	Red
+4c65517e7	Burns Hyundai	9c9e3d1259	Burns Hyundai	Service Inbound	$999	$11,988	Live	paid	no invoice raised	no invoice raised	Green
+e551635ea	Murgado	f222a4f3ff	Mercedes Laguna Niguel	Service Inbound	$500	$6,000	Live	overdue	overdue	no invoice raised	Red
+e551635ea	Murgado	8f59b8483b	Mercedes Benz Foothill	Service Inbound	$500	$6,000	Live	overdue	overdue	no invoice raised	Red
+5b81be4b1	Dream Automotive	7607d0e6f5	Dream Lawrence Nissan	Sales Inbound	$750	$9,000	Live	paid	paid	paid	Green
+5b81be4b1	Dream Automotive	7607d0e6f5	Dream Lawrence Nissan	Sales Outbound	$750	$9,000	Live	paid	paid	paid	Green
+5b81be4b1	Dream Automotive	3d3deabc98	Dream Nissan Midwest	Sales Inbound	$750	$9,000	Live	paid	paid	paid	Green
+5b81be4b1	Dream Automotive	3d3deabc98	Dream Nissan Midwest	Sales Outbound	$750	$9,000	Live	paid	paid	paid	Green
+5b81be4b1	Dream Automotive	6730ea9132	Dream Nissan Kansas City	Sales Inbound	$750	$9,000	Live	paid	paid	paid	Green
+5b81be4b1	Dream Automotive	6730ea9132	Dream Nissan Kansas City	Sales Outbound	$750	$9,000	Live	paid	paid	paid	Green
+3e291ce0f	Horne Mazda	c885afdbe9	Horne Mazda	Sales Outbound	$850	$10,200	Live	paid	no invoice raised	no invoice raised	Green
+3e291ce0f	Horne Mazda	c885afdbe9	Horne Mazda	Service Outbound	$850	$10,200	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	27029bf75c	Sport Durst Mazda	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	5f6644c1f1	Sport Durst Hyundai	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	a862eefd2e	Sport Durst Mazda of Goldsboro	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	73ff62fd21	Sport Durst VW of Goldsboro	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	5b65de92e5	Sport Durst VW of Jacksonville	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+6b9a25d35	Sport Durst Automotive Group	cb9198f115	Sport Durst Subaru	Service Inbound	$750	$9,000	Live	paid	no invoice raised	no invoice raised	Green
+f20ae28a0	DeNooyer Chevrolet Kalamazoo	723708ae8f	Edwards Motor Company	Service Inbound	$999	$11,988	Live	no invoice raised	no invoice raised	no invoice raised	NA
+b5b6954c4	Landers CDJR	c18a7a6d8d	Landers CDJR	Sales Inbound	$700	$8,400	Live	paid	paid	paid	Green
+b5b6954c4	Landers CDJR	c18a7a6d8d	Landers CDJR	Service Inbound	$700	$8,400	Live	paid	paid	paid	Green
+b5b6954c4	Landers CDJR	c18a7a6d8d	Landers CDJR	Sales Outbound	$700	$8,400	Live	paid	paid	paid	Green
+46cf87af0	Jones Motor Company	9c1ad81386	Jones CDJR	Sales Inbound	$1,000	$11,998	Live	no invoice raised	no invoice raised	no invoice raised	NA
+dab960b7c	Mercedes-Benz of Arlington	341a56683a	Mercedes-Benz of Arlington	Sales Inbound	$799	$9,588	Live	no invoice raised	no invoice raised	no invoice raised	NA
+dab960b7c	Mercedes-Benz of Arlington	341a56683a	Mercedes-Benz of Arlington	Sales Outbound	$2,000	$24,000	Live	no invoice raised	no invoice raised	no invoice raised	NA
+fe7e2e8e5	Brown Daub Kia	5d2ffea9c0	Brown Daub Kia	Sales Inbound	$625	$7,500	Live	no invoice raised	no invoice raised	no invoice raised	NA
+fe7e2e8e5	Brown Daub Kia	5d2ffea9c0	Brown Daub Kia	Sales Outbound	$625	$7,500	Live	no invoice raised	no invoice raised	no invoice raised	NA
+fe7e2e8e5	Brown Daub Kia	5d2ffea9c0	Brown Daub Kia	Service Outbound	$625	$7,500	Live	no invoice raised	no invoice raised	no invoice raised	NA
+fe7e2e8e5	Brown Daub Kia	5d2ffea9c0	Brown Daub Kia	Service Inbound	$625	$7,500	Live	no invoice raised	no invoice raised	no invoice raised	NA
+58e0896f7	Chapman Chevrolet Buick gmc ltd.	80dc6dcf0	Chapman Chevrolet Buick gmc ltd.	Sales Inbound	$599	$7,188	Live	paid	paid	paid	Green
+58e0896f7	Chapman Chevrolet Buick gmc ltd.	80dc6dcf0	Chapman Chevrolet Buick gmc ltd.	Service Inbound	$599	$7,188	Live	paid	paid	paid	Green
+7d06f7427	Brandon Steven Motors	49a06313cf	Covina Kia	Sales Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	49a06313cf	Covina Kia	Service Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	49a06313cf	Covina Kia	Sales Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	49a06313cf	Covina Kia	Service Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	1a916c0965	Carson Hyundai	Sales Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	1a916c0965	Carson Hyundai	Service Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	1a916c0965	Carson Hyundai	Sales Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	1a916c0965	Carson Hyundai	Service Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	9923577d07	Honda DTLA	Service Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	9923577d07	Honda DTLA	Service Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	a0a4332434	Subaru Wichita	Sales Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	a0a4332434	Subaru Wichita	Sales Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	2b110492b6	Honda Reseda	Sales Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	2b110492b6	Honda Reseda	Service Inbound	$300	$3,600	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	2b110492b6	Honda Reseda	Sales Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+7d06f7427	Brandon Steven Motors	2b110492b6	Honda Reseda	Service Outbound	$700	$8,400	Live	paid	no invoice raised	no invoice raised	Green
+b81a8498a	CornHusker Group	37329f9976	CornHusker Nissan	Sales Inbound	$300	$3,600	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	37329f9976	CornHusker Nissan	Sales Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	37329f9976	CornHusker Nissan	Service Inbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	37329f9976	CornHusker Nissan	Service Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3f96401f8d	Courtesy Ford	Sales Inbound	$300	$3,600	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3f96401f8d	Courtesy Ford	Sales Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3f96401f8d	Courtesy Ford	Service Inbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3f96401f8d	Courtesy Ford	Service Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3b8dee0632	CornHusker Auto Center	Sales Inbound	$300	$3,600	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3b8dee0632	CornHusker Auto Center	Sales Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3b8dee0632	CornHusker Auto Center	Service Inbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+b81a8498a	CornHusker Group	3b8dee0632	CornHusker Auto Center	Service Outbound	$400	$4,800	Live	paid	paid	no invoice raised	Green
+d8daf6754	Habberstad Group	03f8bdc40c	Habberstad Group	Service Inbound	$1,000	$12,000	Live	no invoice raised	no invoice raised	no invoice raised	NA
+c946af83e	Zeigler Hyundai of Racine	f618492d10	Zeigler Hyundai of Racine	Sales Inbound	$463	$5,550	Live	no invoice raised	no invoice raised	no invoice raised	NA
+c946af83e	Zeigler Hyundai of Racine	f618492d10	Zeigler Hyundai of Racine	Sales Outbound	$463	$5,550	Live	no invoice raised	no invoice raised	no invoice raised	NA
+c946af83e	Zeigler Hyundai of Racine	f618492d10	Zeigler Hyundai of Racine	Service Inbound	$463	$5,550	Live	no invoice raised	no invoice raised	no invoice raised	NA
+c946af83e	Zeigler Hyundai of Racine	f618492d10	Zeigler Hyundai of Racine	Service Outbound	$463	$5,550	Live	no invoice raised	no invoice raised	no invoice raised	NA
+657a8c4e2	Auto Depot Of Navarre	b75e784fa2	Auto Depot Of Navarre	Sales Inbound	$1,000	$12,000	Live	no invoice raised	no invoice raised	no invoice raised	NA
+6add25efd	Vatland Auto Group	e05e67affb	Vatland Honda	Sales Inbound	$800	$9,600	Live	paid	paid	paid	Green
+6add25efd	Vatland Auto Group	e05e67affb	Vatland Honda	Sales Outbound	$800	$9,600	Live	paid	paid	paid	Green
+90fb7ed36	Grace Quality Used Cars, Inc	ee805e22bd	Grace auto group	Sales Inbound	$999	$11,988	Live	no invoice raised	no invoice raised	no invoice raised	NA
+90fb7ed36	Grace Quality Used Cars, Inc	ee805e22bd	Grace auto group	Sales Outbound	$999	$11,988	Live	no invoice raised	no invoice raised	no invoice raised	NA
+6c19cc7c4	Super Autos Miami	7fb99e6ee1	Super Autos Miami	Sales Inbound	$749	$8,988	Live	no invoice raised	no invoice raised	no invoice raised	NA
+6c19cc7c4	Super Autos Miami	7fb99e6ee1	Super Autos Miami	Sales Outbound	$749	$8,988	Live	no invoice raised	no invoice raised	no invoice raised	NA
