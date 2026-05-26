@@ -115,11 +115,16 @@
      Rooftop and Agent Type both carry real strings so each needs room. Tuned
      widths: Rooftop 180 (was 220), Enterprise 160, Agent Type 160 (was 120),
      MRR 90, ARR 90. Activated by class `.rooftop-layout` on the table. */
-  table.data.rooftop-layout .frozen-2{width:160px; min-width:160px; max-width:160px}
-  table.data.rooftop-layout .frozen-3{left:192px; width:140px; min-width:140px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  table.data.rooftop-layout .frozen-4{left:332px; width:140px; min-width:140px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  table.data.rooftop-layout .frozen-5{left:472px; width:76px;  min-width:76px;  max-width:76px}
-  table.data.rooftop-layout .frozen-6{left:548px; width:76px;  min-width:76px;  max-width:76px}
+  table.data.rooftop-layout .frozen-2{width:130px; min-width:130px; max-width:130px}
+  table.data.rooftop-layout .frozen-3{left:158px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout .frozen-4{left:278px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout .frozen-5{left:398px; width:60px;  min-width:60px;  max-width:60px}
+  table.data.rooftop-layout .frozen-6{left:458px; width:60px;  min-width:60px;  max-width:60px}
+  /* 7-frozen variant: Vini Rooftop View adds Agent Age (frozen-5) BEFORE MRR.
+     Studio still uses the 6-frozen layout above. Total frozen: 588px. */
+  table.data.rooftop-layout-7 .frozen-5{left:398px; width:70px;  min-width:70px;  max-width:70px}
+  table.data.rooftop-layout-7 .frozen-6{left:468px; width:60px;  min-width:60px;  max-width:60px}
+  table.data.rooftop-layout-7 .frozen-7{left:528px; width:60px;  min-width:60px;  max-width:60px; box-shadow:1px 0 0 var(--border)}
   /* Long content in NAME column must ellipsis to honor the locked width */
   table.data .frozen-2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   table.data tbody tr:hover .frozen{background:#FAFAFA}
@@ -165,6 +170,10 @@
   table.data tbody td.cell-rs{background:#FBFEFB}
   table.data tbody tr.total-row td.cell-rs{background:var(--grp-roi)}
   table.data thead tr.group th.g-rs{background:var(--grp-roi)}
+  /* RoI factor text color (traffic-light gradient on L2L / LM / MTD values) */
+  table.data .roi-g{color:var(--green);font-weight:600}
+  table.data .roi-a{color:var(--amber);font-weight:600}
+  table.data .roi-r{color:var(--red);font-weight:600}
   table.data tbody tr.total-row td{font-weight:600;background:var(--bg);border-top:1px solid var(--border-strong);border-bottom:none}
   table.data tbody tr.total-row td.cell-final{background:var(--grp-final)}
   table.data tbody tr.total-row td.cell-usage{background:var(--grp-usage)}
@@ -613,6 +622,7 @@ function viniAggregateRooftops() {
       seg: segValue, region: s.region,
       mrr: Number(s.mrr) || 0, arr: Number(s.arr) || 0,
       t1: s.t1, t2: s.t2, t3: s.t3, ps: s.ps,
+      go_live: s.go_live || '',
       csm: (s.csm && s.csm.trim()) || VINI_RID_TO_CSM[s.rid] || 'Unassigned CSM',
       // Daily-summed / snapshot fields (filled below from v_rows)
       touched: 0, qualified: 0, appts: 0, apptValue: 0,
@@ -777,6 +787,55 @@ function ragSingle(v) {
   if (v === 'Red') return '<span class="badge r">R</span>';
   if (v === 'NA') return '<span class="badge n">NA</span>';
   return `<span class="badge n">${v}</span>`;
+}
+
+// Score-based aggregate RAG. Given a distribution of per-enterprise RAGs (e.g.
+// counts = {Green: 3, Amber: 2, Red: 1}) and thresholds for Green/Amber:
+//   Weight: Green=100, Amber=50, Red=0   (NA excluded from numerator AND denominator)
+//   Score = (G*100 + A*50 + R*0) / (G + A + R)
+//   Score >= greenThresh → Green
+//   Score >= amberThresh → Amber
+//   Score < amberThresh  → Red
+//   Zero non-NA entries  → NA
+function scoreRag(counts, greenThresh, amberThresh) {
+  const g = counts.Green || 0;
+  const a = counts.Amber || 0;
+  const r = counts.Red   || 0;
+  const total = g + a + r;
+  if (total === 0) return 'NA';
+  const score = (g * 100 + a * 50 + r * 0) / total;
+  if (score >= greenThresh) return 'Green';
+  if (score >= amberThresh) return 'Amber';
+  return 'Red';
+}
+
+// Color class for RoI factor display (text color, not badge).
+//   >=4 Green | 2 <= x < 4 Amber | <2 Red | null/0 default
+function roiColorClass(val) {
+  if (val == null || val === 0 || isNaN(val)) return '';
+  if (val >= 4) return 'roi-g';
+  if (val >= 2) return 'roi-a';
+  return 'roi-r';
+}
+
+// Agent age from go-live date → "Nm Dd" compact string ("9m 22d", "0m 5d").
+// Returns "—" for blank / future / invalid dates.
+function fmtAgentAge(goLiveIso) {
+  if (!goLiveIso) return '—';
+  const start = new Date(goLiveIso);
+  if (isNaN(start.getTime())) return '—';
+  const today = TODAY;   // dashboard's "today" constant
+  if (start > today) return '—';
+  let months = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
+  let days   = today.getDate() - start.getDate();
+  if (days < 0) {
+    months -= 1;
+    // Days in the month before "today" (handles edge cases)
+    const prevMonthLast = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+    days += prevMonthLast;
+  }
+  if (months < 0) return '—';
+  return months + 'm ' + days + 'd';
 }
 
 // Ticket RAG — based on the slower of Avg Resolution and Open Ticket Ageing.
@@ -994,9 +1053,9 @@ const V_GROUPS = [
   { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
   { l:'Final Status', span:2, c:'g-final' },       // RAG · Churned (count of churned agents)
   { l:'Usage',        span:5, c:'g-usage' },
-  { l:'RoI?',         span:4, c:'g-roi' },          // L2L · LM · MTD · RAG (MTD-based traffic light)
-  { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
-  { l:'Tickets',      span:5, c:'g-tickets' },
+  { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
+  { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
+  { l:'Tickets',      span:6, c:'g-tickets' },              // Created · Open · Ageing · AvgRes · Account Level RAG · RAG (score)
   { l:'Communication', span:1, c:'g-comm' },       // RAG only (the Red signal)
   { l:'Leadership',   span:2, c:'g-leader' },      // MBR + Contact Freq
 ];
@@ -1005,15 +1064,18 @@ const V_COLS_SHARED = [
   {l:'Agents', cls:'frozen frozen-3'},          // live contract count badge
   {l:'Rooftops', cls:'frozen frozen-4'},
   {l:'Enterprises', cls:'frozen frozen-5'},     // distinct enterprises in group
-  {l:'MRR', cls:'frozen frozen-6'}, {l:'ARR', cls:'frozen frozen-7'},
+  {l:'MRR', cls:'frozen frozen-6'}, {l:'Live ARR', cls:'frozen frozen-7'},
   {l:'Report Sent', cc:'cell-rs'},              // own class so hide-rs can target this column independently
-  {l:'RAG', cc:'cell-final'}, {l:'Churned', cc:'cell-final'},
+  {l:'RAG', cc:'cell-final'}, {l:'Churned Agent', cc:'cell-final'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
   {l:'Conv Rate', cc:'cell-usage'}, {l:'Appt Value ($)', cc:'cell-usage'},
-  {l:'L2L Month', cc:'cell-roi'}, {l:'Last Month', cc:'cell-roi'}, {l:'MTD', cc:'cell-roi'}, {l:'RAG', cc:'cell-roi'},
-  {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'}, {l:'Payment Score', cc:'cell-payment'},
+  // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
+  {l:'L2L Month', cc:'cell-roi'}, {l:'Last Month', cc:'cell-roi'}, {l:'MTD', cc:'cell-roi'},
+  {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'},
+  {l:'Account Level RAG', cc:'cell-payment'}, {l:'RAG', cc:'cell-payment'},
   {l:'# Created', cc:'cell-tickets'}, {l:'# Open', cc:'cell-tickets'},
-  {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'}, {l:'Ticket RAG', cc:'cell-tickets'},
+  {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'},
+  {l:'Account Level RAG', cc:'cell-tickets'}, {l:'RAG', cc:'cell-tickets'},
   {l:'RAG', cc:'cell-comm'},                       // Was "Red"; renamed per spec
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
@@ -1023,9 +1085,11 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const agents = uniqueSet(rows, r => r.agent).size;  // distinct Agent Types in group
   const rooftops = uniqueSet(rows, r => r.rid).size;  // distinct rooftops in group
   const ents = uniqueSet(rows, r => r.en).size;
-  // Identity (Final Status + MRR/ARR) — sum per (rid × agent) contract row
+  // Identity. MRR is per-row stage-agnostic (recurring revenue contracted).
+  // Live ARR excludes churned contracts since they no longer generate revenue.
+  // Churned-agent count remains a separate display.
   const mrr = sumBy(rows, r => r.mrr);
-  const arr = sumBy(rows, r => r.arr);
+  const arr = sumBy(rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned'), r => r.arr);
   const rag = countBy(rows, r => r.rag);
   const churned = rows.filter(r => String(r.stage||'').toLowerCase() === 'churned').length;
 
@@ -1048,16 +1112,13 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const apptValueL2L = sumBy(active, r => r.apptValue_l2l || 0);
   const apptValueLM  = sumBy(active, r => r.apptValue_lm  || 0);
   const apptValueMTD = sumBy(active, r => r.apptValue_mtd || 0);
-  const roiL2L = activeMrr>0 ? (apptValueL2L / activeMrr).toFixed(2)+'x' : '—';
-  const roiLM  = activeMrr>0 ? (apptValueLM  / activeMrr).toFixed(2)+'x' : '—';
+  // Numeric values used both for display + for the inline G/A/R text-color
+  const roiL2LNum = activeMrr>0 ? apptValueL2L / activeMrr : null;
+  const roiLMNum  = activeMrr>0 ? apptValueLM  / activeMrr : null;
   const roiMTDNum = activeMrr>0 ? apptValueMTD / activeMrr : null;
+  const roiL2L = roiL2LNum !== null ? roiL2LNum.toFixed(2)+'x' : '—';
+  const roiLM  = roiLMNum  !== null ? roiLMNum.toFixed(2)+'x'  : '—';
   const roiMTD = roiMTDNum !== null ? roiMTDNum.toFixed(2)+'x' : '—';
-  // RoI RAG (traffic-light based on MTD value):
-  //   >=4 Green | 2 <= x < 4 Amber | <2 Red | null NA
-  const roiRag = roiMTDNum === null ? 'NA'
-               : roiMTDNum >= 4    ? 'Green'
-               : roiMTDNum >= 2    ? 'Amber'
-               :                     'Red';
   // Payment is tracked at the Enterprise level (the company invoices per
   // enterprise) and applies to ALL enterprises — churned-only enterprises
   // still appear in payment buckets (they may owe money). So the payment
@@ -1073,6 +1134,9 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const t2 = countBy(allByEid, r => r.t2);
   const t3 = countBy(allByEid, r => r.t3);
   const ps = countBy(allByEid, r => r.ps);
+  // Score-based Payment RAG: weighted avg of per-enterprise Payment Scores
+  //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=80 G, >=60 A, else R
+  const paymentRag = scoreRag(ps, 80, 60);
   // Tickets are per-enterprise too — use the same all-enterprises dedup so the
   // RAG count covers every enterprise (incl. churned-only). Tickets are owned
   // by the company, not by individual agent contracts.
@@ -1081,6 +1145,9 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const ota = avgBy(allByEid, r => r.otaMax);
   const res = avgBy(allByEid, r => r.avgRes);
   const trag = countBy(allByEid, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+  // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
+  //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
+  const ticketRag = scoreRag(trag, 85, 65);
   // Communication RAG — CSAT-derived, one rating per enterprise. Source: avg of
   // meeting/thread/ticket/call CSAT from gid=701797891 → NA/Red/Amber/Green.
   const commRagCounts = countBy(allByEid, r => csatRag(r.eid, r.en));
@@ -1110,11 +1177,11 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-final">${ragStack(rag)}</td><td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
-    <td class="cell-roi">${roiL2L}</td><td class="cell-roi">${roiLM}</td><td class="cell-roi">${roiMTD}</td><td class="cell-roi">${ragSingle(roiRag)}</td>
+    <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
-    <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(ps)}</td>
+    <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
     <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
-    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td>
+    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(ticketRag)}</td>
     <td class="cell-comm">${ragStack(commRagCounts)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
   </tr>`;
@@ -1467,12 +1534,15 @@ function renderRooftop() {
 
     // Bucketing mirrors V_GROUPS (Overview): 6 frozen / 2 / 5 / 2 / 4 / 5 / 1 / 2
     // `rooftop-layout` class widens frozen-3 to fit the Enterprise NAME.
-    let html = '<table class="data rooftop-layout"><thead><tr class="group">' +
-      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
+    // 7-frozen layout for Vini Rooftop View: # / Rooftop / Enterprise /
+    // Agent Type / Agent Age / MRR / Live ARR. Agent Age = months/days since
+    // Go-Live Date. CSS .rooftop-layout-7 widens frozen-2..4 and pins offsets.
+    let html = '<table class="data rooftop-layout rooftop-layout-7"><thead><tr class="group">' +
+      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th>' +
       '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
       '<th colspan="2" class="g-final">Final Status</th>' +
       '<th colspan="5" class="g-usage">Usage</th>' +
-      '<th colspan="2" class="g-roi">RoI?</th>' +            // RoI Factor + RAG (MTD-based traffic light)
+      '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
       '<th colspan="1" class="g-comm">Communication</th>' +
@@ -1482,37 +1552,40 @@ function renderRooftop() {
       '<th class="left frozen frozen-2">Rooftop</th>' +
       '<th class="left frozen frozen-3">Enterprise</th>' +
       '<th class="left frozen frozen-4">Agent Type</th>' +
-      '<th class="frozen frozen-5">MRR</th>' +
-      '<th class="frozen frozen-6">ARR</th>' +
-      '<th class="cell-roi">Report Sent</th>' +              // single column right after ARR
-      '<th class="cell-final">RAG</th><th class="cell-final">Churned</th>' +
+      '<th class="frozen frozen-5">Agent Age</th>' +
+      '<th class="frozen frozen-6">MRR</th>' +
+      '<th class="frozen frozen-7">Live ARR</th>' +
+      '<th class="cell-roi">Report Sent</th>' +              // single column right after Live ARR
+      '<th class="cell-final">RAG</th><th class="cell-final">Churned Agent</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
       '<th class="cell-usage">Conv Rate</th><th class="cell-usage">Appt Value</th>' +
-      '<th class="cell-roi">RoI Factor</th><th class="cell-roi">RAG</th>' +
-      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Pay Score</th>' +
+      '<th class="cell-roi">RoI Factor</th>' +
+      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Account Level RAG</th>' +
       '<th class="cell-tickets">#Created</th><th class="cell-tickets">#Open</th>' +
-      '<th class="cell-tickets">Open Ageing</th><th class="cell-tickets">Avg Res</th><th class="cell-tickets">Ticket RAG</th>' +
+      '<th class="cell-tickets">Open Ageing</th><th class="cell-tickets">Avg Res</th><th class="cell-tickets">Account Level RAG</th>' +
       '<th class="cell-comm">RAG</th>' +
       '<th class="cell-leader">MBR</th><th class="cell-leader">Contact Freq</th>' +
       '</tr></thead><tbody>';
     rows.forEach((r,i) => {
+      const isChurned = String(r.stage||'').toLowerCase() === 'churned';
+      const liveArr = isChurned ? 0 : r.arr;
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r.rn||'—'}</td>
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r.en||'—'}</td>
         <td class="left frozen frozen-4">${r.agent||'—'} <span class="csm-mgr">${r.stage?'· '+r.stage:''} ${r.seg?'· '+r.seg:''}</span></td>
-        <td class="frozen frozen-5">${r.mrr?fmtMoney(r.mrr):'—'}</td>
-        <td class="frozen frozen-6">${r.arr?fmtMoney(r.arr):'—'}</td>
+        <td class="frozen frozen-5">${fmtAgentAge(r.go_live)}</td>
+        <td class="frozen frozen-6">${r.mrr?fmtMoney(r.mrr):'—'}</td>
+        <td class="frozen frozen-7">${liveArr?fmtMoney(liveArr):'—'}</td>
         <td class="cell-roi">${r.rs||'—'}</td>
         <td class="cell-final">${ragSingle(r.rag)}</td>
-        <td class="cell-final">${String(r.stage||'').toLowerCase()==='churned' ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
+        <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-usage">${fmtNum(r.touched)}</td>
         <td class="cell-usage">${fmtNum(r.qualified)}</td>
         <td class="cell-usage">${fmtNum(r.appts)}</td>
         <td class="cell-usage">${(r.convRate*100).toFixed(1)}%</td>
         <td class="cell-usage">${r.apptValue?fmtMoney(r.apptValue):'—'}</td>
-        <td class="cell-roi">${r.roi?r.roi.toFixed(2)+'x':'—'}</td>
-        <td class="cell-roi">${ragSingle(r.roi == null ? 'NA' : (r.roi >= 4 ? 'Green' : r.roi >= 2 ? 'Amber' : 'Red'))}</td>
+        <td class="cell-roi ${roiColorClass(r.roi)}">${r.roi?r.roi.toFixed(2)+'x':'—'}</td>
         <td class="cell-payment">${payTile(r.t1)}</td>
         <td class="cell-payment">${payTile(r.t2)}</td>
         <td class="cell-payment">${payTile(r.t3)}</td>
@@ -1791,7 +1864,8 @@ function gvizToViniStage(table) {
     t1:   ['Payment T1', 'T1'],
     t2:   ['Payment T2', 'T2'],
     t3:   ['Payment T3', 'T3'],
-    ps:   ['Payment Score']
+    ps:   ['Payment Score'],
+    go_live: ['Go-Live Date', 'Go Live Date', 'GoLive Date']
   };
   const idx = {};
   Object.keys(labelOf).forEach(k => { idx[k] = colIdxByLabel(cols, labelOf[k]); });
@@ -1824,6 +1898,7 @@ function gvizToViniStage(table) {
       t2:    String(gvizVal(c[idx.t2]) || ''),
       t3:    String(gvizVal(c[idx.t3]) || ''),
       ps:    String(gvizVal(c[idx.ps]) || ''),
+      go_live: gvizDate(c[idx.go_live]),
       csm,
       region: m.region || 'AMER',
       seg:    m.seg    || ''
