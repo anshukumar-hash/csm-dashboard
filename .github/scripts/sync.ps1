@@ -17,10 +17,10 @@ $urls = @{
     csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
 }
 
-Add-Type -AssemblyName System.Web.Extensions
-$jss = New-Object System.Web.Script.Serialization.JavaScriptSerializer
-$jss.MaxJsonLength = [int]::MaxValue
-$jss.RecursionLimit = 200
+# Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
+# Framework assembly required). -AsHashtable returns nested hashtables so
+# we get $obj['key'] semantics like JavaScriptSerializer used to give us.
+function Parse-Json($s) { return $s | ConvertFrom-Json -AsHashtable -Depth 100 }
 
 function Fetch-Gviz($url) {
     Write-Host "  fetch: $url"
@@ -28,7 +28,7 @@ function Fetch-Gviz($url) {
     if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $url" }
     $txt = $resp.Content
     $s = $txt.IndexOf('{'); $e = $txt.LastIndexOf('}')
-    $p = $jss.DeserializeObject($txt.Substring($s, $e - $s + 1))
+    $p = Parse-Json $txt.Substring($s, $e - $s + 1)
     if ($p.status -ne 'ok') { throw "gviz status=$($p.status) for $url" }
     return $p.table
 }
@@ -82,7 +82,7 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
 if ($dlIdx -lt 0) { throw "DASHBOARD_DATA line not found" }
 $dl = $lines[$dlIdx]
 $origJson = $dl.Substring($dl.IndexOf('{')).TrimEnd(';').Trim()
-$D = $jss.DeserializeObject($origJson)
+$D = Parse-Json $origJson
 $vSchema = $D.v_schema
 
 # --- Build v_rows ---
