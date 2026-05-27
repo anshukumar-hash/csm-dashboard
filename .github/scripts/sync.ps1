@@ -224,36 +224,88 @@ foreach ($r in $vRows) { if ($payEids.Contains([string]$r[$eidIdxV])) { [void]$v
 Write-Host "  v_rows in scope: $($vRowsScoped.Count)"
 
 # --- Build CSAT dicts ---
+# CRITICAL: the CSAT tab (gid=701797891) uses an IMPORTRANGE/QUERY formula to
+# pull data from another sheet. IMPORTRANGE results DO NOT materialize for
+# anonymous gviz requests — they return the literal cell value "Loading..."
+# in column A and zero data rows. CSV export has the same problem.
+#
+# When this happens, blindly rebuilding the CSAT dicts would WIPE the
+# previously-good data from the dashboard JSON. So we detect the "Loading..."
+# sentinel + empty rows, and FALL BACK to whatever CSAT data is already in
+# the embedded snapshot (via $D from the parsed index.html).
 $cCols=$csatTab.cols
 $ci = @{
     date=Find-Col $cCols @('date'); en=Find-Col $cCols @('company_name')
     eid=Find-Col $cCols @('company_external_id'); csm=Find-Col $cCols @('csm_name')
     avg=Find-Col $cCols @('Comm Avg.')
 }
-$byEid=@{}; $byName=@{}; $allByEid=@{}
-foreach ($row in $csatTab.rows) {
-    $c=$row.c; if (-not $c) { continue }
-    $eid=[string](Gviz-Val $c[$ci.eid]).Trim(); $name=[string](Gviz-Val $c[$ci.en]).Trim()
-    $iso=Gviz-Date $c[$ci.date]
-    $rawAvg=Gviz-Val $c[$ci.avg]
-    $avg=$null
-    if ($rawAvg -ne '' -and $null -ne $rawAvg) { try { $avg=[double]$rawAvg } catch { $avg=$null } }
-    $rag='NA'
-    if ($null -ne $avg) {
-        if ($avg -lt 2.5) { $rag='Red' } elseif ($avg -lt 4) { $rag='Amber' } else { $rag='Green' }
-    }
-    $rec=@{date_iso=$iso;avg=$avg;name=$name}
-    if ($eid) {
-        if (-not $byEid.ContainsKey($eid) -or [string]$byEid[$eid].date_iso -lt $iso) { $byEid[$eid]=$rec }
-        if (-not $allByEid.ContainsKey($eid)) { $allByEid[$eid]=New-Object System.Collections.Generic.List[hashtable] }
-        $allByEid[$eid].Add(@{date_iso=$iso;avg=$avg;rag=$rag})
-    }
-    if ($name) {
-        $k=$name.ToUpper()
-        if (-not $byName.ContainsKey($k) -or [string]$byName[$k].date_iso -lt $iso) { $byName[$k]=$rec }
-    }
+
+# Detect "Loading..." state: required cols not found, OR zero rows, OR the
+# first row's column A is literally "Loading...".
+$csatLooksBroken = $false
+if ($ci.date -lt 0 -or $ci.eid -lt 0 -or $ci.avg -lt 0) { $csatLooksBroken = $true }
+if (-not $csatLooksBroken -and $csatTab.rows.Count -eq 0) { $csatLooksBroken = $true }
+if (-not $csatLooksBroken -and $csatTab.rows.Count -gt 0) {
+    $firstCell = $csatTab.rows[0].c[0]
+    $firstVal = if ($firstCell -and $firstCell.v) { [string]$firstCell.v } else { '' }
+    if ($firstVal -match '^(?i)loading\.\.\.?$') { $csatLooksBroken = $true }
 }
-Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name"
+
+if ($csatLooksBroken) {
+    Write-Host "  CSAT: WARNING — live fetch returned 'Loading...' or empty (IMPORTRANGE not resolving). Preserving existing CSAT data from snapshot."
+    # The dashboard JSON's existing csat_by_eid / csat_by_name / csat_all_by_eid
+    # already live in $D (parsed at line ~85). We rebuild $byEid/$byName/$allByEid
+    # from those so the splice step writes the SAME data back (idempotent).
+    $byEid=@{}; $byName=@{}; $allByEid=@{}
+    if ($D.csat_by_eid) {
+        foreach ($k in $D.csat_by_eid.Keys) {
+            $r = $D.csat_by_eid[$k]
+            $byEid[$k] = @{ date_iso=[string]$r.date_iso; avg=$r.avg; name=[string]$r.name }
+        }
+    }
+    if ($D.csat_by_name) {
+        foreach ($k in $D.csat_by_name.Keys) {
+            $r = $D.csat_by_name[$k]
+            $byName[$k] = @{ date_iso=[string]$r.date_iso; avg=$r.avg; name=[string]$r.name }
+        }
+    }
+    if ($D.csat_all_by_eid) {
+        foreach ($k in $D.csat_all_by_eid.Keys) {
+            $arr = $D.csat_all_by_eid[$k]
+            $list = New-Object System.Collections.Generic.List[hashtable]
+            foreach ($r in $arr) {
+                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag })
+            }
+            $allByEid[$k] = $list
+        }
+    }
+    Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid from previous snapshot"
+} else {
+    $byEid=@{}; $byName=@{}; $allByEid=@{}
+    foreach ($row in $csatTab.rows) {
+        $c=$row.c; if (-not $c) { continue }
+        $eid=[string](Gviz-Val $c[$ci.eid]).Trim(); $name=[string](Gviz-Val $c[$ci.en]).Trim()
+        $iso=Gviz-Date $c[$ci.date]
+        $rawAvg=Gviz-Val $c[$ci.avg]
+        $avg=$null
+        if ($rawAvg -ne '' -and $null -ne $rawAvg) { try { $avg=[double]$rawAvg } catch { $avg=$null } }
+        $rag='NA'
+        if ($null -ne $avg) {
+            if ($avg -lt 2.5) { $rag='Red' } elseif ($avg -lt 4) { $rag='Amber' } else { $rag='Green' }
+        }
+        $rec=@{date_iso=$iso;avg=$avg;name=$name}
+        if ($eid) {
+            if (-not $byEid.ContainsKey($eid) -or [string]$byEid[$eid].date_iso -lt $iso) { $byEid[$eid]=$rec }
+            if (-not $allByEid.ContainsKey($eid)) { $allByEid[$eid]=New-Object System.Collections.Generic.List[hashtable] }
+            $allByEid[$eid].Add(@{date_iso=$iso;avg=$avg;rag=$rag})
+        }
+        if ($name) {
+            $k=$name.ToUpper()
+            if (-not $byName.ContainsKey($k) -or [string]$byName[$k].date_iso -lt $iso) { $byName[$k]=$rec }
+        }
+    }
+    Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name"
+}
 
 # --- Build vini_tix from Ticket_Dump (gid=832733618) ---
 # Schema: Ticket ID | Status | Created time | Resolved time | Closed time |
