@@ -481,15 +481,20 @@ function csatRagCountsFor(eid) {
 function csatRagInRange(eid, en) {
   const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
   if (!arr.length) {
-    // No history captured (eid blank or no readings) — fall back to the latest
-    // reading via name match (best effort for Studio rows w/o eid).
-    return csatRag(eid, en);
+    // No history captured — try the latest-by-name fallback (Studio).
+    // Returns null when the name fallback also has no signal so callers
+    // (countBy etc.) can EXCLUDE these enterprises from the count instead
+    // of counting them as NA. Otherwise enterprises with no CSAT coverage
+    // flood the breakdown (e.g. "1 A · 26 NA" for a segment whose 26 of 27
+    // enterprises simply have no CSAT data in the source sheet).
+    const r = csatRag(eid, en);
+    return (r === 'NA' || r == null) ? null : r;
   }
   const range = periodRange();
   const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
-  if (!inRange.length) return 'NA';
+  if (!inRange.length) return null;       // no readings in window → exclude
   const avgs = inRange.map(r => Number(r.avg)).filter(v => v != null && !isNaN(v));
-  if (!avgs.length) return 'NA';
+  if (!avgs.length) return null;          // in-window rows exist but all blank → exclude
   const v = avgs.reduce((s,x) => s + x, 0) / avgs.length;
   if (v < 2.5) return 'Red';
   if (v < 4)   return 'Amber';
@@ -498,6 +503,8 @@ function csatRagInRange(eid, en) {
 
 // Same as csatRagCountsFor() but filtered to the active periodRange(). Used by
 // the Rooftop View Communication column so it tracks the date selector.
+// Only counts readings with a valid avg (NA readings — sheet rows where Comm
+// Avg was blank — are excluded so they don't pollute the row's Score stack).
 function csatRagCountsForInRange(eid) {
   const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
   if (!arr.length) return {};
@@ -506,7 +513,8 @@ function csatRagCountsForInRange(eid) {
   if (!inRange.length) return {};
   const out = {};
   inRange.forEach(r => {
-    const k = r.rag || 'NA';
+    const k = r.rag;
+    if (!k || k === 'NA') return;   // exclude blank-Comm-Avg rows
     out[k] = (out[k] || 0) + 1;
   });
   return out;
@@ -756,18 +764,17 @@ function viniAggregateRooftops() {
       ? a.resVals.reduce((s,v)=>s+v,0) / a.resVals.length
       : 0;
 
-    // Optional Ticket_Dump overlay (per-enterprise authoritative values).
-    // sync.ps1 does NOT currently build a vini_tix dict — when it does, the
-    // overlay below takes precedence over the daily-fold values. Until then,
-    // the fold values are used as-is. We only OVERRIDE per field (not zero
-    // the row on absence); the prior `else { a.cr = 0; … }` branch was the
-    // bug that wiped tickets to 0 / NA across the dashboard.
+    // Ticket_Dump overlay (per-enterprise authoritative values from gid=832733618).
+    // When sync.ps1 ships a vini_tix dict, those values FULLY OVERRIDE the
+    // daily-fold (Ticket_Dump is the source of truth — daily Vini sheet ticket
+    // cols are sparse). Zero is a valid override (means "no tickets") so we
+    // assign directly rather than using || a.cr.
     const tx = a.eid && VINI_TIX[a.eid];
     if (tx) {
-      if (tx.cr  != null) a.cr     = Number(tx.cr)  || a.cr;
-      if (tx.op  != null) a.op     = Number(tx.op)  || a.op;
-      if (tx.ota != null) a.otaMax = Number(tx.ota) || a.otaMax;
-      if (tx.res != null) a.avgRes = Number(tx.res) || a.avgRes;
+      if (tx.cr  != null) a.cr     = Number(tx.cr);
+      if (tx.op  != null) a.op     = Number(tx.op);
+      if (tx.ota != null) a.otaMax = Number(tx.ota);
+      if (tx.res != null) a.avgRes = Number(tx.res);
     }
   });
   return Object.values(byKey);
@@ -887,15 +894,13 @@ const COMM_WEIGHTS = { G: 100, A: 60, R: 20 };
 const COMM_GREEN_THRESH = 80;
 const COMM_AMBER_THRESH = 60;
 
-// Labeled square chip showing "RAG" text colored by the overall G/A/R/NA.
-// Used on KPI scorecards (Payment Score, Communication RAG) in place of a
-// single-letter chip so the user sees "RAG" + color rather than just "A".
+// Labeled square chip showing the RAG color word (GREEN / AMBER / RED / NA)
+// colored to match. Used on KPI scorecards (Payment Score, Communication RAG,
+// Ticket RAG) so the user sees the rating in plain English plus the color.
 function ragSquareBox(v) {
-  const cls = v === 'Green' ? 'rag-g'
-            : v === 'Amber' ? 'rag-a'
-            : v === 'Red'   ? 'rag-r'
-            : 'rag-n';
-  return `<span class="rag-square ${cls}">RAG</span>`;
+  const cls   = v === 'Green' ? 'rag-g' : v === 'Amber' ? 'rag-a' : v === 'Red' ? 'rag-r' : 'rag-n';
+  const label = v === 'Green' ? 'GREEN' : v === 'Amber' ? 'AMBER' : v === 'Red' ? 'RED' : 'NA';
+  return `<span class="rag-square ${cls}">${label}</span>`;
 }
 // Color-graded count breakdown for KPI sublabels: "11 G · 5 A · 6 R · 5 NA"
 // with each token tinted to its bucket color.
@@ -1132,7 +1137,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td><td class="cell-usage">${fmtNum(pen)}</td>
     <td class="cell-usage">${ws?ws.toFixed(1):'—'}</td><td class="cell-usage">${isc?isc.toFixed(1):'—'}</td>
-    <td class="cell-roi">${rsNo>0?`<span class="drill-red">${rsNo} No</span>`:'—'}</td>
+    <td class="cell-roi">—</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
@@ -1302,7 +1307,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-5">${ents}</td>
     <td class="frozen frozen-6">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-7">${fmtMoney(arr)}</td>
-    <td class="cell-rs">${rsNo>0?`<span class="drill-red">${rsNo} No</span>`:'—'}</td>
+    <td class="cell-rs">—</td>
     <td class="cell-final">${ragStack(rag)}</td><td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
@@ -1375,6 +1380,10 @@ function renderKpiStudio(rows, targetId) {
   const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
   // Overall Communication RAG — COMM weights (G:100, A:60, R:20), 80/60 thresh.
   const commRagOverall = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+  // Ticket RAG (filter-level) — per-row computeTicketRAG distribution across
+  // active studio rooftops; weighted with default G:100/A:50/R:0, 85/65 thresh.
+  const trag = countBy(active, r => computeTicketRAG({ op: r[S_COL.unr], ota: r[S_COL.ota], res: r[S_COL.res], cr: r[S_COL.cr] }));
+  const ticketRagOverall = scoreRag(trag, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid six';
@@ -1383,7 +1392,7 @@ function renderKpiStudio(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (&gt;12h)</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
     <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(prag)}</div></div>
-    <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
+    <div class="kpi"><div class="kpi-label">Ticket RAG</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}</span> · ${ragCountsColored(trag)}</div></div>
     <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
   `;
 }
@@ -1440,6 +1449,11 @@ function renderKpiVini(rows, targetId) {
   });
   const res = avgBy(dedupedActiveByEid, r => r.avgRes);
   const commScore = activeN > 0 ? active.filter(r => r.cf).length / activeN * 100 : 0;
+  // Ticket RAG (filter-level) — per-enterprise computeTicketRAG distribution
+  // weighted with the default Payment/Ticket weights (G:100, A:50, R:0) and
+  // the 85/65 thresholds used in the per-row Account Level RAG.
+  const trag = countBy(dedupedActiveByEid, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+  const ticketRagOverall = scoreRag(trag, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid seven';   // 7 tiles now
@@ -1449,7 +1463,7 @@ function renderKpiVini(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Appointments Booked</div><div class="kpi-value green-c">${fmtNum(appts)}</div><div class="kpi-sub">${fmtNum(qualified)} qualified · ${fmtNum(touched)} touched</div></div>
     <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span class="${roiInlineClass(roi)}" style="font-size:14px">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
     <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(ps)}</div></div>
-    <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
+    <div class="kpi"><div class="kpi-label">Ticket RAG</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}</span> · ${ragCountsColored(trag)}</div></div>
     <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
   `;
 }
@@ -1648,7 +1662,7 @@ function renderRooftop() {
         <td class="cell-usage">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-usage">${r[S_COL.ws]?Number(r[S_COL.ws]).toFixed(1):'—'}</td>
         <td class="cell-usage">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
-        <td class="cell-roi">${r[S_COL.rs]||'—'}</td>
+        <td class="cell-roi">—</td>
         <td class="cell-payment">${payTile(r[S_COL.t1])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
@@ -1755,7 +1769,7 @@ function renderRooftop() {
         <td class="frozen frozen-5">${fmtAgentAge(r.go_live)}</td>
         <td class="frozen frozen-6">${r.mrr?fmtMoney(r.mrr):'—'}</td>
         <td class="frozen frozen-7">${liveArr?fmtMoney(liveArr):'—'}</td>
-        <td class="cell-roi">${r.rs||'—'}</td>
+        <td class="cell-roi">—</td>
         <td class="cell-final">${ragSingle(r.rag)}</td>
         <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-usage">${fmtNum(r.touched)}</td>
@@ -1797,7 +1811,7 @@ function renderRooftop() {
       <td class="frozen frozen-5">—</td>
       <td class="frozen frozen-6">${fmtMoney(tMrr)}</td>
       <td class="frozen frozen-7">${fmtMoney(tLiveArr)}</td>
-      <td class="cell-roi">${tRsNo>0?`<span class="drill-red">${tRsNo} No</span>`:'—'}</td>
+      <td class="cell-roi">—</td>
       <td class="cell-final">—</td>
       <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
       <td class="cell-usage">${fmtNum(tTouch)}</td>

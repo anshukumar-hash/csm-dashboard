@@ -15,6 +15,7 @@ $urls = @{
     vini    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1616842841&headers=2"
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
     csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
+    tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -67,11 +68,12 @@ function Gviz-Val($cell) {
     return $cell.v
 }
 
-Write-Host "=== Fetching 3 tabs ==="
+Write-Host "=== Fetching 4 tabs ==="
 $viniTab = Fetch-Gviz $urls.vini
 $payTab  = Fetch-Gviz $urls.payment
 $csatTab = Fetch-Gviz $urls.csat
-Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$($csatTab.rows.Count)"
+$tixTab  = Fetch-Gviz $urls.tickets
+Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$($csatTab.rows.Count) | tickets rows=$($tixTab.rows.Count)"
 
 # --- Read existing dashboard JSON to learn the v_schema ---
 $lines = [System.IO.File]::ReadAllLines($primary)
@@ -253,6 +255,112 @@ foreach ($row in $csatTab.rows) {
 }
 Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name"
 
+# --- Build vini_tix from Ticket_Dump (gid=832733618) ---
+# Schema: Ticket ID | Status | Created time | Resolved time | Closed time |
+#         Last update time | Resolution time (in hrs) | Enterprise Name |
+#         Product (Studio/Vini) | Enterprise ID
+#
+# Per enterprise (filtered to Product=Vini AND eid is in the LIVE set):
+#   cr  = total tickets   (count)
+#   op  = open tickets    (Status NOT IN Closed/Resolved)
+#   ota = avg ageing hrs  (now - Created) over open tickets
+#   res = avg resolution  (col G in hrs) over resolved/closed tickets
+$tCols = $tixTab.cols
+$ti = @{
+    status  = Find-Col $tCols @('Status')
+    created = Find-Col $tCols @('Created time','Created')
+    resolved= Find-Col $tCols @('Resolved time','Resolved')
+    closed  = Find-Col $tCols @('Closed time','Closed')
+    resHrs  = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
+    prod    = Find-Col $tCols @('Product (Studio/Vini)','Product')
+    eid     = Find-Col $tCols @('Enterprise ID')
+}
+
+# Build the "live enterprise" set from the payment master. An enterprise is
+# "live" if at least one of its (rooftop × agent) contracts has stage != Churned.
+# Using viniStage built above so we share the canonical source.
+$liveEids = New-Object System.Collections.Generic.HashSet[string]
+foreach ($s in $viniStage) {
+    $stg = [string]$s['stage']
+    if ($stg -and $stg.Trim().ToLower() -ne 'churned') {
+        [void]$liveEids.Add([string]$s['eid'])
+    }
+}
+Write-Host "  Live enterprises: $($liveEids.Count) (filtering ticket dump to these)"
+
+# gviz encodes Date(y,mo,day,h,m,s) for created/resolved times. Parse to
+# a real [DateTime] so we can compute ageing for open tickets.
+function GvizToDate($cell) {
+    if (-not $cell) { return $null }
+    $v = $cell.v
+    if ($null -eq $v) { return $null }
+    $s = [string]$v
+    if ($s -match '^Date\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)') {
+        return [DateTime]::new(
+            [int]$matches[1], [int]$matches[2] + 1, [int]$matches[3],
+            [int]$matches[4], [int]$matches[5], [int]$matches[6])
+    }
+    if ($s -match '^Date\((\d+),(\d+),(\d+)') {
+        return [DateTime]::new([int]$matches[1], [int]$matches[2] + 1, [int]$matches[3])
+    }
+    return $null
+}
+# The "Resolution time (in hrs)" cell is formatted as [h]:mm:ss. The `f` field
+# carries the display string ("58:22:50" = 58.38 hrs); the `v` (Date encoding)
+# is unreliable for durations >24h. So parse the formatted string.
+function ParseHrs($cell) {
+    if (-not $cell) { return $null }
+    $f = [string]$cell.f
+    if (-not $f) { return $null }
+    if ($f -match '^(\d+):(\d+):(\d+)') {
+        return [double]$matches[1] + [double]$matches[2] / 60.0 + [double]$matches[3] / 3600.0
+    }
+    return $null
+}
+
+# Per-enterprise accumulators
+$tixAgg = @{}
+$nowUtc = [DateTime]::UtcNow
+foreach ($row in $tixTab.rows) {
+    $c = $row.c; if (-not $c) { continue }
+    $prod = [string](Gviz-Val $c[$ti.prod])
+    if ($prod -ne 'Vini') { continue }                    # only Vini tickets
+    $eid = [string](Gviz-Val $c[$ti.eid]).Trim()
+    if (-not $eid -or $eid -eq 'Not Required') { continue }
+    if (-not $liveEids.Contains($eid)) { continue }       # only live accounts
+
+    if (-not $tixAgg.ContainsKey($eid)) {
+        $tixAgg[$eid] = @{ cr = 0; op = 0; ageVals = New-Object System.Collections.Generic.List[double]; resVals = New-Object System.Collections.Generic.List[double] }
+    }
+    $agg = $tixAgg[$eid]
+    $agg.cr += 1                                          # every row = one created ticket
+
+    $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
+    $isOpen = ($status -ne 'closed' -and $status -ne 'resolved')
+    if ($isOpen) {
+        $agg.op += 1
+        $created = GvizToDate $c[$ti.created]
+        if ($created) {
+            $ageHrs = ($nowUtc - $created).TotalHours
+            if ($ageHrs -gt 0) { $agg.ageVals.Add($ageHrs) }
+        }
+    } else {
+        # Resolution hours from column G (formatted as [h]:mm:ss).
+        $rh = ParseHrs $c[$ti.resHrs]
+        if ($null -ne $rh -and $rh -gt 0) { $agg.resVals.Add($rh) }
+    }
+}
+
+# Finalize: average the collected lists into ota / res
+$viniTix = @{}
+foreach ($eid in $tixAgg.Keys) {
+    $a = $tixAgg[$eid]
+    $ota = if ($a.ageVals.Count -gt 0) { ($a.ageVals | Measure-Object -Average).Average } else { 0.0 }
+    $res = if ($a.resVals.Count -gt 0) { ($a.resVals | Measure-Object -Average).Average } else { 0.0 }
+    $viniTix[$eid] = @{ cr = $a.cr; op = $a.op; ota = $ota; res = $res }
+}
+Write-Host "  vini_tix: $($viniTix.Count) live enterprises with tickets"
+
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---
 function JsEscape($s) {
     if ($null -eq $s) { return 'null' }
@@ -334,6 +442,21 @@ $jsonCsatEid=CsatDictToJson $byEid
 $jsonCsatName=CsatDictToJson $byName
 $jsonCsatAll=CsatAllToJson $allByEid
 
+# vini_tix dict → JSON. Each entry is {cr, op, ota, res}; all numbers.
+function ViniTixToJson($dict) {
+    $parts=New-Object System.Collections.Generic.List[string]
+    foreach ($k in $dict.Keys) {
+        $rec = $dict[$k]
+        $inner = (JsEscape 'cr')  + ':' + (JsNum $rec.cr)  + ',' +
+                 (JsEscape 'op')  + ':' + (JsNum $rec.op)  + ',' +
+                 (JsEscape 'ota') + ':' + (JsNum $rec.ota) + ',' +
+                 (JsEscape 'res') + ':' + (JsNum $rec.res)
+        $parts.Add((JsEscape $k) + ':{' + $inner + '}')
+    }
+    return '{' + ($parts -join ',') + '}'
+}
+$jsonViniTix = ViniTixToJson $viniTix
+
 # --- Splice into existing dashboard JSON ---
 function StripKey($s, $key) {
     $marker='"' + $key + '":'
@@ -369,7 +492,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -377,7 +500,8 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"vini_stage":' + $jsonStage +
             ',"csat_by_eid":' + $jsonCsatEid +
             ',"csat_by_name":' + $jsonCsatName +
-            ',"csat_all_by_eid":' + $jsonCsatAll
+            ',"csat_all_by_eid":' + $jsonCsatAll +
+            ',"vini_tix":' + $jsonViniTix
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 $prefix='window.__DASHBOARD_DATA__ = '
@@ -390,4 +514,4 @@ foreach ($f in $dashFiles) {
 }
 Write-Host ""
 Write-Host "=== Sync complete ==="
-Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count)"
+Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count) | vini_tix: $($viniTix.Count)"
