@@ -318,48 +318,51 @@ function ParseHrs($cell) {
     return $null
 }
 
-# Per-enterprise accumulators
-$tixAgg = @{}
+# Ship RAW per-ticket rows so the dashboard can apply its date-range filter
+# (MTD / Last Month / L2L / custom) at render time. Pre-aggregating server-side
+# was masking the user's expectation that "Avg Resolution = avg over tickets
+# CREATED in the current period", not averaged across all-time history.
+#
+# Schema per row (compact field names to keep JSON size down):
+#   c = created date (YYYY-MM-DD)
+#   o = open bool (Status NOT IN Closed/Resolved)
+#   r = resolution hrs (parsed from col G `[h]:mm:ss`; 0 for open)
+#   a = ageing hrs at sync time (UtcNow - Created); 0 for non-open
+$viniTix = @{}
 $nowUtc = [DateTime]::UtcNow
+$skipped = 0
+$ticketsKept = 0
 foreach ($row in $tixTab.rows) {
-    $c = $row.c; if (-not $c) { continue }
+    $c = $row.c; if (-not $c) { $skipped++; continue }
     $prod = [string](Gviz-Val $c[$ti.prod])
-    if ($prod -ne 'Vini') { continue }                    # only Vini tickets
+    if ($prod -ne 'Vini') { $skipped++; continue }
     $eid = [string](Gviz-Val $c[$ti.eid]).Trim()
-    if (-not $eid -or $eid -eq 'Not Required') { continue }
-    if (-not $liveEids.Contains($eid)) { continue }       # only live accounts
+    if (-not $eid -or $eid -eq 'Not Required') { $skipped++; continue }
+    if (-not $liveEids.Contains($eid)) { $skipped++; continue }
 
-    if (-not $tixAgg.ContainsKey($eid)) {
-        $tixAgg[$eid] = @{ cr = 0; op = 0; ageVals = New-Object System.Collections.Generic.List[double]; resVals = New-Object System.Collections.Generic.List[double] }
-    }
-    $agg = $tixAgg[$eid]
-    $agg.cr += 1                                          # every row = one created ticket
+    $created = GvizToDate $c[$ti.created]
+    if (-not $created) { $skipped++; continue }
+    $createdIso = $created.ToString('yyyy-MM-dd')
 
     $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
     $isOpen = ($status -ne 'closed' -and $status -ne 'resolved')
-    if ($isOpen) {
-        $agg.op += 1
-        $created = GvizToDate $c[$ti.created]
-        if ($created) {
-            $ageHrs = ($nowUtc - $created).TotalHours
-            if ($ageHrs -gt 0) { $agg.ageVals.Add($ageHrs) }
-        }
-    } else {
-        # Resolution hours from column G (formatted as [h]:mm:ss).
-        $rh = ParseHrs $c[$ti.resHrs]
-        if ($null -ne $rh -and $rh -gt 0) { $agg.resVals.Add($rh) }
-    }
-}
 
-# Finalize: average the collected lists into ota / res
-$viniTix = @{}
-foreach ($eid in $tixAgg.Keys) {
-    $a = $tixAgg[$eid]
-    $ota = if ($a.ageVals.Count -gt 0) { ($a.ageVals | Measure-Object -Average).Average } else { 0.0 }
-    $res = if ($a.resVals.Count -gt 0) { ($a.resVals | Measure-Object -Average).Average } else { 0.0 }
-    $viniTix[$eid] = @{ cr = $a.cr; op = $a.op; ota = $ota; res = $res }
+    $resHrs = 0.0; $ageHrs = 0.0
+    if ($isOpen) {
+        $ageHrs = ($nowUtc - $created).TotalHours
+        if ($ageHrs -lt 0) { $ageHrs = 0.0 }
+    } else {
+        $parsed = ParseHrs $c[$ti.resHrs]
+        if ($null -ne $parsed -and $parsed -gt 0) { $resHrs = $parsed }
+    }
+
+    if (-not $viniTix.ContainsKey($eid)) {
+        $viniTix[$eid] = New-Object System.Collections.Generic.List[hashtable]
+    }
+    $viniTix[$eid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs })
+    $ticketsKept++
 }
-Write-Host "  vini_tix: $($viniTix.Count) live enterprises with tickets"
+Write-Host "  vini_tix: $($viniTix.Count) live enterprises, $ticketsKept tickets kept, $skipped skipped"
 
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---
 function JsEscape($s) {
@@ -446,16 +449,17 @@ $jsonCsatEid=CsatDictToJson $byEid
 $jsonCsatName=CsatDictToJson $byName
 $jsonCsatAll=CsatAllToJson $allByEid
 
-# vini_tix dict → JSON. Each entry is {cr, op, ota, res}; all numbers.
+# vini_tix dict → JSON. Each entry is { rows: [{c,o,r,a}, ...] } where the
+# dashboard then date-filters and aggregates client-side per active period.
 function ViniTixToJson($dict) {
-    $parts=New-Object System.Collections.Generic.List[string]
+    $parts = New-Object System.Collections.Generic.List[string]
     foreach ($k in $dict.Keys) {
-        $rec = $dict[$k]
-        $inner = (JsEscape 'cr')  + ':' + (JsNum $rec.cr)  + ',' +
-                 (JsEscape 'op')  + ':' + (JsNum $rec.op)  + ',' +
-                 (JsEscape 'ota') + ':' + (JsNum $rec.ota) + ',' +
-                 (JsEscape 'res') + ':' + (JsNum $rec.res)
-        $parts.Add((JsEscape $k) + ':{' + $inner + '}')
+        $items = New-Object System.Collections.Generic.List[string]
+        foreach ($r in $dict[$k]) {
+            $oBool = if ($r.o) { 'true' } else { 'false' }
+            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + '}')
+        }
+        $parts.Add((JsEscape $k) + ':{"rows":[' + ($items -join ',') + ']}')
     }
     return '{' + ($parts -join ',') + '}'
 }
