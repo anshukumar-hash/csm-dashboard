@@ -385,7 +385,11 @@ function JsEscape($s) {
     return $sb.ToString()
 }
 function JsNum($v) {
-    if ($null -eq $v -or $v -eq '') { return 'null' }
+    # PowerShell quirk: `0 -eq ''` is TRUE (right operand coerced to int 0).
+    # So the previous shorthand `$v -eq ''` was silently converting a numeric
+    # zero to JSON null. Now we explicitly require an empty STRING to null out.
+    if ($null -eq $v) { return 'null' }
+    if ($v -is [string] -and $v -eq '') { return 'null' }
     if ($v -is [bool]) { if ($v) { return 'true' } else { return 'false' } }
     try { return [string]([double]$v) } catch { return (JsEscape $v) }
 }
