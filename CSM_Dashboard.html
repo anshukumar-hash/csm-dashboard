@@ -1121,7 +1121,7 @@ function uniqueSet(rows, getter) {
 // ============================================================
 const S_GROUPS = [
   { l:'',             span:6, c:'' },              // # · NAME · Rooftops · Enterprises · MRR · ARR (frozen)
-  { l:'Final Status', span:3, c:'g-final' },       // RAG · Churned · Overall RAG
+  { l:'Final Status', span:2, c:'g-final' },       // Churned · Overall RAG
   { l:'Usage',        span:7, c:'g-usage' },
   { l:'RoI',          span:1, c:'g-roi' },
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
@@ -1134,8 +1134,9 @@ const S_COLS_SHARED = [
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
   {l:'Rooftops', cls:'frozen frozen-3'}, {l:'Enterprises', cls:'frozen frozen-4'},
   {l:'MRR', cls:'frozen frozen-5'}, {l:'ARR', cls:'frozen frozen-6'},
-  // 3 Final Status (RAG · Churned · Overall RAG)
-  {l:'RAG', cc:'cell-final'}, {l:'Churned', cc:'cell-final'}, {l:'Overall RAG', cc:'cell-final'},
+  // 2 Final Status (Churned · Overall RAG) — source-sheet RAG col removed,
+  // Overall RAG now serves the same purpose with better-defined logic.
+  {l:'Churned', cc:'cell-final'}, {l:'Overall RAG', cc:'cell-final'},
   // 7 Usage
   {l:'Active VINs', cc:'cell-usage'}, {l:'#Contracted', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
   {l:'Usage Factor', cc:'cell-usage'}, {l:'Pendency (12h)', cc:'cell-usage'},
@@ -1214,7 +1215,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-final">${ragStack(rag)}</td><td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
+    <td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td><td class="cell-usage">${fmtNum(pen)}</td>
     <td class="cell-usage">${ws?ws.toFixed(1):'—'}</td><td class="cell-usage">${isc?isc.toFixed(1):'—'}</td>
@@ -1262,7 +1263,7 @@ function buildStudioTable(target, firstColLabel, groupingFn, drillKey) {
 const V_GROUPS = [
   { l:'',             span:7, c:'' },              // # · NAME · Agents · Rooftops · Enterprises · MRR · ARR (7 frozen)
   { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
-  { l:'Final Status', span:3, c:'g-final' },       // RAG · Churned · Overall RAG (account health)
+  { l:'Final Status', span:2, c:'g-final' },       // Churned Agent · Overall RAG (account health)
   { l:'Usage',        span:5, c:'g-usage' },
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
@@ -1277,7 +1278,7 @@ const V_COLS_SHARED = [
   {l:'Enterprises', cls:'frozen frozen-5'},     // distinct enterprises in group
   {l:'MRR', cls:'frozen frozen-6'}, {l:'Live ARR', cls:'frozen frozen-7'},
   {l:'Report Sent', cc:'cell-rs'},              // own class so hide-rs can target this column independently
-  {l:'RAG', cc:'cell-final'}, {l:'Churned Agent', cc:'cell-final'}, {l:'Overall RAG', cc:'cell-final'},
+  {l:'Churned Agent', cc:'cell-final'}, {l:'Overall RAG', cc:'cell-final'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
   {l:'Conv Rate', cc:'cell-usage'}, {l:'Appt Value ($)', cc:'cell-usage'},
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
@@ -1362,16 +1363,11 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
   //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
   const ticketRag = scoreRag(trag, 85, 65);
-  // Communication RAG — CSAT-derived, one rating per enterprise. Per the user
-  // spec: only enterprises with LIVE status (any active agent contract) count.
-  // Date-filtered to the active period so MTD / LM / custom-range narrow the
-  // CSAT signal to readings inside that window.
-  const liveEidsComm = new Set();
-  rows.forEach(r => {
-    if (r.eid && String(r.stage||'').toLowerCase() !== 'churned') liveEidsComm.add(r.eid);
-  });
-  const liveByEidComm = allByEid.filter(r => r.eid && liveEidsComm.has(r.eid));
-  const commRagCounts = countBy(liveByEidComm, r => csatRagInRange(r.eid, r.en));
+  // Communication RAG — CSAT-derived, one rating per enterprise.
+  // Date-filtered to the active period; csatRagInRange returns null for
+  // enterprises with no in-window readings so countBy naturally excludes
+  // them. Counts across ALL enterprises in the group (live + churned-only).
+  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
   const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
   const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r.cf);
@@ -1397,7 +1393,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-6">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-7">${fmtMoney(arr)}</td>
     <td class="cell-rs">—</td>
-    <td class="cell-final">${ragStack(rag)}</td><td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([roiMtdRag(roiMTDNum), paymentRag, commFinalRag]))}</td>
+    <td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([roiMtdRag(roiMTDNum), paymentRag, commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
@@ -1457,11 +1453,11 @@ function renderKpiStudio(rows, targetId) {
   // Same thresholds as the Vini Payment Score card (80+/60+).
   const paymentRagOverall = scoreRag(prag, 80, 60);
   // Communication RAG — CSAT-derived per enterprise (gid=701797891). Match by
-  // enterprise name (Studio rows don't have an EID). Live-only: restrict to
-  // ACTIVE rooftops (not churned) per the user spec — churned accounts no
-  // longer represent the team's communication health.
+  // enterprise name (Studio rows don't have an EID). Counts across ALL
+  // rooftops in scope; csatRagInRange returns null for enterprises with no
+  // in-window readings so countBy excludes them naturally.
   const seenEnAll = new Set();
-  const allByEn = active.filter(r => {
+  const allByEn = rows.filter(r => {
     const en = r[S_COL.en];
     if (!en) return true;
     if (seenEnAll.has(en)) return false;
@@ -1523,17 +1519,13 @@ function renderKpiVini(rows, targetId) {
   const ps = countBy(allByEid, r => r.ps);
   // Overall Payment Score (filter-level RAG) — score-based with 80/60 thresh.
   const paymentRagOverall = scoreRag(ps, 80, 60);
-  // Communication RAG — CSAT-derived per enterprise (gid=701797891). Per the
-  // user spec: "match the enterprise with gid 674556270 with live status" —
-  // restrict to enterprises that have at least one LIVE agent contract.
-  // Otherwise churned-only enterprises (no longer active customers) would
-  // skew the breakdown. Date-filtered to the active period too.
-  const liveEids = new Set();
-  rows.forEach(r => {
-    if (r.eid && String(r.stage||'').toLowerCase() !== 'churned') liveEids.add(r.eid);
-  });
-  const liveByEid = allByEid.filter(r => r.eid && liveEids.has(r.eid));
-  const commRagCounts = countBy(liveByEid, r => csatRagInRange(r.eid, r.en));
+  // Communication RAG — CSAT-derived per enterprise (gid=701797891).
+  // Date-filtered to the active period. We count across ALL enterprises in
+  // scope (not just live) — csatRagInRange returns null for enterprises with
+  // no in-window readings, so countBy naturally excludes them. Restricting
+  // to live-only was over-filtering: most groups had so few live enterprises
+  // with CSAT data that the breakdown collapsed to all NA.
+  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
   // Overall Communication RAG — uses COMM weights (G:100, A:60, R:20) and
   // 80/60 thresholds per spec (different from Tickets/Payment which use the
   // default G:100, A:50, R:0 weights).
@@ -1721,7 +1713,7 @@ function renderRooftop() {
     // 7 Usage / 1 RoI / 4 Payment / 5 Tickets / 1 Communication / 1 Leadership
     let html = '<table class="data"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
-      '<th colspan="3" class="g-final">Final Status</th>' +
+      '<th colspan="2" class="g-final">Final Status</th>' +
       '<th colspan="7" class="g-usage">Usage</th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
@@ -1735,7 +1727,7 @@ function renderRooftop() {
       '<th class="left frozen frozen-4">Agent Type</th>' +
       '<th class="frozen frozen-5">MRR</th>' +
       '<th class="frozen frozen-6">ARR</th>' +
-      '<th class="cell-final">RAG</th><th class="cell-final">Churned</th><th class="cell-final">Overall RAG</th>' +
+      '<th class="cell-final">Churned</th><th class="cell-final">Overall RAG</th>' +
       '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual</th>' +
       '<th class="cell-usage">Usage Factor</th><th class="cell-usage">Pendency 12h</th>' +
       '<th class="cell-usage">Website Score</th><th class="cell-usage">Inventory Score</th>' +
@@ -1779,7 +1771,6 @@ function renderRooftop() {
         <td class="left frozen frozen-4">${(r[S_COL.cst]||r[S_COL.ct])||'—'} <span class="csm-mgr">· ${r[S_COL.seg]||''}</span></td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-final">${ragSingle(r[S_COL.rag])}</td>
         <td class="cell-final">${r[S_COL.churn]||'—'}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
@@ -1807,7 +1798,7 @@ function renderRooftop() {
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="28" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="27" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     html += `<tr class="total-row">
@@ -1817,7 +1808,6 @@ function renderRooftop() {
       <td class="left frozen frozen-4">—</td>
       <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
-      <td class="cell-final">${ragStack(sRag)}</td>
       <td class="cell-final">—</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
@@ -1861,7 +1851,7 @@ function renderRooftop() {
     let html = '<table class="data rooftop-layout rooftop-layout-7"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th>' +
       '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
-      '<th colspan="3" class="g-final">Final Status</th>' +   // RAG · Churned · Overall RAG (account health)
+      '<th colspan="2" class="g-final">Final Status</th>' +   // Churned Agent · Overall RAG (account health)
       '<th colspan="5" class="g-usage">Usage</th>' +
       '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
@@ -1877,7 +1867,7 @@ function renderRooftop() {
       '<th class="frozen frozen-6">MRR</th>' +
       '<th class="frozen frozen-7">Live ARR</th>' +
       '<th class="cell-roi">Report Sent</th>' +              // single column right after Live ARR
-      '<th class="cell-final">RAG</th><th class="cell-final">Churned Agent</th><th class="cell-final">Overall RAG</th>' +
+      '<th class="cell-final">Churned Agent</th><th class="cell-final">Overall RAG</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
       '<th class="cell-usage">Conv Rate</th><th class="cell-usage">Appt Value</th>' +
       '<th class="cell-roi">RoI Factor</th>' +
@@ -1948,7 +1938,6 @@ function renderRooftop() {
         <td class="frozen frozen-6">${r.mrr?fmtMoney(r.mrr):'—'}</td>
         <td class="frozen frozen-7">${liveArr?fmtMoney(liveArr):'—'}</td>
         <td class="cell-roi">—</td>
-        <td class="cell-final">${ragSingle(r.rag)}</td>
         <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-final">${ragSingle(rowOverall)}</td>
         <td class="cell-usage">${fmtNum(r.touched)}</td>
@@ -1997,7 +1986,6 @@ function renderRooftop() {
       <td class="frozen frozen-6">${fmtMoney(tMrr)}</td>
       <td class="frozen frozen-7">${fmtMoney(tLiveArr)}</td>
       <td class="cell-roi">—</td>
-      <td class="cell-final">—</td>
       <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
       <td class="cell-final">${ragStack(tOverall)}</td>
       <td class="cell-usage">${fmtNum(tTouch)}</td>
