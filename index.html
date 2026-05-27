@@ -458,6 +458,45 @@ function csatRagCountsFor(eid) {
   return out;
 }
 
+// Date-filtered CSAT for the active period (MTD / Last Month / L2L / custom).
+// CSAT tab (gid=701797891) Column A is the reading date. When user picks an
+// MTD or custom date range, the Communication RAG should reflect ONLY readings
+// whose date_iso falls in that window. Returns G/A/R from the AVG Comm Avg.
+// across in-range readings; NA when no readings in window.
+function csatRagInRange(eid, en) {
+  const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
+  if (!arr.length) {
+    // No history captured (eid blank or no readings) — fall back to the latest
+    // reading via name match (best effort for Studio rows w/o eid).
+    return csatRag(eid, en);
+  }
+  const range = periodRange();
+  const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
+  if (!inRange.length) return 'NA';
+  const avgs = inRange.map(r => Number(r.avg)).filter(v => v != null && !isNaN(v));
+  if (!avgs.length) return 'NA';
+  const v = avgs.reduce((s,x) => s + x, 0) / avgs.length;
+  if (v < 2.5) return 'Red';
+  if (v < 4)   return 'Amber';
+  return 'Green';
+}
+
+// Same as csatRagCountsFor() but filtered to the active periodRange(). Used by
+// the Rooftop View Communication column so it tracks the date selector.
+function csatRagCountsForInRange(eid) {
+  const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
+  if (!arr.length) return {};
+  const range = periodRange();
+  const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
+  if (!inRange.length) return {};
+  const out = {};
+  inRange.forEach(r => {
+    const k = r.rag || 'NA';
+    out[k] = (out[k] || 0) + 1;
+  });
+  return out;
+}
+
 // Studio and Vini are treated as independent products. Each tab reads its CSM
 // roster from its own source — no cross-tab fallback. Studio uses S_COL.csm
 // from the sheet snapshot; Vini uses VINI_RID_TO_CSM populated by the gviz
@@ -1001,7 +1040,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     if (seenEnAll.has(en)) return false;
     seenEnAll.add(en); return true;
   });
-  const commRagCounts = countBy(allByEn, r => csatRag(null, r[S_COL.en]));
+  const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
   const cf = countBy(active, r => r[S_COL.cf]);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
   const mbr = countBy(active, r => r[S_COL.mbr]);
@@ -1163,7 +1202,9 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const ticketRag = scoreRag(trag, 85, 65);
   // Communication RAG — CSAT-derived, one rating per enterprise. Source: avg of
   // meeting/thread/ticket/call CSAT from gid=701797891 → NA/Red/Amber/Green.
-  const commRagCounts = countBy(allByEid, r => csatRag(r.eid, r.en));
+  // Date-filtered to the active period so MTD / LM / custom-range narrows the
+  // CSAT signal to readings inside that window.
+  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
   const cf = countBy(active, r => r.cf);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
   const mbr = countBy(active, r => r.mbr);
@@ -1242,8 +1283,12 @@ function renderKpiStudio(rows, targetId) {
   const pen = sumBy(active, r => r[S_COL.pen]);
   const prag = countBy(active, r => r[S_COL.prag]);
   const res = avgBy(active, r => r[S_COL.res]);
+  // Overall Payment RAG (score-based) — single G/A/R for the current filter.
+  // Same thresholds as the Vini Payment Score card (80+/60+).
+  const paymentRagOverall = scoreRag(prag, 80, 60);
   // Communication RAG — CSAT-derived per enterprise (gid=701797891). Match by
-  // enterprise name (Studio rows don't have an EID).
+  // enterprise name (Studio rows don't have an EID). Use csatRagInRange so the
+  // RAG reflects only readings whose date falls in the selected period.
   const seenEnAll = new Set();
   const allByEn = rows.filter(r => {
     const en = r[S_COL.en];
@@ -1251,7 +1296,9 @@ function renderKpiStudio(rows, targetId) {
     if (seenEnAll.has(en)) return false;
     seenEnAll.add(en); return true;
   });
-  const commRagCounts = countBy(allByEn, r => csatRag(null, r[S_COL.en]));
+  const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
+  // Overall Communication RAG — same score formula as Tickets (85+/65+).
+  const commRagOverall = scoreRag(commRagCounts, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid six';
@@ -1259,9 +1306,9 @@ function renderKpiStudio(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
     <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (&gt;12h)</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
-    <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragStack(prag)}</div><div class="kpi-sub">${prag.Green||0} Green · ${prag.Red||0} Red</div></div>
+    <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSingle(paymentRagOverall)}</div><div class="kpi-sub">${(prag.Green||0)} G · ${(prag.Amber||0)} A · ${(prag.Red||0)} R · ${(prag.NA||0)} NA</div></div>
     <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
-    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragStack(commRagCounts)}</div><div class="kpi-sub">${commRagCounts.Green||0} Green · ${commRagCounts.Red||0} Red · CSAT</div></div>
+    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSingle(commRagOverall)}</div><div class="kpi-sub">${(commRagCounts.Green||0)} G · ${(commRagCounts.Amber||0)} A · ${(commRagCounts.Red||0)} R · ${(commRagCounts.NA||0)} NA · CSAT</div></div>
   `;
 }
 function renderKpiVini(rows, targetId) {
@@ -1299,8 +1346,14 @@ function renderKpiVini(rows, targetId) {
     seenEidAll.add(r.eid); return true;
   });
   const ps = countBy(allByEid, r => r.ps);
-  // Communication RAG — CSAT-derived per enterprise (gid=701797891)
-  const commRagCounts = countBy(allByEid, r => csatRag(r.eid, r.en));
+  // Overall Payment Score (filter-level RAG) — score-based with 80/60 thresh.
+  const paymentRagOverall = scoreRag(ps, 80, 60);
+  // Communication RAG — CSAT-derived per enterprise (gid=701797891). Date-
+  // filtered to the active period so MTD / Last Month / custom range narrow
+  // the CSAT signal to readings inside that window.
+  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
+  // Overall Communication RAG — score-based with 85/65 thresh (matches Tickets).
+  const commRagOverall = scoreRag(commRagCounts, 85, 65);
   const seenEidActive = new Set();
   const dedupedActiveByEid = active.filter(r => {
     if (!r.eid) return true;
@@ -1317,9 +1370,9 @@ function renderKpiVini(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Churned ARR</div><div class="kpi-value red-c">${fmtMoney(churnedArr)}</div><div class="kpi-sub">${churnedN} rooftops · ${churnRows.length} agents</div></div>
     <div class="kpi"><div class="kpi-label">Appointments Booked</div><div class="kpi-value green-c">${fmtNum(appts)}</div><div class="kpi-sub">${fmtNum(qualified)} qualified · ${fmtNum(touched)} touched</div></div>
     <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span style="font-size:14px;color:var(--text-3);font-weight:500">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
-    <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragStack(ps)}</div><div class="kpi-sub">${ps.Green||0} Green · ${ps.Red||0} Red</div></div>
+    <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragSingle(paymentRagOverall)}</div><div class="kpi-sub">${(ps.Green||0)} G · ${(ps.Amber||0)} A · ${(ps.Red||0)} R · ${(ps.NA||0)} NA</div></div>
     <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
-    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragStack(commRagCounts)}</div><div class="kpi-sub">${commRagCounts.Green||0} Green · ${commRagCounts.Red||0} Red · CSAT</div></div>
+    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSingle(commRagOverall)}</div><div class="kpi-sub">${(commRagCounts.Green||0)} G · ${(commRagCounts.Amber||0)} A · ${(commRagCounts.Red||0)} R · ${(commRagCounts.NA||0)} NA · CSAT</div></div>
   `;
 }
 
@@ -1527,7 +1580,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(r[S_COL.ota])}</td>
         <td class="cell-tickets">${fmtHrs(r[S_COL.res])}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }))}</td>
-        <td class="cell-comm">${ragSingle(csatRag(null, r[S_COL.en]))}</td>
+        <td class="cell-comm">${ragSingle(csatRagInRange(null, r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
@@ -1608,7 +1661,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(r.otaMax)}</td>
         <td class="cell-tickets">${fmtHrs(r.avgRes)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }))}</td>
-        <td class="cell-comm">${ragStack(csatRagCountsFor(r.eid))}</td>
+        <td class="cell-comm">${ragStack(csatRagCountsForInRange(r.eid))}</td>
         <td class="cell-leader">${r.mbr?ragSingle(r.mbr):'—'}</td>
         <td class="cell-leader">${r.cf||'—'}</td>
       </tr>`;
