@@ -764,17 +764,26 @@ function viniAggregateRooftops() {
       ? a.resVals.reduce((s,v)=>s+v,0) / a.resVals.length
       : 0;
 
-    // Ticket_Dump overlay (per-enterprise authoritative values from gid=832733618).
-    // When sync.ps1 ships a vini_tix dict, those values FULLY OVERRIDE the
-    // daily-fold (Ticket_Dump is the source of truth — daily Vini sheet ticket
-    // cols are sparse). Zero is a valid override (means "no tickets") so we
-    // assign directly rather than using || a.cr.
+    // Ticket_Dump overlay (gid=832733618). sync.ps1 ships RAW per-ticket rows
+    // under VINI_TIX[eid].rows = [{c (created), o (open), r (resHrs), a (ageHrs)}].
+    // We filter those rows to the active period using `from`/`to` from the
+    // outer periodRange() call so "Avg Resolution" actually averages tickets
+    // CREATED in MTD (matching the user's spreadsheet selection logic), not
+    // a static all-time average.
+    //
+    // When VINI_TIX is absent or the enterprise has no entry, the daily-fold
+    // values from above survive (used to be Tickets#Created cols on the Vini
+    // tab — sparse but better than nothing).
     const tx = a.eid && VINI_TIX[a.eid];
-    if (tx) {
-      if (tx.cr  != null) a.cr     = Number(tx.cr);
-      if (tx.op  != null) a.op     = Number(tx.op);
-      if (tx.ota != null) a.otaMax = Number(tx.ota);
-      if (tx.res != null) a.avgRes = Number(tx.res);
+    if (tx && Array.isArray(tx.rows)) {
+      const tixInRange = tx.rows.filter(t => t.c && t.c >= from && t.c <= to);
+      a.cr = tixInRange.length;
+      const openRows = tixInRange.filter(t => t.o);
+      a.op = openRows.length;
+      const ageVals = openRows.map(t => Number(t.a)).filter(v => v > 0);
+      a.otaMax = ageVals.length ? ageVals.reduce((s,v)=>s+v,0) / ageVals.length : 0;
+      const resVals = tixInRange.filter(t => !t.o).map(t => Number(t.r)).filter(v => v > 0);
+      a.avgRes = resVals.length ? resVals.reduce((s,v)=>s+v,0) / resVals.length : 0;
     }
   });
   return Object.values(byKey);
@@ -1108,8 +1117,10 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // Communication RAG — CSAT-derived per enterprise (gid=701797891). Studio
   // rows don't carry an EID, so match by enterprise name (S_COL.en).
   // Dedupe by enterprise so the count is per-enterprise not per-rooftop.
+  // Live-only: only ACTIVE rooftops contribute to Communication (matches the
+  // user spec — churned accounts don't reflect current team comm health).
   const seenEnAll = new Set();
-  const allByEn = rows.filter(r => {
+  const allByEn = active.filter(r => {
     const en = r[S_COL.en];
     if (!en) return true;
     if (seenEnAll.has(en)) return false;
@@ -1278,11 +1289,16 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
   //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
   const ticketRag = scoreRag(trag, 85, 65);
-  // Communication RAG — CSAT-derived, one rating per enterprise. Source: avg of
-  // meeting/thread/ticket/call CSAT from gid=701797891 → NA/Red/Amber/Green.
-  // Date-filtered to the active period so MTD / LM / custom-range narrows the
+  // Communication RAG — CSAT-derived, one rating per enterprise. Per the user
+  // spec: only enterprises with LIVE status (any active agent contract) count.
+  // Date-filtered to the active period so MTD / LM / custom-range narrow the
   // CSAT signal to readings inside that window.
-  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
+  const liveEidsComm = new Set();
+  rows.forEach(r => {
+    if (r.eid && String(r.stage||'').toLowerCase() !== 'churned') liveEidsComm.add(r.eid);
+  });
+  const liveByEidComm = allByEid.filter(r => r.eid && liveEidsComm.has(r.eid));
+  const commRagCounts = countBy(liveByEidComm, r => csatRagInRange(r.eid, r.en));
   const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
   const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r.cf);
@@ -1368,10 +1384,11 @@ function renderKpiStudio(rows, targetId) {
   // Same thresholds as the Vini Payment Score card (80+/60+).
   const paymentRagOverall = scoreRag(prag, 80, 60);
   // Communication RAG — CSAT-derived per enterprise (gid=701797891). Match by
-  // enterprise name (Studio rows don't have an EID). Use csatRagInRange so the
-  // RAG reflects only readings whose date falls in the selected period.
+  // enterprise name (Studio rows don't have an EID). Live-only: restrict to
+  // ACTIVE rooftops (not churned) per the user spec — churned accounts no
+  // longer represent the team's communication health.
   const seenEnAll = new Set();
-  const allByEn = rows.filter(r => {
+  const allByEn = active.filter(r => {
     const en = r[S_COL.en];
     if (!en) return true;
     if (seenEnAll.has(en)) return false;
@@ -1433,10 +1450,17 @@ function renderKpiVini(rows, targetId) {
   const ps = countBy(allByEid, r => r.ps);
   // Overall Payment Score (filter-level RAG) — score-based with 80/60 thresh.
   const paymentRagOverall = scoreRag(ps, 80, 60);
-  // Communication RAG — CSAT-derived per enterprise (gid=701797891). Date-
-  // filtered to the active period so MTD / Last Month / custom range narrow
-  // the CSAT signal to readings inside that window.
-  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
+  // Communication RAG — CSAT-derived per enterprise (gid=701797891). Per the
+  // user spec: "match the enterprise with gid 674556270 with live status" —
+  // restrict to enterprises that have at least one LIVE agent contract.
+  // Otherwise churned-only enterprises (no longer active customers) would
+  // skew the breakdown. Date-filtered to the active period too.
+  const liveEids = new Set();
+  rows.forEach(r => {
+    if (r.eid && String(r.stage||'').toLowerCase() !== 'churned') liveEids.add(r.eid);
+  });
+  const liveByEid = allByEid.filter(r => r.eid && liveEids.has(r.eid));
+  const commRagCounts = countBy(liveByEid, r => csatRagInRange(r.eid, r.en));
   // Overall Communication RAG — uses COMM weights (G:100, A:60, R:20) and
   // 80/60 thresholds per spec (different from Tickets/Payment which use the
   // default G:100, A:50, R:0 weights).
@@ -1645,7 +1669,29 @@ function renderRooftop() {
       '<th class="cell-comm">RAG</th>' +
       '<th class="cell-leader">MBR</th>' +
       '</tr></thead><tbody>';
-    rows.slice(0,500).forEach((r,i) => {
+    // Track aggregates for the TOTAL row at the bottom (Studio metrics).
+    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0, sUnr=0, sCr=0;
+    const sUfVals=[], sWsVals=[], sIscVals=[], sOtaVals=[], sResVals=[];
+    const sRag={}, sChurn={}, sT1={}, sT2={}, sT3={}, sPrag={}, sTrag={}, sComm={}, sMbr={};
+    const inc = (d,k) => { if (k) d[k] = (d[k]||0)+1; };
+    const sliceN = Math.min(rows.length, 500);
+    rows.slice(0, sliceN).forEach((r,i) => {
+      // Accumulate
+      sMrr += Number(r[S_COL.mrr])||0; sArr += Number(r[S_COL.arr])||0;
+      sAv += Number(r[S_COL.av])||0;   sCv += Number(r[S_COL.cv])||0; sAcv += Number(r[S_COL.acv])||0;
+      sPen += Number(r[S_COL.pen])||0; sUnr += Number(r[S_COL.unr])||0; sCr += Number(r[S_COL.cr])||0;
+      if (r[S_COL.uf]  > 0) sUfVals.push(Number(r[S_COL.uf]));
+      if (r[S_COL.ws]  > 0) sWsVals.push(Number(r[S_COL.ws]));
+      if (r[S_COL.isc] > 0) sIscVals.push(Number(r[S_COL.isc]));
+      if (r[S_COL.ota] > 0) sOtaVals.push(Number(r[S_COL.ota]));
+      if (r[S_COL.res] > 0) sResVals.push(Number(r[S_COL.res]));
+      inc(sRag,   r[S_COL.rag]);
+      inc(sChurn, r[S_COL.churn]);
+      inc(sT1, r[S_COL.t1]); inc(sT2, r[S_COL.t2]); inc(sT3, r[S_COL.t3]);
+      inc(sPrag, r[S_COL.prag]);
+      inc(sTrag, computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }));
+      inc(sComm, csatRagInRange(null, r[S_COL.en]));
+      inc(sMbr, r[S_COL.mbr]);
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
@@ -1677,6 +1723,37 @@ function renderRooftop() {
       </tr>`;
     });
     if (rows.length > 500) html += `<tr><td colspan="27" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
+    const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
+    html += `<tr class="total-row">
+      <td class="left idx frozen frozen-1"></td>
+      <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
+      <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
+      <td class="left frozen frozen-4">—</td>
+      <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
+      <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
+      <td class="cell-final">${ragStack(sRag)}</td>
+      <td class="cell-final">—</td>
+      <td class="cell-usage">${fmtNum(sAv)}</td>
+      <td class="cell-usage">${fmtNum(sCv)}</td>
+      <td class="cell-usage">${fmtNum(sAcv)}</td>
+      <td class="cell-usage">${sUfVals.length?avg(sUfVals).toFixed(2):'—'}</td>
+      <td class="cell-usage">${fmtNum(sPen)}</td>
+      <td class="cell-usage">${sWsVals.length?avg(sWsVals).toFixed(1):'—'}</td>
+      <td class="cell-usage">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
+      <td class="cell-roi">—</td>
+      <td class="cell-payment">${payTileAgg(sT1)}</td>
+      <td class="cell-payment">${payTileAgg(sT2)}</td>
+      <td class="cell-payment">${payTileAgg(sT3)}</td>
+      <td class="cell-payment">${ragStack(sPrag)}</td>
+      <td class="cell-tickets">${fmtNum(sUnr)}</td>
+      <td class="cell-tickets">${fmtNum(sCr)}</td>
+      <td class="cell-tickets">${fmtHrs(avg(sOtaVals))}</td>
+      <td class="cell-tickets">${fmtHrs(avg(sResVals))}</td>
+      <td class="cell-tickets">${ragStack(sTrag)}</td>
+      <td class="cell-comm">${ragStack(sComm)}</td>
+      <td class="cell-leader">${ragStack(sMbr)}</td>
+    </tr>`;
     html += '</tbody></table>';
     document.getElementById('rooftop-table-wrap').innerHTML = html;
   } else {
