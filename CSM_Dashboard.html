@@ -63,6 +63,21 @@
   .kpi-value.blue{color:var(--blue)} .kpi-value.green-c{color:var(--green)}
   .kpi-value.red-c{color:#DC2626} .kpi-value.amber-c{color:var(--amber)}
   .kpi-sub{font-size:11px;color:var(--text-3);margin-top:5px;display:inline-block;line-height:1.3}
+  /* Labeled RAG square box used on Payment Score / Communication RAG KPI tiles */
+  .rag-square{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border-radius:6px;font-weight:700;font-size:13px;letter-spacing:0.5px;min-width:48px}
+  .rag-square.rag-g{background:var(--green-bg);color:var(--green)}
+  .rag-square.rag-a{background:var(--amber-bg);color:var(--amber)}
+  .rag-square.rag-r{background:var(--red-bg);color:#DC2626}
+  .rag-square.rag-n{background:#F3F4F6;color:var(--text-3)}
+  /* Color-graded count tokens (kpi-sub breakdown like "11 G · 5 A · 6 R · 5 NA") */
+  .ct-g{color:var(--green);font-weight:600}
+  .ct-a{color:var(--amber);font-weight:600}
+  .ct-r{color:#DC2626;font-weight:600}
+  .ct-n{color:var(--text-3);font-weight:500}
+  /* Inline (non-table) RoI color, for the Conv Rate & RoI Factor KPI tile */
+  .roi-text-g{color:var(--green);font-weight:600}
+  .roi-text-a{color:var(--amber);font-weight:600}
+  .roi-text-r{color:#DC2626;font-weight:600}
 
   .section-block{margin-bottom:22px}
   .section-block>h2{font-size:15px;font-weight:600;margin:14px 0 10px;color:var(--text);letter-spacing:-0.01em}
@@ -570,7 +585,11 @@ let state = {
 // ============================================================
 // DATE HELPERS
 // ============================================================
-const TODAY = new Date('2026-05-21');
+// TODAY is the dashboard's reference "now". Use real wall-clock so MTD /
+// Last Month / L2L always reflect the actual calendar — previously this was
+// hardcoded to '2026-05-21' which silently dropped sheet rows dated after
+// May 21 (e.g. a CSAT reading on May 22 was excluded from MTD).
+const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
 function periodRange(p) {
   // The custom date range applies ONLY for the active-period call (no token /
   // 'CUSTOM'). Callers that pass 'MTD' / 'LM' / 'L2L' explicitly always get
@@ -842,14 +861,56 @@ function ragSingle(v) {
 }
 
 // Score-based aggregate RAG. Given a distribution of per-enterprise RAGs (e.g.
-// counts = {Green: 3, Amber: 2, Red: 1}) and thresholds for Green/Amber:
-//   Weight: Green=100, Amber=50, Red=0   (NA excluded from numerator AND denominator)
-//   Score = (G*100 + A*50 + R*0) / (G + A + R)
-//   Score >= greenThresh → Green
-//   Score >= amberThresh → Amber
-//   Score < amberThresh  → Red
-//   Zero non-NA entries  → NA
-function scoreRag(counts, greenThresh, amberThresh) {
+// counts = {Green: 3, Amber: 2, Red: 1}), per-bucket weights, and thresholds:
+//   Score = (G*wG + A*wA + R*wR) / (G + A + R)     (NA excluded from both)
+//   Score >= greenThresh → Green   Score >= amberThresh → Amber   else Red
+// Default weights (G:100 A:50 R:0) match the Tickets/Payment buckets.
+// Communication overrides with COMM_WEIGHTS = {G:100 A:60 R:20}.
+function scoreValue(counts, weights) {
+  const w = weights || { G: 100, A: 50, R: 0 };
+  const g = counts.Green || 0;
+  const a = counts.Amber || 0;
+  const r = counts.Red   || 0;
+  const total = g + a + r;
+  if (total === 0) return null;
+  return (g * w.G + a * w.A + r * w.R) / total;
+}
+function scoreRag(counts, greenThresh, amberThresh, weights) {
+  const score = scoreValue(counts, weights);
+  if (score == null) return 'NA';
+  if (score >= greenThresh) return 'Green';
+  if (score >= amberThresh) return 'Amber';
+  return 'Red';
+}
+// Communication-specific weights & thresholds (per user spec).
+const COMM_WEIGHTS = { G: 100, A: 60, R: 20 };
+const COMM_GREEN_THRESH = 80;
+const COMM_AMBER_THRESH = 60;
+
+// Labeled square chip showing "RAG" text colored by the overall G/A/R/NA.
+// Used on KPI scorecards (Payment Score, Communication RAG) in place of a
+// single-letter chip so the user sees "RAG" + color rather than just "A".
+function ragSquareBox(v) {
+  const cls = v === 'Green' ? 'rag-g'
+            : v === 'Amber' ? 'rag-a'
+            : v === 'Red'   ? 'rag-r'
+            : 'rag-n';
+  return `<span class="rag-square ${cls}">RAG</span>`;
+}
+// Color-graded count breakdown for KPI sublabels: "11 G · 5 A · 6 R · 5 NA"
+// with each token tinted to its bucket color.
+function ragCountsColored(counts, suffix) {
+  const g = counts.Green || 0;
+  const a = counts.Amber || 0;
+  const r = counts.Red   || 0;
+  const n = counts.NA    || 0;
+  const tail = suffix ? ` · ${suffix}` : '';
+  return `<span class="ct-g">${g} G</span> · <span class="ct-a">${a} A</span> · <span class="ct-r">${r} R</span> · <span class="ct-n">${n} NA</span>${tail}`;
+}
+
+// Legacy entry point kept as a stub so existing call-sites still link; the
+// real body now lives in scoreValue() above. (Kept commented for tracability.)
+function __scoreRagLegacy(counts, greenThresh, amberThresh) {
   const g = counts.Green || 0;
   const a = counts.Amber || 0;
   const r = counts.Red   || 0;
@@ -863,11 +924,20 @@ function scoreRag(counts, greenThresh, amberThresh) {
 
 // Color class for RoI factor display (text color, not badge).
 //   >=4 Green | 2 <= x < 4 Amber | <2 Red | null/0 default
+// Table-scoped variant (roi-g / roi-a / roi-r are only valid inside table.data).
 function roiColorClass(val) {
   if (val == null || val === 0 || isNaN(val)) return '';
   if (val >= 4) return 'roi-g';
   if (val >= 2) return 'roi-a';
   return 'roi-r';
+}
+// Same logic, but returns the globally-scoped class names suitable for use
+// outside the data table (e.g. the Conv Rate & RoI Factor KPI tile).
+function roiInlineClass(val) {
+  if (val == null || val === 0 || isNaN(val)) return '';
+  if (val >= 4) return 'roi-text-g';
+  if (val >= 2) return 'roi-text-a';
+  return 'roi-text-r';
 }
 
 // Agent age from go-live date → "Nm Dd" compact string ("9m 22d", "0m 5d").
@@ -972,7 +1042,7 @@ const S_GROUPS = [
   { l:'RoI',          span:1, c:'g-roi' },
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
   { l:'Tickets',      span:5, c:'g-tickets' },
-  { l:'Communication', span:1, c:'g-comm' },
+  { l:'Communication', span:2, c:'g-comm' },       // Score (numeric + counts) + Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
 const S_COLS_SHARED = [
@@ -993,8 +1063,8 @@ const S_COLS_SHARED = [
   // 5 Tickets
   {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'}, {l:'Ticket RAG', cc:'cell-tickets'},
-  // 1 Comm — CSAT-derived RAG per enterprise
-  {l:'RAG', cc:'cell-comm'},
+  // 2 Comm — Score (weighted, with count) + Final RAG
+  {l:'Score', cc:'cell-comm'}, {l:'Final RAG', cc:'cell-comm'},
   // 1 Leader
   {l:'MBR', cc:'cell-leader'},
 ];
@@ -1041,6 +1111,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     seenEnAll.add(en); return true;
   });
   const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
+  const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
+  const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r[S_COL.cf]);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
   const mbr = countBy(active, r => r[S_COL.mbr]);
@@ -1065,7 +1137,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td>
-    <td class="cell-comm">${ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${commScoreNum==null?'—':`<span style="font-weight:600">${commScoreNum.toFixed(0)}</span> <span style="font-size:10px">${ragStack(commRagCounts)}</span>`}</td>
+    <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td>
   </tr>`;
 }
@@ -1108,7 +1181,7 @@ const V_GROUPS = [
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
   { l:'Tickets',      span:6, c:'g-tickets' },              // Created · Open · Ageing · AvgRes · Account Level RAG · RAG (score)
-  { l:'Communication', span:1, c:'g-comm' },       // RAG only (the Red signal)
+  { l:'Communication', span:2, c:'g-comm' },       // Score (weighted, with count) + Final RAG
   { l:'Leadership',   span:2, c:'g-leader' },      // MBR + Contact Freq
 ];
 const V_COLS_SHARED = [
@@ -1128,7 +1201,7 @@ const V_COLS_SHARED = [
   {l:'# Created', cc:'cell-tickets'}, {l:'# Open', cc:'cell-tickets'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'},
   {l:'Account Level RAG', cc:'cell-tickets'}, {l:'RAG', cc:'cell-tickets'},
-  {l:'RAG', cc:'cell-comm'},                       // Was "Red"; renamed per spec
+  {l:'Score', cc:'cell-comm'}, {l:'Final RAG', cc:'cell-comm'},
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
 
@@ -1205,6 +1278,8 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // Date-filtered to the active period so MTD / LM / custom-range narrows the
   // CSAT signal to readings inside that window.
   const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
+  const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
+  const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r.cf);
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
   const mbr = countBy(active, r => r.mbr);
@@ -1236,7 +1311,8 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
     <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(ticketRag)}</td>
-    <td class="cell-comm">${ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${commScoreNum==null?'—':`<span style="font-weight:600">${commScoreNum.toFixed(0)}</span> <span style="font-size:10px">${ragStack(commRagCounts)}</span>`}</td>
+    <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
   </tr>`;
 }
@@ -1297,8 +1373,8 @@ function renderKpiStudio(rows, targetId) {
     seenEnAll.add(en); return true;
   });
   const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
-  // Overall Communication RAG — same score formula as Tickets (85+/65+).
-  const commRagOverall = scoreRag(commRagCounts, 85, 65);
+  // Overall Communication RAG — COMM weights (G:100, A:60, R:20), 80/60 thresh.
+  const commRagOverall = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
 
   const el = document.getElementById(targetId || 'kpi-strip');
   el.className = 'kpi-grid six';
@@ -1306,9 +1382,9 @@ function renderKpiStudio(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
     <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (&gt;12h)</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
-    <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSingle(paymentRagOverall)}</div><div class="kpi-sub">${(prag.Green||0)} G · ${(prag.Amber||0)} A · ${(prag.Red||0)} R · ${(prag.NA||0)} NA</div></div>
+    <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(prag)}</div></div>
     <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
-    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSingle(commRagOverall)}</div><div class="kpi-sub">${(commRagCounts.Green||0)} G · ${(commRagCounts.Amber||0)} A · ${(commRagCounts.Red||0)} R · ${(commRagCounts.NA||0)} NA · CSAT</div></div>
+    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
   `;
 }
 function renderKpiVini(rows, targetId) {
@@ -1352,8 +1428,10 @@ function renderKpiVini(rows, targetId) {
   // filtered to the active period so MTD / Last Month / custom range narrow
   // the CSAT signal to readings inside that window.
   const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
-  // Overall Communication RAG — score-based with 85/65 thresh (matches Tickets).
-  const commRagOverall = scoreRag(commRagCounts, 85, 65);
+  // Overall Communication RAG — uses COMM weights (G:100, A:60, R:20) and
+  // 80/60 thresholds per spec (different from Tickets/Payment which use the
+  // default G:100, A:50, R:0 weights).
+  const commRagOverall = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const seenEidActive = new Set();
   const dedupedActiveByEid = active.filter(r => {
     if (!r.eid) return true;
@@ -1369,10 +1447,10 @@ function renderKpiVini(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Live ARR</div><div class="kpi-value blue">${fmtMoney(arr - churnedArr)}</div><div class="kpi-sub">MRR · ${fmtMoney(activeMrr)} · ${totalRooftops - churnedN} rftps · ${activeN} agents</div></div>
     <div class="kpi"><div class="kpi-label">Churned ARR</div><div class="kpi-value red-c">${fmtMoney(churnedArr)}</div><div class="kpi-sub">${churnedN} rooftops · ${churnRows.length} agents</div></div>
     <div class="kpi"><div class="kpi-label">Appointments Booked</div><div class="kpi-value green-c">${fmtNum(appts)}</div><div class="kpi-sub">${fmtNum(qualified)} qualified · ${fmtNum(touched)} touched</div></div>
-    <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span style="font-size:14px;color:var(--text-3);font-weight:500">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
-    <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragSingle(paymentRagOverall)}</div><div class="kpi-sub">${(ps.Green||0)} G · ${(ps.Amber||0)} A · ${(ps.Red||0)} R · ${(ps.NA||0)} NA</div></div>
+    <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span class="${roiInlineClass(roi)}" style="font-size:14px">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
+    <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(ps)}</div></div>
     <div class="kpi"><div class="kpi-label">Avg Resolution time</div><div class="kpi-value ${res>48?'red-c':res>24?'amber-c':'green-c'}">${fmtHrs(res)}</div><div class="kpi-sub">Tickets</div></div>
-    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSingle(commRagOverall)}</div><div class="kpi-sub">${(commRagCounts.Green||0)} G · ${(commRagCounts.Amber||0)} A · ${(commRagCounts.Red||0)} R · ${(commRagCounts.NA||0)} NA · CSAT</div></div>
+    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
   `;
 }
 
@@ -1611,7 +1689,7 @@ function renderRooftop() {
       '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="1" class="g-comm">Communication</th>' +
+      '<th colspan="2" class="g-comm">Communication</th>' +   // Score (numeric+counts) + Final RAG
       '<th colspan="2" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
@@ -1629,12 +1707,46 @@ function renderRooftop() {
       '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Account Level RAG</th>' +
       '<th class="cell-tickets">#Created</th><th class="cell-tickets">#Open</th>' +
       '<th class="cell-tickets">Open Ageing</th><th class="cell-tickets">Avg Res</th><th class="cell-tickets">Account Level RAG</th>' +
-      '<th class="cell-comm">RAG</th>' +
+      '<th class="cell-comm">Score</th><th class="cell-comm">Final RAG</th>' +
       '<th class="cell-leader">MBR</th><th class="cell-leader">Contact Freq</th>' +
       '</tr></thead><tbody>';
+    // Track aggregates for the Total row at the bottom.
+    let tMrr=0, tLiveArr=0, tTouch=0, tQual=0, tAppts=0, tApptVal=0, tCr=0, tOp=0;
+    const tOtaVals=[], tResVals=[], tConvVals=[], tRoiVals=[];
+    const tT1={}, tT2={}, tT3={}, tPs={}, tTrag={}, tCommScore={}, tFinalRag={}, tMbr={}, tCf={};
+    let tChurned=0, tRsNo=0;
+    const incCount = (dict, key) => { if (!key) return; dict[key] = (dict[key]||0)+1; };
+    const seenEidComm = new Set();   // ensure comm counts are per-enterprise
     rows.forEach((r,i) => {
       const isChurned = String(r.stage||'').toLowerCase() === 'churned';
       const liveArr = isChurned ? 0 : r.arr;
+      // Per-row Communication Score (numeric) + Final RAG (single chip).
+      const commCounts = csatRagCountsForInRange(r.eid);
+      const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
+      const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+      const commScoreCell = commScoreNum == null
+        ? '<span style="color:var(--text-4)">—</span>'
+        : `<span style="font-weight:600">${commScoreNum.toFixed(0)}</span> <span style="font-size:10px">${ragStack(commCounts)}</span>`;
+      // Total-row accumulators
+      tMrr += Number(r.mrr)||0;  tLiveArr += Number(liveArr)||0;
+      tTouch += Number(r.touched)||0; tQual += Number(r.qualified)||0;
+      tAppts += Number(r.appts)||0;   tApptVal += Number(r.apptValue)||0;
+      tCr += Number(r.cr)||0; tOp += Number(r.op)||0;
+      if (r.otaMax > 0) tOtaVals.push(r.otaMax);
+      if (r.avgRes > 0) tResVals.push(r.avgRes);
+      if (r.convRate > 0) tConvVals.push(r.convRate);
+      if (r.roi > 0) tRoiVals.push(r.roi);
+      if (isChurned) tChurned++;
+      if (String(r.rs||'').toLowerCase().startsWith('no')) tRsNo++;
+      incCount(tT1, r.t1); incCount(tT2, r.t2); incCount(tT3, r.t3);
+      incCount(tPs, r.ps);
+      incCount(tTrag, computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }));
+      if (r.eid && !seenEidComm.has(r.eid)) {
+        seenEidComm.add(r.eid);
+        Object.entries(commCounts).forEach(([k,v]) => { tCommScore[k] = (tCommScore[k]||0) + v; });
+        incCount(tFinalRag, commFinalRag);
+      }
+      incCount(tMbr, r.mbr); incCount(tCf, r.cf);
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r.rn||'—'}</td>
@@ -1661,11 +1773,53 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(r.otaMax)}</td>
         <td class="cell-tickets">${fmtHrs(r.avgRes)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }))}</td>
-        <td class="cell-comm">${ragStack(csatRagCountsForInRange(r.eid))}</td>
+        <td class="cell-comm">${commScoreCell}</td>
+        <td class="cell-comm">${ragSingle(commFinalRag)}</td>
         <td class="cell-leader">${r.mbr?ragSingle(r.mbr):'—'}</td>
         <td class="cell-leader">${r.cf||'—'}</td>
       </tr>`;
     });
+    // ─── TOTAL row ────────────────────────────────────────────────────────
+    // Sums for daily counters; averages for "rate"/"latency" columns; stacked
+    // RAG counts for buckets. Conv Rate is recomputed from totals (not mean of
+    // means) so it matches the KPI strip; same for RoI Factor.
+    const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
+    const totalConv = tQual>0 ? tAppts/tQual : 0;
+    const totalRoi  = tMrr>0  ? tApptVal/tMrr : 0;
+    const totalTrag = computeTicketRAG({ op:tOp, ota:avg(tOtaVals), res:avg(tResVals), cr:tCr });
+    const totalFinalComm = scoreRag(tCommScore, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+    const totalCommScoreNum = scoreValue(tCommScore, COMM_WEIGHTS);
+    html += `<tr class="total-row">
+      <td class="left idx frozen frozen-1"></td>
+      <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
+      <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${rows.length} rows</td>
+      <td class="left frozen frozen-4">—</td>
+      <td class="frozen frozen-5">—</td>
+      <td class="frozen frozen-6">${fmtMoney(tMrr)}</td>
+      <td class="frozen frozen-7">${fmtMoney(tLiveArr)}</td>
+      <td class="cell-roi">${tRsNo>0?`<span class="drill-red">${tRsNo} No</span>`:'—'}</td>
+      <td class="cell-final">—</td>
+      <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
+      <td class="cell-usage">${fmtNum(tTouch)}</td>
+      <td class="cell-usage">${fmtNum(tQual)}</td>
+      <td class="cell-usage">${fmtNum(tAppts)}</td>
+      <td class="cell-usage">${(totalConv*100).toFixed(1)}%</td>
+      <td class="cell-usage">${fmtMoney(tApptVal)}</td>
+      <td class="cell-roi ${roiColorClass(totalRoi)}">${totalRoi?totalRoi.toFixed(2)+'x':'—'}</td>
+      <td class="cell-payment">${payTileAgg(tT1)}</td>
+      <td class="cell-payment">${payTileAgg(tT2)}</td>
+      <td class="cell-payment">${payTileAgg(tT3)}</td>
+      <td class="cell-payment">${ragStack(tPs)}</td>
+      <td class="cell-tickets">${fmtNum(tCr)}</td>
+      <td class="cell-tickets">${fmtNum(tOp)}</td>
+      <td class="cell-tickets">${fmtHrs(avg(tOtaVals))}</td>
+      <td class="cell-tickets">${fmtHrs(avg(tResVals))}</td>
+      <td class="cell-tickets">${ragSingle(totalTrag)}</td>
+      <td class="cell-comm">${totalCommScoreNum==null?'—':`<span style="font-weight:600">${totalCommScoreNum.toFixed(0)}</span> <span style="font-size:10px">${ragStack(tCommScore)}</span>`}</td>
+      <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
+      <td class="cell-leader">${ragStack(tMbr)}</td>
+      <td class="cell-leader">—</td>
+    </tr>`;
     html += '</tbody></table>';
     document.getElementById('rooftop-table-wrap').innerHTML = html;
   }
