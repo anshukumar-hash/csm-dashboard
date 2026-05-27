@@ -954,6 +954,39 @@ function roiInlineClass(val) {
   return 'roi-text-r';
 }
 
+// Aggregate ticket stats TICKET-WEIGHTED (not enterprise-weighted) across a
+// list of enterprise IDs for the active period. Matches the user's spreadsheet
+// logic where the "Avg" footer is sum(resHrs) / count(tickets), not mean-of-
+// means. Per-row rendering keeps using a.cr / a.avgRes etc; this helper is
+// used by the KPI strip and the Total row where a cross-enterprise ticket-
+// weighted avg is expected.
+function aggregateTicketsForEids(eids) {
+  const range = periodRange();
+  let cr = 0, op = 0, resSum = 0, resCount = 0, ageSum = 0, ageCount = 0;
+  const seen = new Set();
+  for (const eid of eids) {
+    if (!eid || seen.has(eid)) continue;
+    seen.add(eid);
+    const tx = VINI_TIX[eid];
+    if (!tx || !Array.isArray(tx.rows)) continue;
+    for (const t of tx.rows) {
+      if (!t.c || t.c < range.from || t.c > range.to) continue;
+      cr++;
+      if (t.o) {
+        op++;
+        if (Number(t.a) > 0) { ageSum += Number(t.a); ageCount++; }
+      } else {
+        if (Number(t.r) > 0) { resSum += Number(t.r); resCount++; }
+      }
+    }
+  }
+  return {
+    cr, op,
+    ota: ageCount ? ageSum / ageCount : 0,
+    res: resCount ? resSum / resCount : 0
+  };
+}
+
 // Agent age from go-live date → "Nm Dd" compact string ("9m 22d", "0m 5d").
 // Returns "—" for blank / future / invalid dates.
 function fmtAgentAge(goLiveIso) {
@@ -1283,8 +1316,11 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // by the company, not by individual agent contracts.
   const cr = sumBy(allByEid, r => r.cr);
   const op = sumBy(allByEid, r => r.op);
-  const ota = avgBy(allByEid, r => r.otaMax);
-  const res = avgBy(allByEid, r => r.avgRes);
+  // Ticket-weighted Open Ageing / Avg Resolution (matches the user's sheet
+  // "Avg" footer: sum(hrs) / count(tickets), not mean-of-means across enterprises).
+  const tixAgg = aggregateTicketsForEids(allByEid.map(r => r.eid));
+  const ota = tixAgg.ota;
+  const res = tixAgg.res;
   const trag = countBy(allByEid, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
   // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
   //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
@@ -1471,7 +1507,11 @@ function renderKpiVini(rows, targetId) {
     if (seenEidActive.has(r.eid)) return false;
     seenEidActive.add(r.eid); return true;
   });
-  const res = avgBy(dedupedActiveByEid, r => r.avgRes);
+  // Avg Resolution time: ticket-weighted across all live enterprises in scope
+  // (sum of resHrs / count of resolved tickets) — matches the user's
+  // spreadsheet "Avg" selection footer, not mean-of-means.
+  const ticketAgg = aggregateTicketsForEids(dedupedActiveByEid.map(r => r.eid));
+  const res = ticketAgg.res;
   const commScore = activeN > 0 ? active.filter(r => r.cf).length / activeN * 100 : 0;
   // Ticket RAG (filter-level) — per-enterprise computeTicketRAG distribution
   // weighted with the default Payment/Ticket weights (G:100, A:50, R:0) and
@@ -1808,6 +1848,7 @@ function renderRooftop() {
     let tChurned=0, tRsNo=0;
     const incCount = (dict, key) => { if (!key) return; dict[key] = (dict[key]||0)+1; };
     const seenEidComm = new Set();   // ensure comm counts are per-enterprise
+    const seenEidTix  = new Set();   // ensure ticket counts are per-enterprise
     rows.forEach((r,i) => {
       const isChurned = String(r.stage||'').toLowerCase() === 'churned';
       const liveArr = isChurned ? 0 : r.arr;
@@ -1822,16 +1863,24 @@ function renderRooftop() {
       tMrr += Number(r.mrr)||0;  tLiveArr += Number(liveArr)||0;
       tTouch += Number(r.touched)||0; tQual += Number(r.qualified)||0;
       tAppts += Number(r.appts)||0;   tApptVal += Number(r.apptValue)||0;
-      tCr += Number(r.cr)||0; tOp += Number(r.op)||0;
-      if (r.otaMax > 0) tOtaVals.push(r.otaMax);
-      if (r.avgRes > 0) tResVals.push(r.avgRes);
+      // Ticket counts are per-enterprise (broadcast to each agent row). Dedup
+      // by eid before summing so 4 agents of the same enterprise don't 4x the
+      // # Created / # Open count. Avg of otaMax/avgRes is recomputed from raw
+      // ticket rows below (ticket-weighted) so we skip the per-row push here.
       if (r.convRate > 0) tConvVals.push(r.convRate);
       if (r.roi > 0) tRoiVals.push(r.roi);
       if (isChurned) tChurned++;
       if (String(r.rs||'').toLowerCase().startsWith('no')) tRsNo++;
       incCount(tT1, r.t1); incCount(tT2, r.t2); incCount(tT3, r.t3);
       incCount(tPs, r.ps);
-      incCount(tTrag, computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }));
+      // Per-enterprise dedup for ticket aggregates (cr/op are per-enterprise,
+      // broadcast to each agent row).
+      if (r.eid && !seenEidTix.has(r.eid)) {
+        seenEidTix.add(r.eid);
+        tCr += Number(r.cr) || 0;
+        tOp += Number(r.op) || 0;
+        incCount(tTrag, computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }));
+      }
       if (r.eid && !seenEidComm.has(r.eid)) {
         seenEidComm.add(r.eid);
         Object.entries(commCounts).forEach(([k,v]) => { tCommScore[k] = (tCommScore[k]||0) + v; });
@@ -1877,7 +1926,13 @@ function renderRooftop() {
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     const totalConv = tQual>0 ? tAppts/tQual : 0;
     const totalRoi  = tMrr>0  ? tApptVal/tMrr : 0;
-    const totalTrag = computeTicketRAG({ op:tOp, ota:avg(tOtaVals), res:avg(tResVals), cr:tCr });
+    // Ticket-weighted avg across all live enterprises in scope (matches the
+    // user's spreadsheet "Avg" footer). Uses raw vini_tix rows so we get
+    // sum(resHrs) / count(tickets) instead of mean-of-means.
+    const totalTixAgg = aggregateTicketsForEids(rows.map(r => r.eid));
+    const totalOta = totalTixAgg.ota;
+    const totalRes = totalTixAgg.res;
+    const totalTrag = computeTicketRAG({ op:tOp, ota:totalOta, res:totalRes, cr:tCr });
     const totalFinalComm = scoreRag(tCommScore, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
     const totalCommScoreNum = scoreValue(tCommScore, COMM_WEIGHTS);
     html += `<tr class="total-row">
@@ -1903,8 +1958,8 @@ function renderRooftop() {
       <td class="cell-payment">${ragStack(tPs)}</td>
       <td class="cell-tickets">${fmtNum(tCr)}</td>
       <td class="cell-tickets">${fmtNum(tOp)}</td>
-      <td class="cell-tickets">${fmtHrs(avg(tOtaVals))}</td>
-      <td class="cell-tickets">${fmtHrs(avg(tResVals))}</td>
+      <td class="cell-tickets">${fmtHrs(totalOta)}</td>
+      <td class="cell-tickets">${fmtHrs(totalRes)}</td>
       <td class="cell-tickets">${ragSingle(totalTrag)}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':`<span style="font-weight:600">${totalCommScoreNum.toFixed(0)}</span> <span style="font-size:10px">${ragStack(tCommScore)}</span>`}</td>
       <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
