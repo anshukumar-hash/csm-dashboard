@@ -14,8 +14,11 @@ $sheetId = '1kdGwx6rxBy8MWKq8WyR04xq4QgWSfnh1W4nHsOqj_HE'
 $urls = @{
     vini    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1616842841&headers=2"
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
-    csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
     tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
+    # CSAT source: Metabase public-question CSV. The Google Sheets CSAT tab
+    # (gid=701797891) is an IMPORTRANGE bridge that doesn't materialize for
+    # anonymous gviz requests — Metabase is the source of truth.
+    csat    = "https://metabase.arali.ai/public/question/8f665676-ab26-45bf-bbab-597b9fd6b723.csv"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -68,12 +71,26 @@ function Gviz-Val($cell) {
     return $cell.v
 }
 
-Write-Host "=== Fetching 4 tabs ==="
+Write-Host "=== Fetching 4 data sources ==="
 $viniTab = Fetch-Gviz $urls.vini
 $payTab  = Fetch-Gviz $urls.payment
-$csatTab = Fetch-Gviz $urls.csat
 $tixTab  = Fetch-Gviz $urls.tickets
-Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$($csatTab.rows.Count) | tickets rows=$($tixTab.rows.Count)"
+
+# CSAT comes from Metabase (CSV), not gviz. See URL block above for why.
+function Fetch-CsatCsv($url) {
+    Write-Host "  fetch CSAT (Metabase CSV): $url"
+    $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $url" }
+    return ($resp.Content | ConvertFrom-Csv)
+}
+$csatCsvRows = $null
+try {
+    $csatCsvRows = Fetch-CsatCsv $urls.csat
+} catch {
+    Write-Host "  CSAT: WARNING — Metabase fetch failed ($_). Will preserve existing snapshot."
+    $csatCsvRows = $null
+}
+Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatCsvRows){$csatCsvRows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count)"
 
 # --- Read existing dashboard JSON to learn the v_schema ---
 $lines = [System.IO.File]::ReadAllLines($primary)
@@ -223,39 +240,19 @@ $vRowsScoped = New-Object System.Collections.Generic.List[object]
 foreach ($r in $vRows) { if ($payEids.Contains([string]$r[$eidIdxV])) { [void]$vRowsScoped.Add($r) } }
 Write-Host "  v_rows in scope: $($vRowsScoped.Count)"
 
-# --- Build CSAT dicts ---
-# CRITICAL: the CSAT tab (gid=701797891) uses an IMPORTRANGE/QUERY formula to
-# pull data from another sheet. IMPORTRANGE results DO NOT materialize for
-# anonymous gviz requests — they return the literal cell value "Loading..."
-# in column A and zero data rows. CSV export has the same problem.
+# --- Build CSAT dicts from the Metabase CSV ---
+# CSV schema:
+#   date, company_name, company_external_id, csm_name,
+#   meeting_csat, thread_csat, ticket_csat, call_csat
+# Per-row Comm Avg = mean of the populated (non-blank) values among the 4
+# CSAT component columns. Matches the prior Google Sheet's column I formula.
+# RAG thresholds: avg<2.5 Red, <4 Amber, >=4 Green, no values → NA.
 #
-# When this happens, blindly rebuilding the CSAT dicts would WIPE the
-# previously-good data from the dashboard JSON. So we detect the "Loading..."
-# sentinel + empty rows, and FALL BACK to whatever CSAT data is already in
-# the embedded snapshot (via $D from the parsed index.html).
-$cCols=$csatTab.cols
-$ci = @{
-    date=Find-Col $cCols @('date'); en=Find-Col $cCols @('company_name')
-    eid=Find-Col $cCols @('company_external_id'); csm=Find-Col $cCols @('csm_name')
-    avg=Find-Col $cCols @('Comm Avg.')
-}
-
-# Detect "Loading..." state: required cols not found, OR zero rows, OR the
-# first row's column A is literally "Loading...".
-$csatLooksBroken = $false
-if ($ci.date -lt 0 -or $ci.eid -lt 0 -or $ci.avg -lt 0) { $csatLooksBroken = $true }
-if (-not $csatLooksBroken -and $csatTab.rows.Count -eq 0) { $csatLooksBroken = $true }
-if (-not $csatLooksBroken -and $csatTab.rows.Count -gt 0) {
-    $firstCell = $csatTab.rows[0].c[0]
-    $firstVal = if ($firstCell -and $firstCell.v) { [string]$firstCell.v } else { '' }
-    if ($firstVal -match '^(?i)loading\.\.\.?$') { $csatLooksBroken = $true }
-}
-
-if ($csatLooksBroken) {
-    Write-Host "  CSAT: WARNING — live fetch returned 'Loading...' or empty (IMPORTRANGE not resolving). Preserving existing CSAT data from snapshot."
-    # The dashboard JSON's existing csat_by_eid / csat_by_name / csat_all_by_eid
-    # already live in $D (parsed at line ~85). We rebuild $byEid/$byName/$allByEid
-    # from those so the splice step writes the SAME data back (idempotent).
+# If the Metabase fetch FAILED (network/auth/etc), we preserve the previously
+# spliced CSAT dicts from $D so we don't wipe the dashboard JSON with empty
+# data. Same protective pattern as the old Loading-state fallback.
+if ($null -eq $csatCsvRows) {
+    Write-Host "  CSAT: preserving existing snapshot (Metabase fetch failed)."
     $byEid=@{}; $byName=@{}; $allByEid=@{}
     if ($D.csat_by_eid) {
         foreach ($k in $D.csat_by_eid.Keys) {
@@ -279,32 +276,45 @@ if ($csatLooksBroken) {
             $allByEid[$k] = $list
         }
     }
-    Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid from previous snapshot"
 } else {
     $byEid=@{}; $byName=@{}; $allByEid=@{}
-    foreach ($row in $csatTab.rows) {
-        $c=$row.c; if (-not $c) { continue }
-        $eid=[string](Gviz-Val $c[$ci.eid]).Trim(); $name=[string](Gviz-Val $c[$ci.en]).Trim()
-        $iso=Gviz-Date $c[$ci.date]
-        $rawAvg=Gviz-Val $c[$ci.avg]
-        $avg=$null
-        if ($rawAvg -ne '' -and $null -ne $rawAvg) { try { $avg=[double]$rawAvg } catch { $avg=$null } }
-        $rag='NA'
-        if ($null -ne $avg) {
-            if ($avg -lt 2.5) { $rag='Red' } elseif ($avg -lt 4) { $rag='Amber' } else { $rag='Green' }
+    foreach ($row in $csatCsvRows) {
+        $eid  = if ($row.company_external_id) { ([string]$row.company_external_id).Trim() } else { '' }
+        $name = if ($row.company_name)        { ([string]$row.company_name).Trim() }        else { '' }
+        $iso  = if ($row.date) { [string]$row.date } else { '' }
+        # Already YYYY-MM-DD from Metabase, but normalize just in case.
+        if ($iso -and $iso -notmatch '^\d{4}-\d{2}-\d{2}') {
+            try { $iso = ([DateTime]::Parse($iso)).ToString('yyyy-MM-dd') } catch { $iso = '' }
         }
-        $rec=@{date_iso=$iso;avg=$avg;name=$name}
+        # Comm Avg = mean of the 4 components, ignoring blanks.
+        $vals = @()
+        foreach ($col in 'meeting_csat','thread_csat','ticket_csat','call_csat') {
+            $v = $row.$col
+            if ($null -ne $v -and "$v" -ne '') {
+                try { $vals += [double]$v } catch { }
+            }
+        }
+        $avg = $null
+        if ($vals.Count -gt 0) {
+            $sum = 0.0; foreach ($x in $vals) { $sum += $x }
+            $avg = $sum / $vals.Count
+        }
+        $rag = 'NA'
+        if ($null -ne $avg) {
+            if ($avg -lt 2.5) { $rag = 'Red' } elseif ($avg -lt 4) { $rag = 'Amber' } else { $rag = 'Green' }
+        }
+        $rec = @{ date_iso=$iso; avg=$avg; name=$name }
         if ($eid) {
-            if (-not $byEid.ContainsKey($eid) -or [string]$byEid[$eid].date_iso -lt $iso) { $byEid[$eid]=$rec }
-            if (-not $allByEid.ContainsKey($eid)) { $allByEid[$eid]=New-Object System.Collections.Generic.List[hashtable] }
-            $allByEid[$eid].Add(@{date_iso=$iso;avg=$avg;rag=$rag})
+            if (-not $byEid.ContainsKey($eid) -or [string]$byEid[$eid].date_iso -lt $iso) { $byEid[$eid] = $rec }
+            if (-not $allByEid.ContainsKey($eid)) { $allByEid[$eid] = New-Object System.Collections.Generic.List[hashtable] }
+            $allByEid[$eid].Add(@{ date_iso=$iso; avg=$avg; rag=$rag })
         }
         if ($name) {
-            $k=$name.ToUpper()
-            if (-not $byName.ContainsKey($k) -or [string]$byName[$k].date_iso -lt $iso) { $byName[$k]=$rec }
+            $k = $name.ToUpper()
+            if (-not $byName.ContainsKey($k) -or [string]$byName[$k].date_iso -lt $iso) { $byName[$k] = $rec }
         }
     }
-    Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name"
+    Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid"
 }
 
 # --- Build vini_tix from Ticket_Dump (gid=832733618) ---
