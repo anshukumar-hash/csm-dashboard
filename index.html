@@ -83,10 +83,12 @@
      calculation logic is applied. Hovering shows a plain-English explanation. */
   .info-tip{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;background:var(--text-4);color:#FFF;border-radius:50%;font-size:9px;font-weight:700;font-style:normal;font-family:Georgia,serif;cursor:help;position:relative;vertical-align:middle;line-height:1}
   .info-tip:hover{background:var(--text-2)}
-  .info-tip::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#1F2937;color:#FFF;padding:8px 11px;border-radius:6px;font-size:11px;font-weight:400;font-style:normal;width:240px;white-space:normal;text-align:left;line-height:1.45;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.15);letter-spacing:normal}
-  .info-tip::before{content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#1F2937;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;pointer-events:none;z-index:1000}
+  /* Tooltip is positioned BELOW the icon so sticky column headers (which sit
+     at the top of the viewport while scrolling) don't clip the popup. */
+  .info-tip::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#1F2937;color:#FFF;padding:8px 11px;border-radius:6px;font-size:11px;font-weight:400;font-style:normal;width:240px;white-space:normal;text-align:left;line-height:1.45;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.15);letter-spacing:normal}
+  .info-tip::before{content:'';position:absolute;top:calc(100% + 2px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-bottom-color:#1F2937;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;pointer-events:none;z-index:1000}
   .info-tip:hover::after,.info-tip:hover::before{opacity:1;visibility:visible}
-  /* Tooltip near the right edge of the viewport: flip to the LEFT so it doesn't clip */
+  /* Tooltip near the right edge of the viewport: flip to anchor RIGHT so it doesn't clip */
   table.data thead th:last-child .info-tip::after,
   table.data thead th:nth-last-child(2) .info-tip::after{left:auto;right:0;transform:none}
   table.data thead th:last-child .info-tip::before,
@@ -891,8 +893,12 @@ const TIPS = {
   // Studio-specific
   studioRoi:   'Red/green chip from the "RoI Report Sent (D/W/M)?" column. Green = Yes (report sent recently), Red = No, gray = no data.',
   websiteScore:'RAG derived from Quality Website Score: score < 5 → Red, 5–7.99 → Amber, ≥8 → Green. Click the chip to open the dealer\'s site (from the Website Link column).',
-  pendency:    'Pendency in hours — VINs awaiting action longer than 6 hours.',
+  pendency:    'Number of VINs awaiting action for longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet.',
+  usageFactor: 'Usage Factor = # Contracted VINs ÷ # Actual VINs (per user spec). Per-group it\'s the average across rooftops.',
+  paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
+  paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
+  paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
 };
 
 // Single red/green dot for Studio "RoI Report Sent". Yes/Y values → green,
@@ -1216,33 +1222,35 @@ function uniqueSet(rows, getter) {
 // ============================================================
 const S_GROUPS = [
   { l:'',             span:6, c:'' },              // # · NAME · Rooftops · Enterprises · MRR · ARR (frozen)
-  { l:'RoI',          span:1, c:'g-roi' },         // Report Sent dot (red/green) — BEFORE Final Status per user
-  { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY (Churned removed per user)
+  { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor (Pendency/Website/Inventory moved to Quality)
-  { l:'Quality',      span:3, c:'g-quality' },     // Pendency (6h), Website Score, Inventory Score
+  { l:'Quality',      span:3, c:'g-quality' },     // Pendency (6h), Website RAG, Inventory Score
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
   { l:'Tickets',      span:5, c:'g-tickets' },
   { l:'Communication', span:2, c:'g-comm' },       // Score (count stack) + Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
+// NOTE: the prior "RoI" bucket (Report Sent red/green chip) was removed
+// because the sheet no longer carries "RoI Report Sent (D/W/M)?" — that
+// column was replaced by "ARR" in gid=603796861. Re-add when a daily
+// last-7-days history source is wired up.
 const S_COLS_SHARED = [
   // 6 identity (frozen / sticky)
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
   {l:'Rooftops', cls:'frozen frozen-3'}, {l:'Enterprises', cls:'frozen frozen-4'},
   {l:'MRR', cls:'frozen frozen-5'}, {l:'ARR', cls:'frozen frozen-6'},
-  // 1 RoI — Report Sent red/green chip
-  {l:'Report Sent', cc:'cell-roi', tip:'studioRoi'},
-  // 1 Final Status — Overall RAG only (Churned removed per user)
+  // 1 Final Status — Overall RAG only
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
-  // 4 Usage (broken at Usage Factor — Quality bucket continues below)
+  // 4 Usage (Usage Factor now = #Contracted / #Actual, recomputed in studioRow)
   {l:'Active VINs', cc:'cell-usage'}, {l:'#Contracted', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
-  {l:'Usage Factor', cc:'cell-usage'},
-  // 3 Quality (Pendency renamed from 12h → 6h per new sheet)
+  {l:'Usage Factor', cc:'cell-usage', tip:'usageFactor'},
+  // 3 Quality
   {l:'Pendency (6h)', cc:'cell-quality', tip:'pendency'},
   {l:'Website RAG', cc:'cell-quality', tip:'websiteScore'},
   {l:'Inventory Score', cc:'cell-quality', tip:'inventoryScore'},
-  // 4 Payment
-  {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'}, {l:'Payment RAG', cc:'cell-payment'},
+  // 4 Payment — counts deduped per ENTERPRISE (not per rooftop) per user spec
+  {l:'T1', cc:'cell-payment', tip:'paymentT1'}, {l:'T2', cc:'cell-payment', tip:'paymentT2'},
+  {l:'T3', cc:'cell-payment', tip:'paymentT3'}, {l:'Payment RAG', cc:'cell-payment', tip:'paymentAcct'},
   // 5 Tickets
   {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
@@ -1269,19 +1277,28 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const av = sumBy(active, r => r[S_COL.av]);
   const cv = sumBy(active, r => r[S_COL.cv]);
   const acv = sumBy(active, r => r[S_COL.acv]);
-  const uf = avgBy(active, r => r[S_COL.uf]);
+  // Usage Factor recomputed at the group level: #Contracted / #Actual (per
+  // user spec). Was previously avg of the sheet's per-row uf column.
+  const uf = acv > 0 ? cv / acv : 0;
   const pen = sumBy(active, r => r[S_COL.pen]);
-  // Website RAG — count breakdown across rooftops in the group (replaces the
-  // numeric avg). Per-row code now renders a G/A/R chip; the group cell shows
-  // the count distribution like other RAG buckets.
+  // Website RAG — count breakdown across rooftops in the group.
   const wsRagCounts = countBy(active, r => websiteRag(r[S_COL.ws]));
   const isc = avgBy(active, r => r[S_COL.isc]);
-  const rs = countBy(active, r => r[S_COL.rs]);
-  const rsNo = rs.No || 0;
-  const t1 = countBy(active, r => r[S_COL.t1]);
-  const t2 = countBy(active, r => r[S_COL.t2]);
-  const t3 = countBy(active, r => r[S_COL.t3]);
-  const prag = countBy(active, r => r[S_COL.prag]);
+  // PAYMENT buckets count by ENTERPRISE not by rooftop (per user spec).
+  // Studio rooftops carry an Enterprise ID (eid field — added to schema in
+  // this PR); we dedup by eid so a multi-rooftop enterprise contributes one
+  // T1/T2/T3/PaymentRAG entry. Falls back to enterprise name when eid blank.
+  const seenEidPay = new Set();
+  const enterprisesPayment = active.filter(r => {
+    const key = r[S_COL.eid] || r[S_COL.en];
+    if (!key) return true;
+    if (seenEidPay.has(key)) return false;
+    seenEidPay.add(key); return true;
+  });
+  const t1 = countBy(enterprisesPayment, r => r[S_COL.t1]);
+  const t2 = countBy(enterprisesPayment, r => r[S_COL.t2]);
+  const t3 = countBy(enterprisesPayment, r => r[S_COL.t3]);
+  const prag = countBy(enterprisesPayment, r => r[S_COL.prag]);
   const unr = sumBy(active, r => r[S_COL.unr]);
   const cr = sumBy(active, r => r[S_COL.cr]);
   const ota = avgBy(active, r => r[S_COL.ota]);
@@ -1310,12 +1327,6 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     : (drillKey ? `<a class="drill" data-drill="${drillKey}" data-value="${drillValue}">${label}</a>` : label);
   const nCell = isTotal ? n : `<a class="drill" data-drill="${drillKey}" data-value="${drillValue}">${n}</a>`;
 
-  // RoI bucket: Yes/No count badges from per-row Report Sent.
-  const rsYes = active.filter(r => /^(yes|y|sent|daily|weekly|monthly)$/i.test(String(r[S_COL.rs]||''))).length;
-  const rsNoCount = active.filter(r => /^(no|n)$/i.test(String(r[S_COL.rs]||''))).length;
-  const rsCell = (rsYes||rsNoCount)
-    ? `${rsYes?`<span class="badge g">${rsYes}</span>`:''}${rsNoCount?`<span class="badge r">${rsNoCount}</span>`:''}`
-    : '<span style="color:var(--text-4)">—</span>';
   return `<tr class="${isTotal?'total-row':''}">
     <td class="left idx frozen frozen-1">${isTotal?'':idx}</td>
     <td class="left frozen frozen-2">${lblCell}</td>
@@ -1323,7 +1334,6 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-roi">${rsCell}</td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td>
@@ -1589,7 +1599,7 @@ function renderKpiStudio(rows, targetId) {
   el.innerHTML = `
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
     <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
-    <div class="kpi"><div class="kpi-label">Pendency (&gt;12h)</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
+    <div class="kpi"><div class="kpi-label">Pendency (6 Hrs)${tip('pendency')}</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
     <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(prag)}</div></div>
     <div class="kpi"><div class="kpi-label">Ticket RAG</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}</span> · ${ragCountsColored(trag)}</div></div>
     <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
@@ -1717,11 +1727,9 @@ function renderOverviewStudio() {
   buildStudioTable(
     document.getElementById('csm-table-wrap'),
     'CSM',
-    () => sorted.map(([csm, csmRows]) => {
-      const mgr = getManager(csm);
-      const label = mgr ? `${csm} <span class="csm-mgr">[${mgr}]</span>` : csm;
-      return { label, drillValue: csm, rows: csmRows };
-    }),
+    // Studio CSM-level: show the CSM email/name only. Manager bracket removed
+    // per user request — they don't need it visible on this view.
+    () => sorted.map(([csm, csmRows]) => ({ label: csm, drillValue: csm, rows: csmRows })),
     'csm'
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
@@ -1822,11 +1830,10 @@ function renderRooftop() {
     // Scorecards above the rooftop table — same 6 KPIs as Overview
     renderKpiStudio(rows, 'rooftop-kpi-strip');
 
-    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
-    // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
+    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 Final Status /
+    // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 25 cols
     let html = '<table class="data"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
-      '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
       '<th colspan="3" class="g-quality">Quality</th>' +
@@ -1841,23 +1848,26 @@ function renderRooftop() {
       '<th class="left frozen frozen-4">Agent Type</th>' +
       '<th class="frozen frozen-5">MRR</th>' +
       '<th class="frozen frozen-6">ARR</th>' +
-      '<th class="cell-roi">Report Sent' + tip('studioRoi') + '</th>' +
       '<th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual</th>' +
-      '<th class="cell-usage">Usage Factor</th>' +
+      '<th class="cell-usage">Usage Factor' + tip('usageFactor') + '</th>' +
       '<th class="cell-quality">Pendency (6h)' + tip('pendency') + '</th>' +
       '<th class="cell-quality">Website RAG' + tip('websiteScore') + '</th>' +
       '<th class="cell-quality">Inventory Score' + tip('inventoryScore') + '</th>' +
-      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Pay RAG</th>' +
+      '<th class="cell-payment">T1' + tip('paymentT1') + '</th><th class="cell-payment">T2' + tip('paymentT2') + '</th>' +
+      '<th class="cell-payment">T3' + tip('paymentT3') + '</th><th class="cell-payment">Pay RAG' + tip('paymentAcct') + '</th>' +
       '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
       '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Ticket RAG' + tip('ticketAcct') + '</th>' +
       '<th class="cell-comm">RAG' + tip('commFinalRag') + '</th>' +
       '<th class="cell-leader">MBR</th>' +
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
-    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0, sUnr=0, sCr=0, sRsYes=0, sRsNo=0;
-    const sUfVals=[], sIscVals=[], sOtaVals=[], sResVals=[];
+    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0, sUnr=0, sCr=0;
+    const sIscVals=[], sOtaVals=[], sResVals=[];
     const sT1={}, sT2={}, sT3={}, sPrag={}, sTrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={};
+    // Payment counts dedup by enterprise (eid). Studio Rooftop View aggregates
+    // across rows; same enterprise can have multiple rooftops.
+    const seenEidPay = new Set();
     const inc = (d,k) => { if (k) d[k] = (d[k]||0)+1; };
     // Look up new schema fields by name (added by the gid=603796861 sync).
     // S_COL[name] is undefined for older snapshots — guarded below.
@@ -1868,16 +1878,17 @@ function renderRooftop() {
       sMrr += Number(r[S_COL.mrr])||0; sArr += Number(r[S_COL.arr])||0;
       sAv += Number(r[S_COL.av])||0;   sCv += Number(r[S_COL.cv])||0; sAcv += Number(r[S_COL.acv])||0;
       sPen += Number(r[S_COL.pen])||0; sUnr += Number(r[S_COL.unr])||0; sCr += Number(r[S_COL.cr])||0;
-      if (r[S_COL.uf]  > 0) sUfVals.push(Number(r[S_COL.uf]));
       inc(sWsRag, websiteRag(r[S_COL.ws]));
       if (r[S_COL.isc] > 0) sIscVals.push(Number(r[S_COL.isc]));
       if (r[S_COL.ota] > 0) sOtaVals.push(Number(r[S_COL.ota]));
       if (r[S_COL.res] > 0) sResVals.push(Number(r[S_COL.res]));
-      const rsRaw = String(r[S_COL.rs]||'');
-      if (/^(yes|y|sent|daily|weekly|monthly)$/i.test(rsRaw)) sRsYes++;
-      else if (/^(no|n)$/i.test(rsRaw)) sRsNo++;
-      inc(sT1, r[S_COL.t1]); inc(sT2, r[S_COL.t2]); inc(sT3, r[S_COL.t3]);
-      inc(sPrag, r[S_COL.prag]);
+      // Payment buckets only count ONCE per enterprise (per user spec).
+      const payKey = r[S_COL.eid] || r[S_COL.en];
+      if (payKey && !seenEidPay.has(payKey)) {
+        seenEidPay.add(payKey);
+        inc(sT1, r[S_COL.t1]); inc(sT2, r[S_COL.t2]); inc(sT3, r[S_COL.t3]);
+        inc(sPrag, r[S_COL.prag]);
+      }
       const rTrag = computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] });
       const rComm = csatRagInRange(null, r[S_COL.en]);
       inc(sTrag, rTrag);
@@ -1893,6 +1904,10 @@ function renderRooftop() {
       const wsCell = (wsLink && wsRagVal)
         ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website (score: ${Number(wsRaw).toFixed(1)})">${wsChip}</a>`
         : wsChip;
+      // Usage Factor recomputed per-row: # Contracted / # Actual (user spec).
+      const rowCv = Number(r[S_COL.cv])||0;
+      const rowAcv = Number(r[S_COL.acv])||0;
+      const rowUf = rowAcv > 0 ? (rowCv / rowAcv) : 0;
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
@@ -1900,7 +1915,6 @@ function renderRooftop() {
         <td class="left frozen frozen-4">${(r[S_COL.cst]||r[S_COL.ct])||'—'} <span class="csm-mgr">· ${r[S_COL.seg]||''}</span></td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-roi">${reportSentDot(r[S_COL.rs])}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
@@ -1909,7 +1923,7 @@ function renderRooftop() {
         <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.acv])}</td>
-        <td class="cell-usage">${r[S_COL.uf]?Number(r[S_COL.uf]).toFixed(2):'—'}</td>
+        <td class="cell-usage">${rowUf?rowUf.toFixed(2):'—'}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
         <td class="cell-quality">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
@@ -1926,12 +1940,11 @@ function renderRooftop() {
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="25" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
-    const rsTotal = (sRsYes||sRsNo)
-      ? `${sRsYes?`<span class="badge g">${sRsYes}</span>`:''}${sRsNo?`<span class="badge r">${sRsNo}</span>`:''}`
-      : '<span style="color:var(--text-4)">—</span>';
+    // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
+    const totalUf = sAcv > 0 ? sCv / sAcv : 0;
     html += `<tr class="total-row">
       <td class="left idx frozen frozen-1"></td>
       <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
@@ -1939,12 +1952,11 @@ function renderRooftop() {
       <td class="left frozen frozen-4">—</td>
       <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
-      <td class="cell-roi">${rsTotal}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
       <td class="cell-usage">${fmtNum(sAcv)}</td>
-      <td class="cell-usage">${sUfVals.length?avg(sUfVals).toFixed(2):'—'}</td>
+      <td class="cell-usage">${totalUf?totalUf.toFixed(2):'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
       <td class="cell-quality">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
