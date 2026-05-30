@@ -15,6 +15,7 @@ $urls = @{
     vini    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1616842841&headers=2"
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
     tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
+    studio  = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=603796861"
     # CSAT source: Metabase public-question CSV. The Google Sheets CSAT tab
     # (gid=701797891) is an IMPORTRANGE bridge that doesn't materialize for
     # anonymous gviz requests — Metabase is the source of truth.
@@ -71,10 +72,11 @@ function Gviz-Val($cell) {
     return $cell.v
 }
 
-Write-Host "=== Fetching 4 data sources ==="
-$viniTab = Fetch-Gviz $urls.vini
-$payTab  = Fetch-Gviz $urls.payment
-$tixTab  = Fetch-Gviz $urls.tickets
+Write-Host "=== Fetching 5 data sources ==="
+$viniTab   = Fetch-Gviz $urls.vini
+$payTab    = Fetch-Gviz $urls.payment
+$tixTab    = Fetch-Gviz $urls.tickets
+$studioTab = Fetch-Gviz $urls.studio
 
 # CSAT comes from Metabase (CSV), not gviz. See URL block above for why.
 function Fetch-CsatCsv($url) {
@@ -426,6 +428,151 @@ foreach ($row in $tixTab.rows) {
 }
 Write-Host "  vini_tix: $($viniTix.Count) live enterprises, $ticketsKept tickets kept, $skipped skipped"
 
+# --- Build Studio s_rows from gid=603796861 ---
+# Schema columns in the new source (1 row per Studio rooftop):
+#   A Enterprise ID | B Enterprise Name | C Rooftop ID | D Rooftop Name |
+#   E account_type | F account_subtype | G Customer Segment | H CSM Name |
+#   I Region | J Quality Website Score | K Website Link | L Pendency (6 hrs) |
+#   M Inventory Score | N Active VINs | O #Last Month Actual VINs |
+#   P #Actual MTD VINs | Q #Contracted VINs | R Usage Factor |
+#   S RoI Report Sent | T Payment T1 | U T2 | V T3 | W Payment RAG |
+#   X Tickets #Unresolved | Y #Created | Z Open Ageing | AA Avg Resolution |
+#   AB Ticket RAG | AC Comm RAG Status | AD MBR | AE Contact Freq
+#
+# MRR/ARR are NOT in this sheet — per user spec we preserve them from the
+# previously-spliced s_rows (matched by rid). New rooftops appear with mrr=0
+# / arr=0 until the user provides an MRR/ARR source.
+$sStudioSchema = @(
+    'rid','rn','en',
+    'mrr','arr',
+    'av','cv','acv','lm_acv','uf',
+    'pen','ws','ws_link','isc',
+    'rs','t1','t2','t3','prag',
+    'unr','cr','ota','res','trag',
+    'red','mbr','cf','csm','ct','cst','seg','region'
+)
+
+# Build rid → {mrr, arr} lookup from the existing snapshot
+$oldStudioMrrArr = @{}
+if ($D.s_rows -and $D.s_schema) {
+    $oldSch  = @($D.s_schema)
+    $oldRid  = [array]::IndexOf($oldSch,'rid')
+    $oldMrr  = [array]::IndexOf($oldSch,'mrr')
+    $oldArr  = [array]::IndexOf($oldSch,'arr')
+    if ($oldRid -ge 0 -and $oldMrr -ge 0 -and $oldArr -ge 0) {
+        foreach ($r in $D.s_rows) {
+            $rid = [string]$r[$oldRid]
+            if ($rid) { $oldStudioMrrArr[$rid] = @{ mrr=$r[$oldMrr]; arr=$r[$oldArr] } }
+        }
+    }
+}
+Write-Host "  Studio: preserved MRR/ARR for $($oldStudioMrrArr.Count) existing rooftops"
+
+# Map new-sheet col labels → field name
+$sCols = $studioTab.cols
+$si = @{
+    eid     = Find-Col $sCols @('Enterprise ID')
+    en      = Find-Col $sCols @('Enterrpise Name','Enterprise Name')
+    rid     = Find-Col $sCols @('Rooftop ID')
+    rn      = Find-Col $sCols @('Rooftop Name')
+    ct      = Find-Col $sCols @('account_type')
+    cst     = Find-Col $sCols @('account_subtype')
+    seg     = Find-Col $sCols @('Customer Segment')
+    csm     = Find-Col $sCols @('CSM Name')
+    region  = Find-Col $sCols @('Region')
+    ws      = Find-Col $sCols @('Quality Website Score','Website Score')
+    ws_link = Find-Col $sCols @('Website Link')
+    pen     = Find-Col $sCols @('Pendency (6 hrs)','Pendency')
+    isc     = Find-Col $sCols @('Inventory Score')
+    av      = Find-Col $sCols @('Usage Active Vins','Active Vins','Active VINs')
+    lm_acv  = Find-Col $sCols @('# Last month Actual Vins','Last month Actual Vins')
+    acv     = Find-Col $sCols @('# Actual MTD VINs','Actual MTD VINs','# Actual')
+    cv      = Find-Col $sCols @('# Contracted VINs','Contracted VINs','# Contracted')
+    uf      = Find-Col $sCols @('# VIN Usage Factor','VIN Usage Factor','Usage Factor')
+    rs      = Find-Col $sCols @('RoI Report Sent (D/W/M)?','Report Sent','RoI Report Sent')
+    t1      = Find-Col $sCols @('Payment T1','T1')
+    t2      = Find-Col $sCols @('T2')
+    t3      = Find-Col $sCols @('T3')
+    prag    = Find-Col $sCols @('Payment RAG')
+    unr     = Find-Col $sCols @('Tickets #Unresolved','#Unresolved')
+    cr      = Find-Col $sCols @('#Created','Tickets #Created')
+    ota     = Find-Col $sCols @('Open Ticket Ageing (Hrs)','Open Ticket Ageing','Open Ageing (Hrs)')
+    res     = Find-Col $sCols @('Avg Resolution hrs','Avg Resolution')
+    trag    = Find-Col $sCols @('Ticket RAG')
+    red     = Find-Col $sCols @('Communication RAG Status','Communication RAG')
+    mbr     = Find-Col $sCols @('Leadership Connect MBR','MBR')
+    cf      = Find-Col $sCols @('Contact Freq')
+}
+
+# Resolution time column is `[h]:mm:ss` formatted — extract from the
+# Gviz cell.f (display string) rather than .v (broken Date encoding).
+function Gviz-Hrs($cell) {
+    if (-not $cell) { return '' }
+    $f = [string]$cell.f
+    if (-not $f) { return '' }
+    if ($f -match '^(\d+):(\d+):(\d+)') {
+        return ([double]$matches[1] + [double]$matches[2]/60.0 + [double]$matches[3]/3600.0)
+    }
+    return ''
+}
+
+$sRows = New-Object System.Collections.Generic.List[object]
+foreach ($row in $studioTab.rows) {
+    $c = $row.c; if (-not $c) { continue }
+    $rid = [string](Gviz-Val $c[$si.rid])
+    if (-not $rid) { continue }
+    $mrr = 0; $arr = 0
+    if ($oldStudioMrrArr.ContainsKey($rid)) {
+        $mrr = $oldStudioMrrArr[$rid].mrr
+        $arr = $oldStudioMrrArr[$rid].arr
+    }
+
+    $r = New-Object object[] $sStudioSchema.Count
+    $idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
+
+    $r[$idx['rid']]     = $rid
+    $r[$idx['rn']]      = [string](Gviz-Val $c[$si.rn])
+    $r[$idx['en']]      = [string](Gviz-Val $c[$si.en])
+    $r[$idx['mrr']]     = $mrr
+    $r[$idx['arr']]     = $arr
+    $r[$idx['av']]      = Gviz-Val $c[$si.av]
+    $r[$idx['cv']]      = Gviz-Val $c[$si.cv]
+    $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
+    $r[$idx['lm_acv']]  = if ($si.lm_acv -ge 0) { Gviz-Val $c[$si.lm_acv] } else { '' }
+    $r[$idx['uf']]      = Gviz-Val $c[$si.uf]
+    $r[$idx['pen']]     = Gviz-Val $c[$si.pen]
+    $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
+    $r[$idx['ws_link']] = if ($si.ws_link -ge 0) { [string](Gviz-Val $c[$si.ws_link]) } else { '' }
+    $r[$idx['isc']]     = Gviz-Val $c[$si.isc]
+    $r[$idx['rs']]      = [string](Gviz-Val $c[$si.rs])
+    $r[$idx['t1']]      = [string](Gviz-Val $c[$si.t1])
+    $r[$idx['t2']]      = [string](Gviz-Val $c[$si.t2])
+    $r[$idx['t3']]      = [string](Gviz-Val $c[$si.t3])
+    $r[$idx['prag']]    = [string](Gviz-Val $c[$si.prag])
+    $r[$idx['unr']]     = Gviz-Val $c[$si.unr]
+    $r[$idx['cr']]      = Gviz-Val $c[$si.cr]
+    $r[$idx['ota']]     = Gviz-Val $c[$si.ota]
+    # Avg Resolution: parse the formatted h:mm:ss string from `f`
+    $r[$idx['res']]     = if ($si.res -ge 0) { Gviz-Hrs $c[$si.res] } else { '' }
+    $r[$idx['trag']]    = [string](Gviz-Val $c[$si.trag])
+    $r[$idx['red']]     = [string](Gviz-Val $c[$si.red])
+    $r[$idx['mbr']]     = [string](Gviz-Val $c[$si.mbr])
+    $r[$idx['cf']]      = [string](Gviz-Val $c[$si.cf])
+
+    $csmRaw = [string](Gviz-Val $c[$si.csm])
+    if ([string]::IsNullOrWhiteSpace($csmRaw) -or $csmRaw.Trim().ToLower() -in 'csm not assigned','not assigned','unassigned','na','tbd') {
+        $csmRaw = 'Unassigned CSM'
+    }
+    $r[$idx['csm']]     = $csmRaw
+    $r[$idx['ct']]      = [string](Gviz-Val $c[$si.ct])
+    $r[$idx['cst']]     = [string](Gviz-Val $c[$si.cst])
+    $r[$idx['seg']]     = [string](Gviz-Val $c[$si.seg])
+    $r[$idx['region']]  = [string](Gviz-Val $c[$si.region])
+
+    $sRows.Add($r)
+}
+Write-Host "  Studio: built $($sRows.Count) s_rows (preserved MRR/ARR where match found)"
+
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---
 function JsEscape($s) {
     if ($null -eq $s) { return 'null' }
@@ -476,6 +623,17 @@ $sb=New-Object System.Text.StringBuilder
 for ($i=0;$i -lt $vRowsScoped.Count;$i++) { if ($i -gt 0) { [void]$sb.Append(',') }; [void]$sb.Append((RowToJsArr $vRowsScoped[$i])) }
 [void]$sb.Append(']')
 $jsonVRows=$sb.ToString()
+
+# Studio s_rows + s_schema
+$sb_s = New-Object System.Text.StringBuilder
+[void]$sb_s.Append('[')
+for ($i=0; $i -lt $sRows.Count; $i++) {
+    if ($i -gt 0) { [void]$sb_s.Append(',') }
+    [void]$sb_s.Append((RowToJsArr $sRows[$i]))
+}
+[void]$sb_s.Append(']')
+$jsonSRows = $sb_s.ToString()
+$jsonSSchema = '[' + (($sStudioSchema | ForEach-Object { JsEscape $_ }) -join ',') + ']'
 
 $sb2=New-Object System.Text.StringBuilder
 [void]$sb2.Append('[')
@@ -562,7 +720,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix','s_rows','s_schema') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -571,7 +729,9 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"csat_by_eid":' + $jsonCsatEid +
             ',"csat_by_name":' + $jsonCsatName +
             ',"csat_all_by_eid":' + $jsonCsatAll +
-            ',"vini_tix":' + $jsonViniTix
+            ',"vini_tix":' + $jsonViniTix +
+            ',"s_rows":' + $jsonSRows +
+            ',"s_schema":' + $jsonSSchema
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 $prefix='window.__DASHBOARD_DATA__ = '
@@ -584,4 +744,4 @@ foreach ($f in $dashFiles) {
 }
 Write-Host ""
 Write-Host "=== Sync complete ==="
-Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count) | vini_tix: $($viniTix.Count)"
+Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count) | vini_tix: $($viniTix.Count) | s_rows: $($sRows.Count)"
