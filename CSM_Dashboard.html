@@ -78,6 +78,18 @@
   .roi-text-g{color:var(--green);font-weight:600}
   .roi-text-a{color:var(--amber);font-weight:600}
   .roi-text-r{color:#DC2626;font-weight:600}
+  /* Info tooltip ⓘ icon next to column headers / KPI labels where internal
+     calculation logic is applied. Hovering shows a plain-English explanation. */
+  .info-tip{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;background:var(--text-4);color:#FFF;border-radius:50%;font-size:9px;font-weight:700;font-style:normal;font-family:Georgia,serif;cursor:help;position:relative;vertical-align:middle;line-height:1}
+  .info-tip:hover{background:var(--text-2)}
+  .info-tip::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#1F2937;color:#FFF;padding:8px 11px;border-radius:6px;font-size:11px;font-weight:400;font-style:normal;width:240px;white-space:normal;text-align:left;line-height:1.45;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.15);letter-spacing:normal}
+  .info-tip::before{content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#1F2937;opacity:0;visibility:hidden;transition:opacity .12s,visibility .12s;pointer-events:none;z-index:1000}
+  .info-tip:hover::after,.info-tip:hover::before{opacity:1;visibility:visible}
+  /* Tooltip near the right edge of the viewport: flip to the LEFT so it doesn't clip */
+  table.data thead th:last-child .info-tip::after,
+  table.data thead th:nth-last-child(2) .info-tip::after{left:auto;right:0;transform:none}
+  table.data thead th:last-child .info-tip::before,
+  table.data thead th:nth-last-child(2) .info-tip::before{left:auto;right:4px;transform:none}
 
   .section-block{margin-bottom:22px}
   .section-block>h2{font-size:15px;font-weight:600;margin:14px 0 10px;color:var(--text);letter-spacing:-0.01em}
@@ -832,6 +844,44 @@ function getVini() {
 // ============================================================
 // FORMATTERS
 // ============================================================
+// ============================================================
+// INFO TOOLTIPS
+// ============================================================
+// Plain-English explanations of internal calculation logic, shown on hover
+// of the ⓘ icon next to a KPI label or column header. Non-tech audience.
+const TIPS = {
+  // KPI tile labels
+  convRoi:     'Conv Rate = Appointments ÷ Qualified leads. RoI Factor = Appt Value ÷ MRR; ≥4x Green, ≥2x Amber, <2x Red.',
+  paymentScore:'Aggregate Payment health across all enterprises in scope. Each enterprise contributes one G/A/R rating (from the sheet). Score = avg(G=100, A=50, R=0). ≥80 Green, ≥60 Amber, <60 Red.',
+  ticketRag:   'Aggregate Ticket health. Per-enterprise Ticket RAG comes from the slower of Open Ticket Ageing and Avg Resolution (<8h Green, <24h Amber, else Red). Group score same as Payment: ≥85 Green, ≥65 Amber.',
+  commRag:     'Aggregate Communication health from CSAT readings (Metabase) in the selected date range. Per-enterprise avg CSAT ≥4 Green, 2.5–4 Amber, <2.5 Red. Group score weights G=100/A=60/R=20; ≥80 Green, ≥60 Amber.',
+  avgRes:      'Average resolution time across all tickets created in the selected date range, for live Vini enterprises. Computed ticket-weighted (sum of hours ÷ number of tickets), not enterprise-weighted.',
+  // Rooftop View / grouped table column headers
+  agentAge:    'Time since the contract Go-Live Date — months and days.',
+  convRate:    'Appointments Booked ÷ #Qualified, shown as a percentage.',
+  apptValue:   'Appointments × per-agent-type value: Sales Inbound $100, Sales Outbound $250, Service Inbound $50, Service Outbound $75.',
+  roiFactor:   'Appt Value ÷ MRR for this agent contract. ≥4x Green, ≥2x Amber, <2x Red.',
+  paymentAcct: 'Single rating from gid=674556270 column "Payment Score" for this enterprise.',
+  paymentRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Payment Scores (G=100, A=50, R=0). ≥80 Green, ≥60 Amber, <60 Red.',
+  ticketAcct:  'Per-enterprise: from the slower of Open Ticket Ageing and Avg Resolution. <8h Green, <24h Amber, else Red. Counts based on tickets created in the selected period.',
+  ticketRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Ticket RAGs (G=100, A=50, R=0). ≥85 Green, ≥65 Amber, <65 Red.',
+  commScore:   'Count of CSAT readings in the selected date range, by RAG. CSAT avg ≥4 = Green, 2.5–4 = Amber, <2.5 = Red. Source: Metabase CSAT export.',
+  commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
+  overallRag:  'Account health rolled up from 3 signals: MTD RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
+  churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
+  openAgeing:  'Hours since each open ticket was created. Cross-enterprise avg here is ticket-weighted (sum of hours ÷ open-ticket count).',
+  avgResCol:   'Avg resolution time (hours) across tickets created in the selected period and now Resolved/Closed. Ticket-weighted.',
+  createdCnt:  'Count of tickets created in the selected period (Source: Ticket_Dump gid=832733618).',
+  openCnt:     'Tickets created in the period whose Status is not Closed/Resolved.',
+  reportSent:  'Whether a usage report was sent. (Metric not currently tracked — values blanked.)',
+};
+function tip(key) {
+  const text = TIPS[key];
+  if (!text) return '';
+  // double-quote-safe attribute encoding
+  return ` <span class="info-tip" data-tip="${text.replace(/"/g,'&quot;')}">i</span>`;
+}
+
 function fmtMoney(n) {
   if (!n || isNaN(n)) return '$0';
   if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
@@ -1277,18 +1327,18 @@ const V_COLS_SHARED = [
   {l:'Rooftops', cls:'frozen frozen-4'},
   {l:'Enterprises', cls:'frozen frozen-5'},     // distinct enterprises in group
   {l:'MRR', cls:'frozen frozen-6'}, {l:'Live ARR', cls:'frozen frozen-7'},
-  {l:'Report Sent', cc:'cell-rs'},              // own class so hide-rs can target this column independently
-  {l:'Churned Agent', cc:'cell-final'}, {l:'Overall RAG', cc:'cell-final'},
+  {l:'Report Sent', cc:'cell-rs', tip:'reportSent'},
+  {l:'Churned Agent', cc:'cell-final', tip:'churnedAgent'}, {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
-  {l:'Conv Rate', cc:'cell-usage'}, {l:'Appt Value ($)', cc:'cell-usage'},
+  {l:'Conv Rate', cc:'cell-usage', tip:'convRate'}, {l:'Appt Value ($)', cc:'cell-usage', tip:'apptValue'},
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
-  {l:'L2L Month', cc:'cell-roi'}, {l:'Last Month', cc:'cell-roi'}, {l:'MTD', cc:'cell-roi'},
+  {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
   {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'},
-  {l:'Account Level RAG', cc:'cell-payment'}, {l:'RAG', cc:'cell-payment'},
-  {l:'# Created', cc:'cell-tickets'}, {l:'# Open', cc:'cell-tickets'},
-  {l:'Open Ageing (hrs)', cc:'cell-tickets'}, {l:'Avg Res hrs', cc:'cell-tickets'},
-  {l:'Account Level RAG', cc:'cell-tickets'}, {l:'RAG', cc:'cell-tickets'},
-  {l:'Score', cc:'cell-comm'}, {l:'Final RAG', cc:'cell-comm'},
+  {l:'Account Level RAG', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
+  {l:'# Created', cc:'cell-tickets', tip:'createdCnt'}, {l:'# Open', cc:'cell-tickets', tip:'openCnt'},
+  {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
+  {l:'Account Level RAG', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
+  {l:'Score', cc:'cell-comm', tip:'commScore'}, {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
 
@@ -1424,7 +1474,10 @@ function buildViniTable(target, firstColLabel, groupingFn, drillKey, extraClasse
     }
   });
   html += '</tr><tr class="cols">';
-  V_COLS_SHARED.forEach((c,i) => html += `<th class="${c.cls||''} ${c.cc||''}">${i===1?firstColLabel:c.l}</th>`);
+  V_COLS_SHARED.forEach((c,i) => {
+    const label = (i===1 ? firstColLabel : c.l);
+    html += `<th class="${c.cls||''} ${c.cc||''}">${label}${c.tip?tip(c.tip):''}</th>`;
+  });
   html += '</tr></thead><tbody>';
   const groups = groupingFn();
   groups.forEach((g, i) => { html += viniRow(g.label, g.rows, false, drillKey, g.drillValue != null ? g.drillValue : g.label, i+1); });
@@ -1554,10 +1607,10 @@ function renderKpiVini(rows, targetId) {
     <div class="kpi"><div class="kpi-label">Live ARR</div><div class="kpi-value blue">${fmtMoney(arr - churnedArr)}</div><div class="kpi-sub">MRR · ${fmtMoney(activeMrr)} · ${totalRooftops - churnedN} rftps · ${activeN} agents</div></div>
     <div class="kpi"><div class="kpi-label">Churned ARR</div><div class="kpi-value red-c">${fmtMoney(churnedArr)}</div><div class="kpi-sub">${churnedN} rooftops · ${churnRows.length} agents</div></div>
     <div class="kpi"><div class="kpi-label">Appointments Booked</div><div class="kpi-value green-c">${fmtNum(appts)}</div><div class="kpi-sub">${fmtNum(qualified)} qualified · ${fmtNum(touched)} touched</div></div>
-    <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span class="${roiInlineClass(roi)}" style="font-size:14px">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
-    <div class="kpi"><div class="kpi-label">Payment Score</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(ps)}</div></div>
-    <div class="kpi"><div class="kpi-label">Ticket RAG</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}</span> · ${ragCountsColored(trag)}</div></div>
-    <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
+    <div class="kpi"><div class="kpi-label">Conv Rate &amp; RoI Factor${tip('convRoi')}</div><div class="kpi-value blue">${convRate.toFixed(1)}% <span class="${roiInlineClass(roi)}" style="font-size:14px">· ${roi.toFixed(2)}x</span></div><div class="kpi-sub">Appt Val · ${fmtMoney(apptValue)}</div></div>
+    <div class="kpi"><div class="kpi-label">Payment Score${tip('paymentScore')}</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(ps)}</div></div>
+    <div class="kpi"><div class="kpi-label">Ticket RAG${tip('ticketRag')}</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}${tip('avgRes')}</span> · ${ragCountsColored(trag)}</div></div>
+    <div class="kpi"><div class="kpi-label">Communication RAG${tip('commRag')}</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>
   `;
 }
 
@@ -1863,18 +1916,18 @@ function renderRooftop() {
       '<th class="left frozen frozen-2">Rooftop</th>' +
       '<th class="left frozen frozen-3">Enterprise</th>' +
       '<th class="left frozen frozen-4">Agent Type</th>' +
-      '<th class="frozen frozen-5">Agent Age</th>' +
+      '<th class="frozen frozen-5">Agent Age' + tip('agentAge') + '</th>' +
       '<th class="frozen frozen-6">MRR</th>' +
       '<th class="frozen frozen-7">Live ARR</th>' +
-      '<th class="cell-roi">Report Sent</th>' +              // single column right after Live ARR
-      '<th class="cell-final">Churned Agent</th><th class="cell-final">Overall RAG</th>' +
+      '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
+      '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th><th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
-      '<th class="cell-usage">Conv Rate</th><th class="cell-usage">Appt Value</th>' +
-      '<th class="cell-roi">RoI Factor</th>' +
-      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Account Level RAG</th>' +
-      '<th class="cell-tickets">#Created</th><th class="cell-tickets">#Open</th>' +
-      '<th class="cell-tickets">Open Ageing</th><th class="cell-tickets">Avg Res</th><th class="cell-tickets">Account Level RAG</th>' +
-      '<th class="cell-comm">Score</th><th class="cell-comm">Final RAG</th>' +
+      '<th class="cell-usage">Conv Rate' + tip('convRate') + '</th><th class="cell-usage">Appt Value' + tip('apptValue') + '</th>' +
+      '<th class="cell-roi">RoI Factor' + tip('roiFactor') + '</th>' +
+      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Account Level RAG' + tip('paymentAcct') + '</th>' +
+      '<th class="cell-tickets">#Created' + tip('createdCnt') + '</th><th class="cell-tickets">#Open' + tip('openCnt') + '</th>' +
+      '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Account Level RAG' + tip('ticketAcct') + '</th>' +
+      '<th class="cell-comm">Score' + tip('commScore') + '</th><th class="cell-comm">Final RAG' + tip('commFinalRag') + '</th>' +
       '<th class="cell-leader">MBR</th><th class="cell-leader">Contact Freq</th>' +
       '</tr></thead><tbody>';
     // Track aggregates for the Total row at the bottom.
