@@ -890,7 +890,7 @@ const TIPS = {
   reportSent:  'Whether a usage report was sent. (Metric not currently tracked — values blanked.)',
   // Studio-specific
   studioRoi:   'Red/green chip from the "RoI Report Sent (D/W/M)?" column. Green = Yes (report sent recently), Red = No, gray = no data.',
-  websiteScore:'Quality Website Score from the sheet. Click the value to open the dealer\'s actual website (from the Website Link column).',
+  websiteScore:'RAG derived from Quality Website Score: score < 5 → Red, 5–7.99 → Amber, ≥8 → Green. Click the chip to open the dealer\'s site (from the Website Link column).',
   pendency:    'Pendency in hours — VINs awaiting action longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet.',
 };
@@ -905,6 +905,21 @@ function reportSentDot(v) {
   }
   return '<span class="rs-dot rs-no" title="Report not sent"></span>';
 }
+
+// Website RAG from the Quality Website Score (Studio gid=603796861 col J).
+//   score >= 8   → Green
+//   5–7.99       → Amber
+//   < 5          → Red
+//   blank/0/NaN  → null (caller renders "—")
+function websiteRag(v) {
+  if (v == null || v === '' || isNaN(Number(v))) return null;
+  const n = Number(v);
+  if (n === 0) return null;
+  if (n < 5)   return 'Red';
+  if (n < 8)   return 'Amber';
+  return 'Green';
+}
+
 function tip(key) {
   const text = TIPS[key];
   if (!text) return '';
@@ -1224,7 +1239,7 @@ const S_COLS_SHARED = [
   {l:'Usage Factor', cc:'cell-usage'},
   // 3 Quality (Pendency renamed from 12h → 6h per new sheet)
   {l:'Pendency (6h)', cc:'cell-quality', tip:'pendency'},
-  {l:'Website Score', cc:'cell-quality', tip:'websiteScore'},
+  {l:'Website RAG', cc:'cell-quality', tip:'websiteScore'},
   {l:'Inventory Score', cc:'cell-quality', tip:'inventoryScore'},
   // 4 Payment
   {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'}, {l:'Payment RAG', cc:'cell-payment'},
@@ -1256,7 +1271,10 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const acv = sumBy(active, r => r[S_COL.acv]);
   const uf = avgBy(active, r => r[S_COL.uf]);
   const pen = sumBy(active, r => r[S_COL.pen]);
-  const ws = avgBy(active, r => r[S_COL.ws]);
+  // Website RAG — count breakdown across rooftops in the group (replaces the
+  // numeric avg). Per-row code now renders a G/A/R chip; the group cell shows
+  // the count distribution like other RAG buckets.
+  const wsRagCounts = countBy(active, r => websiteRag(r[S_COL.ws]));
   const isc = avgBy(active, r => r[S_COL.isc]);
   const rs = countBy(active, r => r[S_COL.rs]);
   const rsNo = rs.No || 0;
@@ -1310,7 +1328,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
-    <td class="cell-quality">${ws?ws.toFixed(1):'—'}</td>
+    <td class="cell-quality">${ragStack(wsRagCounts)}</td>
     <td class="cell-quality">${isc?isc.toFixed(1):'—'}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
@@ -1828,7 +1846,7 @@ function renderRooftop() {
       '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual</th>' +
       '<th class="cell-usage">Usage Factor</th>' +
       '<th class="cell-quality">Pendency (6h)' + tip('pendency') + '</th>' +
-      '<th class="cell-quality">Website Score' + tip('websiteScore') + '</th>' +
+      '<th class="cell-quality">Website RAG' + tip('websiteScore') + '</th>' +
       '<th class="cell-quality">Inventory Score' + tip('inventoryScore') + '</th>' +
       '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Pay RAG</th>' +
       '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
@@ -1838,8 +1856,8 @@ function renderRooftop() {
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
     let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0, sUnr=0, sCr=0, sRsYes=0, sRsNo=0;
-    const sUfVals=[], sWsVals=[], sIscVals=[], sOtaVals=[], sResVals=[];
-    const sT1={}, sT2={}, sT3={}, sPrag={}, sTrag={}, sComm={}, sMbr={}, sOverall={};
+    const sUfVals=[], sIscVals=[], sOtaVals=[], sResVals=[];
+    const sT1={}, sT2={}, sT3={}, sPrag={}, sTrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={};
     const inc = (d,k) => { if (k) d[k] = (d[k]||0)+1; };
     // Look up new schema fields by name (added by the gid=603796861 sync).
     // S_COL[name] is undefined for older snapshots — guarded below.
@@ -1851,7 +1869,7 @@ function renderRooftop() {
       sAv += Number(r[S_COL.av])||0;   sCv += Number(r[S_COL.cv])||0; sAcv += Number(r[S_COL.acv])||0;
       sPen += Number(r[S_COL.pen])||0; sUnr += Number(r[S_COL.unr])||0; sCr += Number(r[S_COL.cr])||0;
       if (r[S_COL.uf]  > 0) sUfVals.push(Number(r[S_COL.uf]));
-      if (r[S_COL.ws]  > 0) sWsVals.push(Number(r[S_COL.ws]));
+      inc(sWsRag, websiteRag(r[S_COL.ws]));
       if (r[S_COL.isc] > 0) sIscVals.push(Number(r[S_COL.isc]));
       if (r[S_COL.ota] > 0) sOtaVals.push(Number(r[S_COL.ota]));
       if (r[S_COL.res] > 0) sResVals.push(Number(r[S_COL.res]));
@@ -1866,13 +1884,15 @@ function renderRooftop() {
       inc(sComm, rComm);
       inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
       inc(sMbr, r[S_COL.mbr]);
-      // Website Score cell: clickable if Website Link is present
+      // Website RAG cell: single G/A/R chip from the numeric score; clickable
+      // when Website Link is present so the user can open the dealer's site.
       const wsRaw = r[S_COL.ws];
-      const wsTxt = wsRaw ? Number(wsRaw).toFixed(1) : '—';
+      const wsRagVal = websiteRag(wsRaw);
+      const wsChip = wsRagVal ? ragSingle(wsRagVal) : '<span style="color:var(--text-4)">—</span>';
       const wsLink = (sLinkIdx != null) ? r[sLinkIdx] : '';
-      const wsCell = (wsLink && wsRaw)
-        ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website">${wsTxt}</a>`
-        : wsTxt;
+      const wsCell = (wsLink && wsRagVal)
+        ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website (score: ${Number(wsRaw).toFixed(1)})">${wsChip}</a>`
+        : wsChip;
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
@@ -1926,7 +1946,7 @@ function renderRooftop() {
       <td class="cell-usage">${fmtNum(sAcv)}</td>
       <td class="cell-usage">${sUfVals.length?avg(sUfVals).toFixed(2):'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
-      <td class="cell-quality">${sWsVals.length?avg(sWsVals).toFixed(1):'—'}</td>
+      <td class="cell-quality">${ragStack(sWsRag)}</td>
       <td class="cell-quality">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
       <td class="cell-payment">${payTileAgg(sT1)}</td>
       <td class="cell-payment">${payTileAgg(sT2)}</td>
