@@ -899,6 +899,7 @@ const TIPS = {
   paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
+  studioRoiPending: 'Placeholder for the last-7-days Report Sent trend. Source data not yet wired up — will populate once a daily-history feed is provided.',
 };
 
 // Single red/green dot for Studio "RoI Report Sent". Yes/Y values → green,
@@ -1222,23 +1223,22 @@ function uniqueSet(rows, getter) {
 // ============================================================
 const S_GROUPS = [
   { l:'',             span:6, c:'' },              // # · NAME · Rooftops · Enterprises · MRR · ARR (frozen)
+  { l:'RoI',          span:1, c:'g-roi' },         // Report Sent — placeholder (blank) until daily history wired up
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
-  { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor (Pendency/Website/Inventory moved to Quality)
+  { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
   { l:'Quality',      span:3, c:'g-quality' },     // Pendency (6h), Website RAG, Inventory Score
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
   { l:'Tickets',      span:5, c:'g-tickets' },
   { l:'Communication', span:2, c:'g-comm' },       // Score (count stack) + Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
-// NOTE: the prior "RoI" bucket (Report Sent red/green chip) was removed
-// because the sheet no longer carries "RoI Report Sent (D/W/M)?" — that
-// column was replaced by "ARR" in gid=603796861. Re-add when a daily
-// last-7-days history source is wired up.
 const S_COLS_SHARED = [
   // 6 identity (frozen / sticky)
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
   {l:'Rooftops', cls:'frozen frozen-3'}, {l:'Enterprises', cls:'frozen frozen-4'},
   {l:'MRR', cls:'frozen frozen-5'}, {l:'ARR', cls:'frozen frozen-6'},
+  // 1 RoI — placeholder for upcoming last-7-days Report Sent trend
+  {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
   // 1 Final Status — Overall RAG only
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
   // 4 Usage (Usage Factor now = #Contracted / #Actual, recomputed in studioRow)
@@ -1334,6 +1334,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
+    <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td>
@@ -1830,10 +1831,11 @@ function renderRooftop() {
     // Scorecards above the rooftop table — same 6 KPIs as Overview
     renderKpiStudio(rows, 'rooftop-kpi-strip');
 
-    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 Final Status /
-    // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 25 cols
+    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
+    // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
     let html = '<table class="data"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
+      '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
       '<th colspan="3" class="g-quality">Quality</th>' +
@@ -1848,6 +1850,7 @@ function renderRooftop() {
       '<th class="left frozen frozen-4">Agent Type</th>' +
       '<th class="frozen frozen-5">MRR</th>' +
       '<th class="frozen frozen-6">ARR</th>' +
+      '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       '<th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual</th>' +
       '<th class="cell-usage">Usage Factor' + tip('usageFactor') + '</th>' +
@@ -1915,6 +1918,7 @@ function renderRooftop() {
         <td class="left frozen frozen-4">${(r[S_COL.cst]||r[S_COL.ct])||'—'} <span class="csm-mgr">· ${r[S_COL.seg]||''}</span></td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
+        <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
@@ -1940,7 +1944,7 @@ function renderRooftop() {
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="25" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
@@ -1952,6 +1956,7 @@ function renderRooftop() {
       <td class="left frozen frozen-4">—</td>
       <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
+      <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
