@@ -439,34 +439,22 @@ Write-Host "  vini_tix: $($viniTix.Count) live enterprises, $ticketsKept tickets
 #   X Tickets #Unresolved | Y #Created | Z Open Ageing | AA Avg Resolution |
 #   AB Ticket RAG | AC Comm RAG Status | AD MBR | AE Contact Freq
 #
-# MRR/ARR are NOT in this sheet — per user spec we preserve them from the
-# previously-spliced s_rows (matched by rid). New rooftops appear with mrr=0
-# / arr=0 until the user provides an MRR/ARR source.
+# NEW: the sheet now carries an ARR column. We read ARR directly and compute
+# MRR = ARR/12 per row (user spec). The earlier "preserve MRR/ARR from old
+# snapshot" code is no longer needed and has been removed.
+#
+# Also: the old "RoI Report Sent (D/W/M)?" column was removed from the sheet,
+# so the `rs` field is dropped from the schema. The dashboard's RoI bucket
+# will be sourced from a future last-7-days history when one is provided.
 $sStudioSchema = @(
     'rid','rn','en',
     'mrr','arr',
     'av','cv','acv','lm_acv','uf',
     'pen','ws','ws_link','isc',
-    'rs','t1','t2','t3','prag',
+    't1','t2','t3','prag',
     'unr','cr','ota','res','trag',
-    'red','mbr','cf','csm','ct','cst','seg','region'
+    'red','mbr','cf','csm','ct','cst','seg','region','eid'
 )
-
-# Build rid → {mrr, arr} lookup from the existing snapshot
-$oldStudioMrrArr = @{}
-if ($D.s_rows -and $D.s_schema) {
-    $oldSch  = @($D.s_schema)
-    $oldRid  = [array]::IndexOf($oldSch,'rid')
-    $oldMrr  = [array]::IndexOf($oldSch,'mrr')
-    $oldArr  = [array]::IndexOf($oldSch,'arr')
-    if ($oldRid -ge 0 -and $oldMrr -ge 0 -and $oldArr -ge 0) {
-        foreach ($r in $D.s_rows) {
-            $rid = [string]$r[$oldRid]
-            if ($rid) { $oldStudioMrrArr[$rid] = @{ mrr=$r[$oldMrr]; arr=$r[$oldArr] } }
-        }
-    }
-}
-Write-Host "  Studio: preserved MRR/ARR for $($oldStudioMrrArr.Count) existing rooftops"
 
 # Map new-sheet col labels → field name
 $sCols = $studioTab.cols
@@ -489,7 +477,7 @@ $si = @{
     acv     = Find-Col $sCols @('# Actual MTD VINs','Actual MTD VINs','# Actual')
     cv      = Find-Col $sCols @('# Contracted VINs','Contracted VINs','# Contracted')
     uf      = Find-Col $sCols @('# VIN Usage Factor','VIN Usage Factor','Usage Factor')
-    rs      = Find-Col $sCols @('RoI Report Sent (D/W/M)?','Report Sent','RoI Report Sent')
+    arr     = Find-Col $sCols @('ARR')
     t1      = Find-Col $sCols @('Payment T1','T1')
     t2      = Find-Col $sCols @('T2')
     t3      = Find-Col $sCols @('T3')
@@ -517,24 +505,25 @@ function Gviz-Hrs($cell) {
 }
 
 $sRows = New-Object System.Collections.Generic.List[object]
+$idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
 foreach ($row in $studioTab.rows) {
     $c = $row.c; if (-not $c) { continue }
     $rid = [string](Gviz-Val $c[$si.rid])
     if (-not $rid) { continue }
-    $mrr = 0; $arr = 0
-    if ($oldStudioMrrArr.ContainsKey($rid)) {
-        $mrr = $oldStudioMrrArr[$rid].mrr
-        $arr = $oldStudioMrrArr[$rid].arr
-    }
+
+    # ARR comes from the new sheet column S. MRR is derived: ARR / 12.
+    $arrRaw = if ($si.arr -ge 0) { Gviz-Val $c[$si.arr] } else { 0 }
+    $arrNum = 0.0
+    try { $arrNum = [double]$arrRaw } catch { $arrNum = 0.0 }
+    $mrrNum = if ($arrNum -gt 0) { $arrNum / 12.0 } else { 0.0 }
 
     $r = New-Object object[] $sStudioSchema.Count
-    $idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
 
     $r[$idx['rid']]     = $rid
     $r[$idx['rn']]      = [string](Gviz-Val $c[$si.rn])
     $r[$idx['en']]      = [string](Gviz-Val $c[$si.en])
-    $r[$idx['mrr']]     = $mrr
-    $r[$idx['arr']]     = $arr
+    $r[$idx['mrr']]     = $mrrNum
+    $r[$idx['arr']]     = $arrNum
     $r[$idx['av']]      = Gviz-Val $c[$si.av]
     $r[$idx['cv']]      = Gviz-Val $c[$si.cv]
     $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
@@ -544,7 +533,6 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
     $r[$idx['ws_link']] = if ($si.ws_link -ge 0) { [string](Gviz-Val $c[$si.ws_link]) } else { '' }
     $r[$idx['isc']]     = Gviz-Val $c[$si.isc]
-    $r[$idx['rs']]      = [string](Gviz-Val $c[$si.rs])
     $r[$idx['t1']]      = [string](Gviz-Val $c[$si.t1])
     $r[$idx['t2']]      = [string](Gviz-Val $c[$si.t2])
     $r[$idx['t3']]      = [string](Gviz-Val $c[$si.t3])
@@ -568,10 +556,12 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['cst']]     = [string](Gviz-Val $c[$si.cst])
     $r[$idx['seg']]     = [string](Gviz-Val $c[$si.seg])
     $r[$idx['region']]  = [string](Gviz-Val $c[$si.region])
+    # eid: needed so payment-bucket aggregates can dedup per enterprise.
+    $r[$idx['eid']]     = [string](Gviz-Val $c[$si.eid])
 
     $sRows.Add($r)
 }
-Write-Host "  Studio: built $($sRows.Count) s_rows (preserved MRR/ARR where match found)"
+Write-Host "  Studio: built $($sRows.Count) s_rows (MRR computed as ARR/12)"
 
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---
 function JsEscape($s) {
