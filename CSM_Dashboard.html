@@ -437,7 +437,8 @@ let viniRows = D.v_rows;  // Live-replaceable
 // bundle time): { eid: { cr, op, ota, res } }. Source of truth for #Created,
 // #Open, Open Ticket Ageing (h), Avg Resolution (h) on the Vini tab — the
 // daily Vini sheet's ticket columns are sparse and unreliable.
-const VINI_TIX = D.vini_tix || {};
+const VINI_TIX   = D.vini_tix   || {};
+const STUDIO_TIX = D.studio_tix || {};
 
 // ============================================================
 // CSAT — Communication health per enterprise (gid=701797891)
@@ -1114,14 +1115,17 @@ function roiMtdRag(roiMtd) {
 // means. Per-row rendering keeps using a.cr / a.avgRes etc; this helper is
 // used by the KPI strip and the Total row where a cross-enterprise ticket-
 // weighted avg is expected.
-function aggregateTicketsForEids(eids) {
+function aggregateTicketsForEids(eids, tixDict) {
+  // tixDict defaults to VINI_TIX for backwards-compat. Pass STUDIO_TIX when
+  // aggregating Studio enterprise tickets.
+  tixDict = tixDict || VINI_TIX;
   const range = periodRange();
   let cr = 0, op = 0, resSum = 0, resCount = 0, ageSum = 0, ageCount = 0;
   const seen = new Set();
   for (const eid of eids) {
     if (!eid || seen.has(eid)) continue;
     seen.add(eid);
-    const tx = VINI_TIX[eid];
+    const tx = tixDict[eid];
     if (!tx || !Array.isArray(tx.rows)) continue;
     for (const t of tx.rows) {
       if (!t.c || t.c < range.from || t.c > range.to) continue;
@@ -1315,11 +1319,30 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const t2 = countBy(enterprisesPayment, r => r[S_COL.t2]);
   const t3 = countBy(enterprisesPayment, r => r[S_COL.t3]);
   const prag = countBy(enterprisesPayment, r => r[S_COL.prag]);
-  const unr = sumBy(active, r => r[S_COL.unr]);
-  const cr = sumBy(active, r => r[S_COL.cr]);
-  const ota = avgBy(active, r => r[S_COL.ota]);
-  const res = avgBy(active, r => r[S_COL.res]);
-  const trag = countBy(active, r => computeTicketRAG({ op: r[S_COL.unr], ota: r[S_COL.ota], res: r[S_COL.res], cr: r[S_COL.cr] }));
+  // Tickets sourced from STUDIO_TIX (gid=832733618 filtered to Product=Studio,
+  // matched by eid then name) so they always reflect current Ticket_Dump rather
+  // than the (often stale) sheet's pre-computed ticket columns.
+  const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
+  const studioTixAgg = aggregateTicketsForEids(eidList, STUDIO_TIX);
+  const unr = studioTixAgg.op;   // "Unresolved" = open tickets
+  const cr  = studioTixAgg.cr;
+  const ota = studioTixAgg.ota;
+  const res = studioTixAgg.res;
+  // Per-enterprise ticket RAG distribution — for each unique enterprise,
+  // derive its own RAG from its own ticket aggregate and count.
+  const trag = (() => {
+    const counts = {};
+    const seenEidT = new Set();
+    for (const r of active) {
+      const eid = r[S_COL.eid] || r[S_COL.en];
+      if (!eid || seenEidT.has(eid)) continue;
+      seenEidT.add(eid);
+      const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
+      const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+      counts[rag] = (counts[rag] || 0) + 1;
+    }
+    return counts;
+  })();
   // Communication RAG — CSAT-derived per enterprise (gid=701797891). Studio
   // rows don't carry an EID, so match by enterprise name (S_COL.en).
   // Dedupe by enterprise so the count is per-enterprise not per-rooftop.
@@ -1891,9 +1914,11 @@ function renderRooftop() {
       '<th class="cell-leader">MBR</th>' +
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
-    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0, sUnr=0, sCr=0;
-    const sIscVals=[], sOtaVals=[], sResVals=[];
-    const sT1={}, sT2={}, sT3={}, sPrag={}, sTrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={};
+    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0;
+    const sIscVals=[];
+    // sTrag dropped — ticket RAG distribution now computed from STUDIO_TIX
+    // in the Total row block below (see sTotalTrag).
+    const sT1={}, sT2={}, sT3={}, sPrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={};
     // Payment counts dedup by enterprise (eid). Studio Rooftop View aggregates
     // across rows; same enterprise can have multiple rooftops.
     const seenEidPay = new Set();
@@ -1908,11 +1933,12 @@ function renderRooftop() {
       sAv += Number(r[S_COL.av])||0;   sCv += Number(r[S_COL.cv])||0;
       // #Actual accumulator swaps source field when period === 'LM'.
       sAcv += Number(r[S_COL[studioActualField()]])||0;
-      sPen += Number(r[S_COL.pen])||0; sUnr += Number(r[S_COL.unr])||0; sCr += Number(r[S_COL.cr])||0;
+      sPen += Number(r[S_COL.pen])||0;
+      // Ticket accumulators (sUnr/sCr/sOtaVals/sResVals) are NO LONGER summed
+      // per-row — they're now derived from STUDIO_TIX at the Total row below
+      // (ticket-weighted across all enterprises in scope, deduped by eid).
       inc(sWsRag, websiteRag(r[S_COL.ws]));
       if (r[S_COL.isc] > 0) sIscVals.push(Number(r[S_COL.isc]));
-      if (r[S_COL.ota] > 0) sOtaVals.push(Number(r[S_COL.ota]));
-      if (r[S_COL.res] > 0) sResVals.push(Number(r[S_COL.res]));
       // Payment buckets only count ONCE per enterprise (per user spec).
       const payKey = r[S_COL.eid] || r[S_COL.en];
       if (payKey && !seenEidPay.has(payKey)) {
@@ -1920,9 +1946,12 @@ function renderRooftop() {
         inc(sT1, r[S_COL.t1]); inc(sT2, r[S_COL.t2]); inc(sT3, r[S_COL.t3]);
         inc(sPrag, r[S_COL.prag]);
       }
-      const rTrag = computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] });
+      // Per-row Ticket RAG now comes from STUDIO_TIX rather than the sheet's
+      // cached ticket cols. Computed via aggregateTicketsForEids([eid], STUDIO_TIX).
+      const rEidT = r[S_COL.eid] || r[S_COL.en];
+      const rTixEnt = aggregateTicketsForEids([rEidT], STUDIO_TIX);
+      const rTrag = computeTicketRAG({ op:rTixEnt.op, ota:rTixEnt.ota, res:rTixEnt.res, cr:rTixEnt.cr });
       const rComm = csatRagInRange(null, r[S_COL.en]);
-      inc(sTrag, rTrag);
       inc(sComm, rComm);
       inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
       inc(sMbr, r[S_COL.mbr]);
@@ -1941,6 +1970,10 @@ function renderRooftop() {
       const rowCv = Number(r[S_COL.cv])||0;
       const rowAcv = Number(r[S_COL[studioActualField()]])||0;
       const rowUf = rowAcv > 0 ? (rowCv / rowAcv) : 0;
+      // Per-row ticket aggregate from STUDIO_TIX (gid=832733618) filtered to
+      // the current period. Matched by eid (with name fallback applied at sync).
+      const rowEidT = r[S_COL.eid] || r[S_COL.en];
+      const rowTix = aggregateTicketsForEids([rowEidT], STUDIO_TIX);
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
@@ -1965,11 +1998,11 @@ function renderRooftop() {
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
         <td class="cell-payment">${ragSingle(r[S_COL.prag])}</td>
-        <td class="cell-tickets">${fmtNum(r[S_COL.unr])}</td>
-        <td class="cell-tickets">${fmtNum(r[S_COL.cr])}</td>
-        <td class="cell-tickets">${fmtHrs(r[S_COL.ota])}</td>
-        <td class="cell-tickets">${fmtHrs(r[S_COL.res])}</td>
-        <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }))}</td>
+        <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
+        <td class="cell-tickets">${fmtNum(rowTix.cr)}</td>
+        <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
+        <td class="cell-tickets">${fmtHrs(rowTix.res)}</td>
+        <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:rowTix.op, ota:rowTix.ota, res:rowTix.res, cr:rowTix.cr }))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(null, r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
@@ -1979,6 +2012,24 @@ function renderRooftop() {
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
     const totalUf = sAcv > 0 ? sCv / sAcv : 0;
+    // Ticket totals — ticket-weighted across every enterprise in scope,
+    // sourced from STUDIO_TIX (gid=832733618). Replaces the per-row sum/avg
+    // approach which double-counted multi-rooftop enterprises.
+    const totalTixEids = rows.slice(0, sliceN).map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
+    const totalStudioTix = aggregateTicketsForEids(totalTixEids, STUDIO_TIX);
+    // Ticket RAG distribution across the same enterprise set.
+    const sTotalTrag = (() => {
+      const counts = {};
+      const seenT = new Set();
+      for (const eid of totalTixEids) {
+        if (seenT.has(eid)) continue;
+        seenT.add(eid);
+        const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
+        const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+        counts[rag] = (counts[rag] || 0) + 1;
+      }
+      return counts;
+    })();
     html += `<tr class="total-row">
       <td class="left idx frozen frozen-1"></td>
       <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
@@ -1999,11 +2050,11 @@ function renderRooftop() {
       <td class="cell-payment">${payTileAgg(sT2)}</td>
       <td class="cell-payment">${payTileAgg(sT3)}</td>
       <td class="cell-payment">${ragStack(sPrag)}</td>
-      <td class="cell-tickets">${fmtNum(sUnr)}</td>
-      <td class="cell-tickets">${fmtNum(sCr)}</td>
-      <td class="cell-tickets">${fmtHrs(avg(sOtaVals))}</td>
-      <td class="cell-tickets">${fmtHrs(avg(sResVals))}</td>
-      <td class="cell-tickets">${ragStack(sTrag)}</td>
+      <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
+      <td class="cell-tickets">${fmtNum(totalStudioTix.cr)}</td>
+      <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
+      <td class="cell-tickets">${fmtHrs(totalStudioTix.res)}</td>
+      <td class="cell-tickets">${ragStack(sTotalTrag)}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
     </tr>`;

@@ -338,6 +338,7 @@ $ti = @{
     resHrs  = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
     prod    = Find-Col $tCols @('Product (Studio/Vini)','Product')
     eid     = Find-Col $tCols @('Enterprise ID')
+    enName  = Find-Col $tCols @('Enterprise Name','Enterrpise Name','Account Name','Account')
 }
 
 # Build the "live enterprise" set from the payment master. An enterprise is
@@ -383,29 +384,105 @@ function ParseHrs($cell) {
 }
 
 # Ship RAW per-ticket rows so the dashboard can apply its date-range filter
-# (MTD / Last Month / L2L / custom) at render time. Pre-aggregating server-side
-# was masking the user's expectation that "Avg Resolution = avg over tickets
-# CREATED in the current period", not averaged across all-time history.
+# (MTD / Last Month / L2L / custom) at render time.
 #
-# Schema per row (compact field names to keep JSON size down):
+# Per-row schema (compact field names to keep JSON size down):
 #   c = created date (YYYY-MM-DD)
 #   o = open bool (Status NOT IN Closed/Resolved)
 #   r = resolution hrs (parsed from col G `[h]:mm:ss`; 0 for open)
 #   a = ageing hrs at sync time (UtcNow - Created); 0 for non-open
-$viniTix = @{}
+#
+# Source: gid=832733618 has a "Product" column = 'Studio' | 'Vini'. We split
+# tickets to vini_tix vs studio_tix and match each ticket back to a master
+# enterprise:
+#   - Vini   tickets match against vini_stage (gid=674556270) EIDs (live only).
+#   - Studio tickets match against the Studio sheet (gid=603796861) EIDs.
+# If the EID doesn't match, fall back to ENTERPRISE NAME (case-insensitive,
+# stripping the " - <eid>" suffix the dump often appends).
+
+# Normalize an enterprise name for fallback match. Lowercase + trim and strip
+# " - xxxxxxxxx" suffix (e.g., "Brandon Steven Motors - 7d06f7427").
+function NormName($s) {
+    if (-not $s) { return '' }
+    $t = [string]$s
+    $dash = $t.IndexOf(' - ')
+    if ($dash -ge 0) { $t = $t.Substring(0, $dash) }
+    return $t.Trim().ToLower()
+}
+
+# Build VINI master: live EIDs + name→eid map (live only per existing spec).
+$viniEidSet = $liveEids
+$viniNameToEid = @{}
+foreach ($s in $viniStage) {
+    $stg = [string]$s['stage']
+    if ($stg -and $stg.Trim().ToLower() -eq 'churned') { continue }
+    $nKey = NormName $s['en']
+    if ($nKey -and -not $viniNameToEid.ContainsKey($nKey)) {
+        $viniNameToEid[$nKey] = [string]$s['eid']
+    }
+}
+
+# Build STUDIO master from the Studio gviz tab directly (the full $sRows build
+# happens further down, but for the ticket join we only need eid + name).
+$sColsForMaster = $studioTab.cols
+$siMaster = @{
+    eid = Find-Col $sColsForMaster @('Enterprise ID')
+    en  = Find-Col $sColsForMaster @('Enterrpise Name','Enterprise Name')
+}
+$studioEidSet = New-Object System.Collections.Generic.HashSet[string]
+$studioNameToEid = @{}
+foreach ($row in $studioTab.rows) {
+    $c = $row.c; if (-not $c) { continue }
+    $eid = [string](Gviz-Val $c[$siMaster.eid])
+    if (-not $eid) { continue }
+    [void]$studioEidSet.Add($eid)
+    $nKey = NormName ([string](Gviz-Val $c[$siMaster.en]))
+    if ($nKey -and -not $studioNameToEid.ContainsKey($nKey)) {
+        $studioNameToEid[$nKey] = $eid
+    }
+}
+Write-Host "  Master sets: vini live=$($viniEidSet.Count) name-map=$($viniNameToEid.Count) | studio eid=$($studioEidSet.Count) name-map=$($studioNameToEid.Count)"
+
+# Single pass over the dump → dispatch by product, resolve EID via the
+# master sets (eid first, then name fallback).
+$viniTix = @{}; $studioTix = @{}
 $nowUtc = [DateTime]::UtcNow
-$skipped = 0
-$ticketsKept = 0
+$kept = @{ vini=0; studio=0 }; $skipped = @{ vini=0; studio=0; other=0 }
 foreach ($row in $tixTab.rows) {
-    $c = $row.c; if (-not $c) { $skipped++; continue }
+    $c = $row.c; if (-not $c) { continue }
     $prod = [string](Gviz-Val $c[$ti.prod])
-    if ($prod -ne 'Vini') { $skipped++; continue }
-    $eid = [string](Gviz-Val $c[$ti.eid]).Trim()
-    if (-not $eid -or $eid -eq 'Not Required') { $skipped++; continue }
-    if (-not $liveEids.Contains($eid)) { $skipped++; continue }
+    if (-not $prod) { continue }
+    $eidRaw = [string](Gviz-Val $c[$ti.eid]).Trim()
+    $nameKey = NormName ([string](Gviz-Val $c[$ti.enName]))
+
+    # Resolve to master EID per product
+    $resolvedEid = $null
+    $targetDict = $null
+    if ($prod -eq 'Vini') {
+        if ($eidRaw -and $eidRaw -ne 'Not Required' -and $viniEidSet.Contains($eidRaw)) {
+            $resolvedEid = $eidRaw
+        } elseif ($nameKey -and $viniNameToEid.ContainsKey($nameKey)) {
+            $resolvedEid = $viniNameToEid[$nameKey]
+        }
+        if (-not $resolvedEid) { $skipped.vini++; continue }
+        $targetDict = $viniTix
+    } elseif ($prod -eq 'Studio') {
+        if ($eidRaw -and $eidRaw -ne 'Not Required' -and $studioEidSet.Contains($eidRaw)) {
+            $resolvedEid = $eidRaw
+        } elseif ($nameKey -and $studioNameToEid.ContainsKey($nameKey)) {
+            $resolvedEid = $studioNameToEid[$nameKey]
+        }
+        if (-not $resolvedEid) { $skipped.studio++; continue }
+        $targetDict = $studioTix
+    } else {
+        $skipped.other++; continue
+    }
 
     $created = GvizToDate $c[$ti.created]
-    if (-not $created) { $skipped++; continue }
+    if (-not $created) {
+        if ($prod -eq 'Vini') { $skipped.vini++ } else { $skipped.studio++ }
+        continue
+    }
     $createdIso = $created.ToString('yyyy-MM-dd')
 
     $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
@@ -420,13 +497,14 @@ foreach ($row in $tixTab.rows) {
         if ($null -ne $parsed -and $parsed -gt 0) { $resHrs = $parsed }
     }
 
-    if (-not $viniTix.ContainsKey($eid)) {
-        $viniTix[$eid] = New-Object System.Collections.Generic.List[hashtable]
+    if (-not $targetDict.ContainsKey($resolvedEid)) {
+        $targetDict[$resolvedEid] = New-Object System.Collections.Generic.List[hashtable]
     }
-    $viniTix[$eid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs })
-    $ticketsKept++
+    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs })
+    if ($prod -eq 'Vini') { $kept.vini++ } else { $kept.studio++ }
 }
-Write-Host "  vini_tix: $($viniTix.Count) live enterprises, $ticketsKept tickets kept, $skipped skipped"
+Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets kept, $($skipped.vini) skipped"
+Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) tickets kept, $($skipped.studio) skipped"
 
 # --- Build Studio s_rows from gid=603796861 ---
 # Schema columns in the new source (1 row per Studio rooftop):
@@ -673,7 +751,8 @@ function ViniTixToJson($dict) {
     }
     return '{' + ($parts -join ',') + '}'
 }
-$jsonViniTix = ViniTixToJson $viniTix
+$jsonViniTix   = ViniTixToJson $viniTix
+$jsonStudioTix = ViniTixToJson $studioTix
 
 # --- Splice into existing dashboard JSON ---
 function StripKey($s, $key) {
@@ -710,7 +789,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix','s_rows','s_schema') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix','studio_tix','s_rows','s_schema') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -720,6 +799,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"csat_by_name":' + $jsonCsatName +
             ',"csat_all_by_eid":' + $jsonCsatAll +
             ',"vini_tix":' + $jsonViniTix +
+            ',"studio_tix":' + $jsonStudioTix +
             ',"s_rows":' + $jsonSRows +
             ',"s_schema":' + $jsonSSchema
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
@@ -734,4 +814,4 @@ foreach ($f in $dashFiles) {
 }
 Write-Host ""
 Write-Host "=== Sync complete ==="
-Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count) | vini_tix: $($viniTix.Count) | s_rows: $($sRows.Count)"
+Write-Host "  v_rows in scope: $($vRowsScoped.Count) | vini_stage: $($viniStage.Count) | CSAT: $($byEid.Count) | vini_tix: $($viniTix.Count) | studio_tix: $($studioTix.Count) | s_rows: $($sRows.Count)"
