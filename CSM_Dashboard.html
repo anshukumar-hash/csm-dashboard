@@ -951,7 +951,7 @@ const TIPS = {
   studioRoi:   'Red/green chip from the "RoI Report Sent (D/W/M)?" column. Green = Yes (report sent recently), Red = No, gray = no data.',
   websiteScore:'RAG derived from Quality Website Score: score < 5 → Red, 5–7.99 → Amber, ≥8 → Green. Click the chip to open the dealer\'s site (from the Website Link column).',
   pendency:    'Number of VINs awaiting action for longer than 6 hours.',
-  inventoryScore:'Inventory Score from the sheet.',
+  inventoryScore:'Inventory Score from the sheet (0–10). >8 Green, >5 Amber, <5 Red.',
   usageFactor: 'Usage Factor = # Actual VINs ÷ # Contracted VINs (share of contracted VINs actually being used), shown as %. ≥70% Green, 40–70% Amber, <40% Red. Period-aware via #Actual.',
   paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
@@ -1131,6 +1131,16 @@ function ufColorClass(v) {
   if (v == null || v <= 0 || isNaN(v)) return '';
   if (v >= 0.70) return 'roi-text-g';
   if (v >= 0.40) return 'roi-text-a';
+  return 'roi-text-r';
+}
+
+// Color class for the Studio Inventory Score (0–10 numeric).
+// Per user spec:  > 8 Green,  > 5 Amber,  < 5 Red.
+function inventoryColorClass(v) {
+  if (v == null || v === 0 || isNaN(v)) return '';
+  const n = Number(v);
+  if (n > 8) return 'roi-text-g';
+  if (n > 5) return 'roi-text-a';
   return 'roi-text-r';
 }
 
@@ -1446,7 +1456,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
-    <td class="cell-quality">${isc?isc.toFixed(1):'—'}</td>
+    <td class="cell-quality ${inventoryColorClass(isc)}">${isc?isc.toFixed(1):'—'}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
@@ -2089,7 +2099,7 @@ function renderRooftop() {
         <td class="cell-usage ${ufColorClass(rowUf)}">${rowUf?(rowUf*100).toFixed(0)+'%':'—'}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
-        <td class="cell-quality">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
+        <td class="cell-quality ${inventoryColorClass(r[S_COL.isc])}">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
         <td class="cell-payment">${payTile(r[S_COL.t1])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
@@ -2141,7 +2151,7 @@ function renderRooftop() {
       <td class="cell-usage ${ufColorClass(totalUf)}">${totalUf?(totalUf*100).toFixed(0)+'%':'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
-      <td class="cell-quality">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
+      <td class="cell-quality ${sIscVals.length?inventoryColorClass(avg(sIscVals)):''}">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
       <td class="cell-payment">${payTileAgg(sT1)}</td>
       <td class="cell-payment">${payTileAgg(sT2)}</td>
       <td class="cell-payment">${payTileAgg(sT3)}</td>
