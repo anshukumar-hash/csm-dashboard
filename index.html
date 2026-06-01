@@ -216,6 +216,16 @@
   .rs-dot.rs-yes{background:var(--green)}
   .rs-dot.rs-no{background:#DC2626}
   .rs-dot.rs-na{background:#D1D5DB}
+  /* 7-day trend strip — one dot per day, oldest left → newest right. Color
+     per day (≥70% sent green, ≥40% amber, else red). Yesterday's dot gets a
+     blue ring + slight scale so it's unambiguous. */
+  .rs-strip{display:inline-flex;gap:3px;align-items:center;justify-content:flex-end;line-height:1}
+  .rs-strip .rs-day{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;cursor:default}
+  .rs-strip .rs-day.rs-yes{background:var(--green)}
+  .rs-strip .rs-day.rs-mid{background:#F59E0B}
+  .rs-strip .rs-day.rs-no{background:#DC2626}
+  .rs-strip .rs-day.rs-na{background:#D1D5DB}
+  .rs-strip .rs-day.rs-yesterday{box-shadow:0 0 0 2px var(--blue);transform:scale(1.35);margin-left:1px}
   /* Per-bucket hide classes — apply on the parent table to drop entire buckets
      (headers, column headers, body cells). Used by the Agent-level view which
      only needs identity + Final Status + Usage + RoI. */
@@ -957,7 +967,7 @@ const TIPS = {
   paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
-  studioRoiPending: 'Placeholder for the last-7-days Report Sent trend. Source data not yet wired up — will populate once a daily-history feed is provided.',
+  studioRoiPending: '7-day Report Sent trend. One dot per day, oldest → newest. ≥70% sent that day = green, ≥40% = amber, <40% = red. Yesterday\'s dot has a blue ring. Currently shows PORTFOLIO-WIDE aggregates because /api/report-coverage doesn\'t expose per-rooftop rows — so every row shows the same dots. Will become per-rooftop once a row-level endpoint is available. Hover any dot for that day\'s sent/attempted numbers.',
   reportCoverage: '7-day average of reports successfully sent across all Studio rooftops. Source: vin-tracker /api/report-coverage. Aggregate only — per-rooftop breakdown not exposed by the API yet, so this value is the same regardless of which segment / CSM you drill into.',
 };
 
@@ -970,6 +980,36 @@ function reportSentDot(v) {
     return '<span class="rs-dot rs-yes" title="Report sent"></span>';
   }
   return '<span class="rs-dot rs-no" title="Report not sent"></span>';
+}
+
+// 7-day Report Sent trend strip — one colored dot per day across the last
+// 7 days of REPORT_COVERAGE. The yesterday/most-recent dot gets a blue ring
+// + slight scale so it's visually distinguished.
+//
+// LIMITATION: the source /api/report-coverage only exposes per-day aggregate
+// counts across ALL Studio rooftops (no team_id / enterprise_id per row).
+// So the strip rendered here is PORTFOLIO-WIDE, not per-rooftop — every row
+// in the table shows the same dots. Tooltip on each dot makes the actual
+// (sent / attempted) numbers visible. The dashboard will switch to a
+// per-rooftop strip the moment the API exposes row-level data.
+function dailyDotStrip(coverage) {
+  if (!coverage || !coverage.length) return '<span style="color:var(--text-4)">—</span>';
+  // API returns newest first → reverse for left-to-right time order.
+  const days = coverage.slice(0, 7).reverse();
+  const lastIdx = days.length - 1;   // most recent (yesterday)
+  const parts = days.map((d, i) => {
+    const pct = Number(d.sentPct) || (d.attempted > 0 ? (d.sent / d.attempted) * 100 : 0);
+    let cls = 'rs-day';
+    if (d.attempted == null || d.attempted === 0) cls += ' rs-na';
+    else if (pct >= 70) cls += ' rs-yes';
+    else if (pct >= 40) cls += ' rs-mid';
+    else cls += ' rs-no';
+    if (i === lastIdx) cls += ' rs-yesterday';
+    const dayLabel = String(d.day || '');
+    const tooltip = dayLabel + ': sent ' + (d.sent||0) + '/' + (d.attempted||0) + ' (' + pct.toFixed(0) + '%)';
+    return '<span class="' + cls + '" title="' + tooltip.replace(/"/g,'&quot;') + '"></span>';
+  });
+  return '<span class="rs-strip">' + parts.join('') + '</span>';
 }
 
 // Website RAG from the Quality Website Score (Studio gid=603796861 col J).
@@ -1452,7 +1492,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
+    <td class="cell-roi">${dailyDotStrip(REPORT_COVERAGE)}</td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
@@ -2106,7 +2146,7 @@ function renderRooftop() {
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
         <td class="frozen frozen-4">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-5">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
+        <td class="cell-roi">${dailyDotStrip(REPORT_COVERAGE)}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
@@ -2162,7 +2202,7 @@ function renderRooftop() {
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
       <td class="frozen frozen-4">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-5">${fmtMoney(sArr)}</td>
-      <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
+      <td class="cell-roi">${dailyDotStrip(REPORT_COVERAGE)}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
