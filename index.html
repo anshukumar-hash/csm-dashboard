@@ -456,6 +456,7 @@ let viniRows = D.v_rows;  // Live-replaceable
 // daily Vini sheet's ticket columns are sparse and unreliable.
 const VINI_TIX   = D.vini_tix   || {};
 const STUDIO_TIX = D.studio_tix || {};
+const REPORT_COVERAGE = D.report_coverage || [];   // aggregate per-day, last 7d
 
 // ============================================================
 // CSAT — Communication health per enterprise (gid=701797891)
@@ -957,6 +958,7 @@ const TIPS = {
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   studioRoiPending: 'Placeholder for the last-7-days Report Sent trend. Source data not yet wired up — will populate once a daily-history feed is provided.',
+  reportCoverage: '7-day average of reports successfully sent across all Studio rooftops. Source: vin-tracker /api/report-coverage. Aggregate only — per-rooftop breakdown not exposed by the API yet, so this value is the same regardless of which segment / CSM you drill into.',
 };
 
 // Single red/green dot for Studio "RoI Report Sent". Yes/Y values → green,
@@ -1741,12 +1743,29 @@ function renderKpiStudio(rows, targetId) {
   })();
   const ticketRagOverall = scoreRag(trag, 85, 65);
 
+  // Report Coverage tile — 7-day aggregate across all Studio rooftops. The
+  // API doesn't expose per-rooftop rows so this value is the same regardless
+  // of which segment/CSM you've drilled into (tooltip explains this).
+  let coverageValue = '—';
+  let coverageColor = '';
+  let coverageSub  = '—';
+  if (REPORT_COVERAGE && REPORT_COVERAGE.length) {
+    const last7 = REPORT_COVERAGE.slice(0, 7);
+    const totSent = last7.reduce((s, d) => s + (Number(d.sent)||0), 0);
+    const totAtt  = last7.reduce((s, d) => s + (Number(d.attempted)||0), 0);
+    const pct = totAtt > 0 ? (totSent / totAtt) * 100 : 0;
+    coverageValue = pct.toFixed(0) + '%';
+    coverageColor = pct >= 70 ? 'green-c' : pct >= 40 ? 'amber-c' : 'red-c';
+    coverageSub   = fmtNum(totSent) + ' of ' + fmtNum(totAtt) + ' attempts';
+  }
+
   const el = document.getElementById(targetId || 'kpi-strip');
-  el.className = 'kpi-grid six';
+  el.className = 'kpi-grid seven';
   el.innerHTML = `
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
     <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (6 Hrs)${tip('pendency')}</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
+    <div class="kpi"><div class="kpi-label">Reports Sent (7d)${tip('reportCoverage')}</div><div class="kpi-value ${coverageColor}">${coverageValue}</div><div class="kpi-sub">${coverageSub}</div></div>
     <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(prag)}</div></div>
     <div class="kpi"><div class="kpi-label">Ticket RAG</div><div class="kpi-value">${ragSquareBox(ticketRagOverall)}</div><div class="kpi-sub"><span style="color:var(--text-2)">Avg Res ${fmtHrs(res)}</span> · ${ragCountsColored(trag)}</div></div>
     <div class="kpi"><div class="kpi-label">Communication RAG</div><div class="kpi-value">${ragSquareBox(commRagOverall)}</div><div class="kpi-sub">${ragCountsColored(commRagCounts, 'CSAT')}</div></div>

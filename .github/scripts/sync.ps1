@@ -21,6 +21,11 @@ $urls = @{
     # to be resolved — the tab now returns real data via gviz. We read the
     # pre-computed Comm Avg column directly so our display matches the sheet.
     csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
+    # Report-coverage API — aggregate per-day counts of reports sent / not sent.
+    # No per-rooftop breakdown available, so we use this for an overview KPI
+    # tile only; the per-row "Report Sent" column on Studio stays blank until
+    # a row-level endpoint is exposed.
+    coverage = "https://vin-tracker-dashboard.vercel.app/api/report-coverage?days=7"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -87,6 +92,19 @@ try {
     $csatTab = Fetch-Gviz $urls.csat
 } catch {
     Write-Host "  CSAT: WARNING — fetch failed ($_). Will preserve existing snapshot."
+}
+
+# Report-coverage aggregate (one row per day, ~7 days). Falls back gracefully.
+$reportCoverage = @()
+try {
+    Write-Host "  fetch coverage: $($urls.coverage)"
+    $resp = Invoke-WebRequest -Uri $urls.coverage -UseBasicParsing -TimeoutSec 30
+    $reportCoverage = $resp.Content | ConvertFrom-Json
+    if (-not $reportCoverage) { $reportCoverage = @() }
+    Write-Host "  coverage: $($reportCoverage.Count) day(s)"
+} catch {
+    Write-Host "  coverage: WARNING — fetch failed ($_). Will preserve existing snapshot."
+    $reportCoverage = $null
 }
 Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatTab){$csatTab.rows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count)"
 
@@ -802,6 +820,47 @@ function ViniTixToJson($dict) {
 $jsonViniTix   = ViniTixToJson $viniTix
 $jsonStudioTix = ViniTixToJson $studioTix
 
+# report_coverage → JSON array. Preserves the previously-spliced data when
+# the fetch fails (null). Each entry is {day, attempted, sent, notSent,
+# sentPct, pendingVins, negativeTat}.
+function ReportCoverageToJson($arr) {
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($arr) {
+        foreach ($r in $arr) {
+            $day      = if ($r.reportDay) { JsEscape $r.reportDay } else { 'null' }
+            $att      = if ($null -ne $r.attemptedRooftops) { JsNum $r.attemptedRooftops } else { '0' }
+            $sent     = if ($null -ne $r.sent) { JsNum $r.sent } else { '0' }
+            $notSent  = if ($null -ne $r.notSent) { JsNum $r.notSent } else { '0' }
+            $pct      = if ($null -ne $r.sentPct) { JsNum $r.sentPct } else { '0' }
+            $pendVins = if ($null -ne $r.reasonPendingVins) { JsNum $r.reasonPendingVins } else { '0' }
+            $negTat   = if ($null -ne $r.reasonNegativeTat) { JsNum $r.reasonNegativeTat } else { '0' }
+            $parts.Add('{"day":' + $day + ',"attempted":' + $att + ',"sent":' + $sent +
+                       ',"notSent":' + $notSent + ',"sentPct":' + $pct +
+                       ',"pendingVins":' + $pendVins + ',"negativeTat":' + $negTat + '}')
+        }
+    }
+    return '[' + ($parts -join ',') + ']'
+}
+if ($null -eq $reportCoverage) {
+    # preserve from snapshot
+    $jsonCoverage = '[]'
+    if ($D.report_coverage) {
+        $items = New-Object System.Collections.Generic.List[string]
+        foreach ($r in $D.report_coverage) {
+            $items.Add('{"day":' + (JsEscape $r.day) +
+                       ',"attempted":' + (JsNum $r.attempted) +
+                       ',"sent":' + (JsNum $r.sent) +
+                       ',"notSent":' + (JsNum $r.notSent) +
+                       ',"sentPct":' + (JsNum $r.sentPct) +
+                       ',"pendingVins":' + (JsNum $r.pendingVins) +
+                       ',"negativeTat":' + (JsNum $r.negativeTat) + '}')
+        }
+        $jsonCoverage = '[' + ($items -join ',') + ']'
+    }
+} else {
+    $jsonCoverage = ReportCoverageToJson $reportCoverage
+}
+
 # --- Splice into existing dashboard JSON ---
 function StripKey($s, $key) {
     $marker='"' + $key + '":'
@@ -837,7 +896,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -850,7 +909,8 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"vini_tix":' + $jsonViniTix +
             ',"studio_tix":' + $jsonStudioTix +
             ',"s_rows":' + $jsonSRows +
-            ',"s_schema":' + $jsonSSchema
+            ',"s_schema":' + $jsonSSchema +
+            ',"report_coverage":' + $jsonCoverage
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 $prefix='window.__DASHBOARD_DATA__ = '
