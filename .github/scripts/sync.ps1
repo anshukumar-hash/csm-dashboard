@@ -615,6 +615,14 @@ function Gviz-Hrs($cell) {
     return ''
 }
 
+# Manual segment overrides for Studio — keyed by Enterprise ID. Use when the
+# sheet's Customer Segment column is wrong/missing for a specific enterprise
+# and the user wants a different classification surfaced in the dashboard.
+# Mirrors the same pattern used for $manualSeg on the Vini side.
+$studioManualSeg = @{
+    '00d2aafe9' = 'Ent'   # IM Marketplace GmBH — per user override
+}
+
 $sRows = New-Object System.Collections.Generic.List[object]
 $idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
 foreach ($row in $studioTab.rows) {
@@ -665,10 +673,16 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['csm']]     = $csmRaw
     $r[$idx['ct']]      = [string](Gviz-Val $c[$si.ct])
     $r[$idx['cst']]     = [string](Gviz-Val $c[$si.cst])
-    $r[$idx['seg']]     = [string](Gviz-Val $c[$si.seg])
+    # Read eid first so we can apply the manual segment override below.
+    $eidForRow = [string](Gviz-Val $c[$si.eid])
+    $segValue  = [string](Gviz-Val $c[$si.seg])
+    if ($eidForRow -and $studioManualSeg.ContainsKey($eidForRow)) {
+        $segValue = $studioManualSeg[$eidForRow]
+    }
+    $r[$idx['seg']]     = $segValue
     $r[$idx['region']]  = [string](Gviz-Val $c[$si.region])
     # eid: needed so payment-bucket aggregates can dedup per enterprise.
-    $r[$idx['eid']]     = [string](Gviz-Val $c[$si.eid])
+    $r[$idx['eid']]     = $eidForRow
 
     $sRows.Add($r)
 }
