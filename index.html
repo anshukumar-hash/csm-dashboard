@@ -473,10 +473,25 @@ function apptValuePerAppt(agent) {
 
 const CSAT_BY_EID      = D.csat_by_eid      || {};
 const CSAT_BY_NAME     = D.csat_by_name     || {};
-// Per-enterprise CSAT history (all readings). Used by Rooftop View so a row
-// shows the RAG distribution across all of that enterprise's readings (e.g.
-// "2G · 1A · 1R") rather than just the single latest rating.
+// Per-enterprise CSAT history (all readings).
+//   CSAT_ALL_BY_EID  — keyed by enterprise ID (exact match)
+//   CSAT_ALL_BY_NAME — keyed by NORMALIZED name (lowercase + trim + strip
+//                      " - <eid>" suffix). Used by csatRagInRange to keep the
+//                      date filter alive even for enterprises whose EID
+//                      doesn't match CSAT but whose NAME does.
 const CSAT_ALL_BY_EID  = D.csat_all_by_eid  || {};
+const CSAT_ALL_BY_NAME = D.csat_all_by_name || {};
+
+// Normalize a name the same way sync.ps1 does so the JS-side and PowerShell-
+// side hashes align byte-for-byte.
+function normCsatName(s) {
+  if (!s) return '';
+  let t = String(s);
+  const dash = t.indexOf(' - ');
+  if (dash >= 0) t = t.substring(0, dash);
+  return t.trim().toLowerCase();
+}
+
 function csatLookup(eid, en) {
   if (eid && CSAT_BY_EID[eid]) return CSAT_BY_EID[eid];
   if (en) {
@@ -513,45 +528,53 @@ function csatRagCountsFor(eid) {
 // whose date_iso falls in that window. Returns G/A/R from the AVG Comm Avg.
 // across in-range readings; NA when no readings in window.
 function csatRagInRange(eid, en) {
-  const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
-  if (!arr.length) {
-    // No history captured — try the latest-by-name fallback (Studio).
-    // Returns null when the name fallback also has no signal so callers
-    // (countBy etc.) can EXCLUDE these enterprises from the count instead
-    // of counting them as NA. Otherwise enterprises with no CSAT coverage
-    // flood the breakdown (e.g. "1 A · 26 NA" for a segment whose 26 of 27
-    // enterprises simply have no CSAT data in the source sheet).
-    const r = csatRag(eid, en);
-    return (r === 'NA' || r == null) ? null : r;
-  }
+  // Try eid history first; if absent OR no in-range readings, FALL THROUGH to
+  // name history with the same date filter. Previously the name path used the
+  // latest-by-name lookup (no date filter), so name-matched enterprises always
+  // showed the same RAG regardless of period selector. Now both paths share
+  // identical date-filter semantics.
   const range = periodRange();
-  const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
-  if (!inRange.length) return null;       // no readings in window → exclude
-  const avgs = inRange.map(r => Number(r.avg)).filter(v => v != null && !isNaN(v));
-  if (!avgs.length) return null;          // in-window rows exist but all blank → exclude
-  const v = avgs.reduce((s,x) => s + x, 0) / avgs.length;
-  if (v < 2.5) return 'Red';
-  if (v < 4)   return 'Amber';
-  return 'Green';
+  const tryArr = (arr) => {
+    if (!arr || !arr.length) return undefined;
+    const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
+    if (!inRange.length) return undefined;
+    const avgs = inRange.map(r => Number(r.avg)).filter(v => v != null && !isNaN(v));
+    if (!avgs.length) return undefined;
+    const v = avgs.reduce((s,x) => s + x, 0) / avgs.length;
+    if (v < 2.5) return 'Red';
+    if (v < 4)   return 'Amber';
+    return 'Green';
+  };
+  const byEid  = eid ? tryArr(CSAT_ALL_BY_EID[eid]) : undefined;
+  if (byEid != null) return byEid;
+  const nameKey = en ? normCsatName(en) : '';
+  const byName = nameKey ? tryArr(CSAT_ALL_BY_NAME[nameKey]) : undefined;
+  if (byName != null) return byName;
+  return null;
 }
 
 // Same as csatRagCountsFor() but filtered to the active periodRange(). Used by
-// the Rooftop View Communication column so it tracks the date selector.
-// Only counts readings with a valid avg (NA readings — sheet rows where Comm
-// Avg was blank — are excluded so they don't pollute the row's Score stack).
-function csatRagCountsForInRange(eid) {
-  const arr = (eid && CSAT_ALL_BY_EID[eid]) || [];
-  if (!arr.length) return {};
+// the Rooftop View Communication "Score" column so it tracks the date
+// selector. Falls back to CSAT_ALL_BY_NAME with the same date filter when the
+// eid doesn't match. Only counts readings with a valid avg (blank Comm Avg
+// rows are excluded so they don't pollute the stack).
+function csatRagCountsForInRange(eid, en) {
   const range = periodRange();
-  const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
-  if (!inRange.length) return {};
-  const out = {};
-  inRange.forEach(r => {
-    const k = r.rag;
-    if (!k || k === 'NA') return;   // exclude blank-Comm-Avg rows
-    out[k] = (out[k] || 0) + 1;
-  });
-  return out;
+  const collect = (arr) => {
+    const out = {};
+    if (!arr || !arr.length) return out;
+    const inRange = arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to);
+    inRange.forEach(r => {
+      const k = r.rag;
+      if (!k || k === 'NA') return;
+      out[k] = (out[k] || 0) + 1;
+    });
+    return out;
+  };
+  const eidCounts = eid ? collect(CSAT_ALL_BY_EID[eid]) : {};
+  if (Object.keys(eidCounts).length > 0) return eidCounts;
+  const nameKey = en ? normCsatName(en) : '';
+  return nameKey ? collect(CSAT_ALL_BY_NAME[nameKey]) : {};
 }
 
 // Studio and Vini are treated as independent products. Each tab reads its CSM
@@ -2137,7 +2160,7 @@ function renderRooftop() {
       const isChurned = String(r.stage||'').toLowerCase() === 'churned';
       const liveArr = isChurned ? 0 : r.arr;
       // Per-row Communication Score (numeric) + Final RAG (single chip).
-      const commCounts = csatRagCountsForInRange(r.eid);
+      const commCounts = csatRagCountsForInRange(r.eid, r.en);
       const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
       const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
       const commScoreCell = commScoreNum == null

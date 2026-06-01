@@ -264,7 +264,7 @@ if (-not $csatBroken) {
 
 if ($csatBroken) {
     Write-Host "  CSAT: WARNING — fetch empty or 'Loading...'. Preserving existing snapshot."
-    $byEid=@{}; $byName=@{}; $allByEid=@{}
+    $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
     if ($D.csat_by_eid) {
         foreach ($k in $D.csat_by_eid.Keys) {
             $r = $D.csat_by_eid[$k]
@@ -287,7 +287,17 @@ if ($csatBroken) {
             $allByEid[$k] = $list
         }
     }
-    Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid"
+    if ($D.csat_all_by_name) {
+        foreach ($k in $D.csat_all_by_name.Keys) {
+            $arr = $D.csat_all_by_name[$k]
+            $list = New-Object System.Collections.Generic.List[hashtable]
+            foreach ($r in $arr) {
+                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag })
+            }
+            $allByName[$k] = $list
+        }
+    }
+    Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid | $($allByName.Count) all_by_name"
 } else {
     $cCols = $csatTab.cols
     $ci = @{
@@ -297,7 +307,16 @@ if ($csatBroken) {
         csm  = Find-Col $cCols @('CSM Name','csm_name')
         avg  = Find-Col $cCols @('Comm Avg.','Comm Avg','comm_avg')
     }
-    $byEid=@{}; $byName=@{}; $allByEid=@{}
+    # Normalize enterprise name for fuzzy match: lowercase + trim + strip
+    # " - <eid>" suffix the CSAT dump sometimes appends.
+    function NormCsatName($s) {
+        if (-not $s) { return '' }
+        $t = [string]$s
+        $dash = $t.IndexOf(' - ')
+        if ($dash -ge 0) { $t = $t.Substring(0, $dash) }
+        return $t.Trim().ToLower()
+    }
+    $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
     foreach ($row in $csatTab.rows) {
         $c = $row.c; if (-not $c) { continue }
         $eid  = ([string](Gviz-Val $c[$ci.eid])).Trim()
@@ -319,11 +338,18 @@ if ($csatBroken) {
             $allByEid[$eid].Add(@{ date_iso=$iso; avg=$avg; rag=$rag })
         }
         if ($name) {
-            $k = $name.ToUpper()
-            if (-not $byName.ContainsKey($k) -or [string]$byName[$k].date_iso -lt $iso) { $byName[$k] = $rec }
+            # by_name keyed UPPERCASE (latest-reading lookup, unchanged)
+            $kUp = $name.ToUpper()
+            if (-not $byName.ContainsKey($kUp) -or [string]$byName[$kUp].date_iso -lt $iso) { $byName[$kUp] = $rec }
+            # all_by_name keyed NORMALIZED (for date-filtered name fallback)
+            $kNorm = NormCsatName $name
+            if ($kNorm) {
+                if (-not $allByName.ContainsKey($kNorm)) { $allByName[$kNorm] = New-Object System.Collections.Generic.List[hashtable] }
+                $allByName[$kNorm].Add(@{ date_iso=$iso; avg=$avg; rag=$rag })
+            }
         }
     }
-    Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid"
+    Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid | $($allByName.Count) all_by_name"
 }
 
 # --- Build vini_tix from Ticket_Dump (gid=832733618) ---
@@ -742,7 +768,8 @@ function CsatAllToJson($dict) {
 }
 $jsonCsatEid=CsatDictToJson $byEid
 $jsonCsatName=CsatDictToJson $byName
-$jsonCsatAll=CsatAllToJson $allByEid
+$jsonCsatAll     = CsatAllToJson $allByEid
+$jsonCsatAllName = CsatAllToJson $allByName
 
 # vini_tix dict → JSON. Each entry is { rows: [{c,o,r,a}, ...] } where the
 # dashboard then date-filters and aggregates client-side per active period.
@@ -796,7 +823,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','vini_tix','studio_tix','s_rows','s_schema') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -805,6 +832,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"csat_by_eid":' + $jsonCsatEid +
             ',"csat_by_name":' + $jsonCsatName +
             ',"csat_all_by_eid":' + $jsonCsatAll +
+            ',"csat_all_by_name":' + $jsonCsatAllName +
             ',"vini_tix":' + $jsonViniTix +
             ',"studio_tix":' + $jsonStudioTix +
             ',"s_rows":' + $jsonSRows +
