@@ -160,6 +160,12 @@
   table.data.rooftop-layout-7 .frozen-5{left:398px; width:70px;  min-width:70px;  max-width:70px}
   table.data.rooftop-layout-7 .frozen-6{left:468px; width:60px;  min-width:60px;  max-width:60px}
   table.data.rooftop-layout-7 .frozen-7{left:528px; width:60px;  min-width:60px;  max-width:60px; box-shadow:1px 0 0 var(--border)}
+  /* 5-frozen variant: Studio Rooftop View — Agent Type col removed per user.
+     Layout: # · Rooftop · Enterprise · MRR · ARR. */
+  table.data.rooftop-layout-5 .frozen-3{left:158px; width:160px; min-width:160px; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-5 .frozen-4{left:318px; width:80px;  min-width:80px;  max-width:80px}
+  table.data.rooftop-layout-5 .frozen-5{left:398px; width:80px;  min-width:80px;  max-width:80px; box-shadow:1px 0 0 var(--border)}
+  table.data.rooftop-layout-5 .frozen-6{box-shadow:none}
   /* Long content in NAME column must ellipsis to honor the locked width */
   table.data .frozen-2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   table.data tbody tr:hover .frozen{background:#FAFAFA}
@@ -199,6 +205,12 @@
      adds underline-on-hover so the user knows it opens the dealer site. */
   a.ws-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--text-3)}
   a.ws-link:hover{color:var(--link);border-bottom-color:var(--link)}
+  /* Rooftop search input — sits above the rooftop list table on both tabs. */
+  .rooftop-search{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+  .rooftop-search label{font-size:11px;color:var(--text-2);font-weight:500}
+  .rooftop-search input{flex:1;max-width:420px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;background:#FFF}
+  .rooftop-search input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 2px rgba(79,70,229,0.1)}
+  .rooftop-search .hint{font-size:10.5px;color:var(--text-4)}
   /* Report Sent dot — small red/green circle for the new Studio RoI column. */
   .rs-dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle}
   .rs-dot.rs-yes{background:var(--green)}
@@ -356,6 +368,11 @@
           <span style="font-size:11.5px;color:var(--text-3)" id="rooftop-count-text"></span>
           <button class="csv-btn">↓ Download CSV</button>
         </div>
+      </div>
+      <div class="rooftop-search">
+        <label for="rooftop-search-input">🔍 Search:</label>
+        <input id="rooftop-search-input" type="text" placeholder="Filter by rooftop or enterprise name…" autocomplete="off"/>
+        <span class="hint">case-insensitive, matches rooftop OR enterprise</span>
       </div>
       <div class="table-wrap" id="rooftop-table-wrap"></div>
     </div>
@@ -644,7 +661,8 @@ let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
   filters: { region:'AMER', segment:'', manager:'', csm:'' },
-  rooftopContext: { kind:'all', value:null }
+  rooftopContext: { kind:'all', value:null },
+  rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
 
 // ============================================================
@@ -1914,6 +1932,15 @@ function renderRooftop() {
       rows = rows.filter(r => r[S_COL.csm] === cleanCsm);
       contextLabel = `CSM: ${cleanCsm}`;
     }
+    // Search-box filter (case-insensitive substring on rooftop OR enterprise).
+    const q = (state.rooftopSearch || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(r => {
+        const rn = String(r[S_COL.rn] || '').toLowerCase();
+        const en = String(r[S_COL.en] || '').toLowerCase();
+        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
+      });
+    }
     // Sort by ARR descending — biggest accounts first (per user spec).
     rows = rows.slice().sort((a, b) => (Number(b[S_COL.arr])||0) - (Number(a[S_COL.arr])||0));
     document.getElementById('crumb-context').textContent = contextLabel;
@@ -1923,8 +1950,8 @@ function renderRooftop() {
 
     // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
     // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
-    let html = '<table class="data"><thead><tr class="group">' +
-      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
+    let html = '<table class="data rooftop-layout rooftop-layout-5"><thead><tr class="group">' +
+      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
@@ -1937,9 +1964,8 @@ function renderRooftop() {
       '<th class="left frozen frozen-1">#</th>' +
       '<th class="left frozen frozen-2">Rooftop</th>' +
       '<th class="left frozen frozen-3">Enterprise</th>' +
-      '<th class="left frozen frozen-4">Agent Type</th>' +
-      '<th class="frozen frozen-5">MRR</th>' +
-      '<th class="frozen frozen-6">ARR</th>' +
+      '<th class="frozen frozen-4">MRR</th>' +
+      '<th class="frozen frozen-5">ARR</th>' +
       '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       '<th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')</th>' +
@@ -2019,9 +2045,8 @@ function renderRooftop() {
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
-        <td class="left frozen frozen-4">${(r[S_COL.cst]||r[S_COL.ct])||'—'} <span class="csm-mgr">· ${r[S_COL.seg]||''}</span></td>
-        <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
-        <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
+        <td class="frozen frozen-4">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
+        <td class="frozen frozen-5">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
         <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
@@ -2048,7 +2073,7 @@ function renderRooftop() {
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="25" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
@@ -2075,9 +2100,8 @@ function renderRooftop() {
       <td class="left idx frozen frozen-1"></td>
       <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
-      <td class="left frozen frozen-4">—</td>
-      <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
-      <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
+      <td class="frozen frozen-4">${fmtMoney(sMrr)}</td>
+      <td class="frozen frozen-5">${fmtMoney(sArr)}</td>
       <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
@@ -2106,6 +2130,15 @@ function renderRooftop() {
     if (ctx.kind === 'segment') { rows = rows.filter(r => r.seg === ctx.value); contextLabel = `Segment: ${ctx.value}`; }
     else if (ctx.kind === 'agent') { rows = rows.filter(r => r.agent === ctx.value); contextLabel = `Agent: ${ctx.value}`; }
     else if (ctx.kind === 'csm')   { rows = rows.filter(r => r.csm === ctx.value); contextLabel = `CSM: ${ctx.value}`; }
+    // Search-box filter (case-insensitive substring on rooftop OR enterprise).
+    const q = (state.rooftopSearch || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(r => {
+        const rn = String(r.rn || '').toLowerCase();
+        const en = String(r.en || '').toLowerCase();
+        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
+      });
+    }
     // Sort by ARR descending — biggest accounts first (per user spec).
     rows = rows.slice().sort((a, b) => (Number(b.arr)||0) - (Number(a.arr)||0));
     document.getElementById('crumb-context').textContent = contextLabel;
@@ -2758,6 +2791,21 @@ document.getElementById('btn-lm').addEventListener('click', () => {
   renderAll();
 });
 document.getElementById('btn-refresh').addEventListener('click', refreshAllSheets);
+
+// Rooftop search — debounced (~150ms) so each keystroke doesn't trigger
+// a full re-render. Only re-renders renderRooftop() since the search input
+// only affects the rooftop list.
+let _rooftopSearchTimer = null;
+const _rooftopSearchInput = document.getElementById('rooftop-search-input');
+if (_rooftopSearchInput) {
+  _rooftopSearchInput.addEventListener('input', e => {
+    clearTimeout(_rooftopSearchTimer);
+    _rooftopSearchTimer = setTimeout(() => {
+      state.rooftopSearch = e.target.value || '';
+      if (state.view === 'rooftop') renderRooftop();
+    }, 150);
+  });
+}
 
 populateCsmDropdown();
 renderAll();
