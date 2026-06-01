@@ -952,7 +952,7 @@ const TIPS = {
   websiteScore:'RAG derived from Quality Website Score: score < 5 → Red, 5–7.99 → Amber, ≥8 → Green. Click the chip to open the dealer\'s site (from the Website Link column).',
   pendency:    'Number of VINs awaiting action for longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet.',
-  usageFactor: 'Usage Factor = # Contracted VINs ÷ # Actual VINs (per user spec). Per-group it\'s the average across rooftops.',
+  usageFactor: 'Usage Factor = # Actual VINs ÷ # Contracted VINs (share of contracted VINs actually being used), shown as %. ≥70% Green, 40–70% Amber, <40% Red. Period-aware via #Actual.',
   paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
@@ -1120,6 +1120,17 @@ function roiInlineClass(val) {
   if (val == null || val === 0 || isNaN(val)) return '';
   if (val >= 4) return 'roi-text-g';
   if (val >= 2) return 'roi-text-a';
+  return 'roi-text-r';
+}
+
+// Color class for the Studio Usage Factor (= # Actual ÷ # Contracted, ratio).
+// Per user spec:  >= 0.70  Green,  0.40–0.70  Amber,  < 0.40  Red.
+// Returns one of the globally-scoped .roi-text-* classes so the same color
+// palette is used as for the RoI factor.
+function ufColorClass(v) {
+  if (v == null || v <= 0 || isNaN(v)) return '';
+  if (v >= 0.70) return 'roi-text-g';
+  if (v >= 0.40) return 'roi-text-a';
   return 'roi-text-r';
 }
 
@@ -1349,8 +1360,9 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // #Actual swaps to last-month source when state.period === 'LM'.
   const actualField = studioActualField();
   const acv = sumBy(active, r => r[S_COL[actualField]]);
-  // Usage Factor at the group level: #Contracted / #Actual (period-aware via acv).
-  const uf = acv > 0 ? cv / acv : 0;
+  // Usage Factor = # Actual ÷ # Contracted (per user spec — the share of
+  // contracted VINs that are actually being used). Period-aware via acv.
+  const uf = cv > 0 ? acv / cv : 0;
   const pen = sumBy(active, r => r[S_COL.pen]);
   // Website RAG — count breakdown across rooftops in the group.
   const wsRagCounts = countBy(active, r => websiteRag(r[S_COL.ws]));
@@ -1431,7 +1443,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-roi"><span style="color:var(--text-4)">—</span></td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
-    <td class="cell-usage">${uf?uf.toFixed(2):'—'}</td>
+    <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
     <td class="cell-quality">${isc?isc.toFixed(1):'—'}</td>
@@ -1674,7 +1686,13 @@ function renderKpiStudio(rows, targetId) {
   const av = sumBy(active, r => r[S_COL.av]);
   const pen = sumBy(active, r => r[S_COL.pen]);
   const prag = countBy(active, r => r[S_COL.prag]);
-  const res = avgBy(active, r => r[S_COL.res]);
+  // Tickets sourced from STUDIO_TIX (gid=832733618 ticket dump), NOT the
+  // gid=603796861 sheet which carries zeros in its ticket columns. Same
+  // pattern studioRow uses — keeps the KPI tile and the grouped tables
+  // showing identical numbers.
+  const eidListForTix = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
+  const studioTixAgg = aggregateTicketsForEids(eidListForTix, STUDIO_TIX);
+  const res = studioTixAgg.res;
   // Overall Payment RAG (score-based) — single G/A/R for the current filter.
   // Same thresholds as the Vini Payment Score card (80+/60+).
   const paymentRagOverall = scoreRag(prag, 80, 60);
@@ -1696,9 +1714,21 @@ function renderKpiStudio(rows, targetId) {
   const commRagCounts = countBy(allByEn, r => csatRagInRange(r[S_COL.eid], r[S_COL.en]));
   // Overall Communication RAG — COMM weights (G:100, A:60, R:20), 80/60 thresh.
   const commRagOverall = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
-  // Ticket RAG (filter-level) — per-row computeTicketRAG distribution across
-  // active studio rooftops; weighted with default G:100/A:50/R:0, 85/65 thresh.
-  const trag = countBy(active, r => computeTicketRAG({ op: r[S_COL.unr], ota: r[S_COL.ota], res: r[S_COL.res], cr: r[S_COL.cr] }));
+  // Ticket RAG distribution — per-enterprise computeTicketRAG using STUDIO_TIX
+  // aggregates (so the KPI matches what the grouped/rooftop tables show).
+  const trag = (() => {
+    const counts = {};
+    const seenT = new Set();
+    for (const r of active) {
+      const eid = r[S_COL.eid] || r[S_COL.en];
+      if (!eid || seenT.has(eid)) continue;
+      seenT.add(eid);
+      const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
+      const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+      counts[rag] = (counts[rag] || 0) + 1;
+    }
+    return counts;
+  })();
   const ticketRagOverall = scoreRag(trag, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
@@ -2031,12 +2061,12 @@ function renderRooftop() {
       const wsCell = (wsLink && wsRagVal)
         ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website (score: ${Number(wsRaw).toFixed(1)})">${wsChip}</a>`
         : wsChip;
-      // Usage Factor recomputed per-row: # Contracted / # Actual (user spec).
-      // #Actual swaps between current-month (acv) and last-month (lm_acv)
-      // based on the period selector at the top of the page.
+      // Usage Factor = # Actual ÷ # Contracted (per user spec). Period-aware
+      // via #Actual which swaps between current-month (acv) and last-month
+      // (lm_acv) based on the period selector.
       const rowCv = Number(r[S_COL.cv])||0;
       const rowAcv = Number(r[S_COL[studioActualField()]])||0;
-      const rowUf = rowAcv > 0 ? (rowCv / rowAcv) : 0;
+      const rowUf = rowCv > 0 ? (rowAcv / rowCv) : 0;
       // Per-row ticket aggregate from STUDIO_TIX (gid=832733618) filtered to
       // the current period. Matched by eid (with name fallback applied at sync).
       const rowEidT = r[S_COL.eid] || r[S_COL.en];
@@ -2056,7 +2086,7 @@ function renderRooftop() {
         <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL[studioActualField()]])}</td>
-        <td class="cell-usage">${rowUf?rowUf.toFixed(2):'—'}</td>
+        <td class="cell-usage ${ufColorClass(rowUf)}">${rowUf?(rowUf*100).toFixed(0)+'%':'—'}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
         <td class="cell-quality">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
@@ -2077,7 +2107,8 @@ function renderRooftop() {
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
-    const totalUf = sAcv > 0 ? sCv / sAcv : 0;
+    // Usage Factor at the Total row: # Actual ÷ # Contracted (matches per-row).
+    const totalUf = sCv > 0 ? sAcv / sCv : 0;
     // Ticket totals — ticket-weighted across every enterprise in scope,
     // sourced from STUDIO_TIX (gid=832733618). Replaces the per-row sum/avg
     // approach which double-counted multi-rooftop enterprises.
@@ -2107,7 +2138,7 @@ function renderRooftop() {
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
       <td class="cell-usage">${fmtNum(sAcv)}</td>
-      <td class="cell-usage">${totalUf?totalUf.toFixed(2):'—'}</td>
+      <td class="cell-usage ${ufColorClass(totalUf)}">${totalUf?(totalUf*100).toFixed(0)+'%':'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
       <td class="cell-quality">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
