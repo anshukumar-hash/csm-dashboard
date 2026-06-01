@@ -649,7 +649,17 @@ function periodRange(p) {
   if (p === 'L2L') return { from: ymd(new Date(y,m-2,1)), to: ymd(new Date(y,m-1,0)) };
   return { from: ymd(new Date(y,m-1,1)), to: ymd(new Date(y,m,0)) };
 }
-function ymd(d) { return d.toISOString().slice(0,10); }
+// Use LOCAL date components — not toISOString() — to avoid timezone shift.
+// In e.g. IST (UTC+05:30), `new Date(2026, 3, 1)` is "Apr 1 00:00 IST" which
+// toISOString interprets as "Mar 31 18:30 UTC" → "2026-03-31". That would
+// place every period's `from/to` one day before the user's mental model,
+// dropping the last day of the period (e.g., April 30 from Last Month).
+function ymd(d) {
+  const y  = d.getFullYear();
+  const m  = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + dd;
+}
 
 // ============================================================
 // VINI: aggregate from day-grain rows
@@ -1355,7 +1365,11 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     if (seenEnAll.has(en)) return false;
     seenEnAll.add(en); return true;
   });
-  const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
+  // Pass eid so csatRagInRange uses CSAT_ALL_BY_EID and the date filter
+  // engages. If eid doesn't match CSAT, it falls back to name (no date
+  // filter). Was previously eid=null which forced the name fallback every
+  // time — meaning Studio Communication never reflected the period selector.
+  const commRagCounts = countBy(allByEn, r => csatRagInRange(r[S_COL.eid], r[S_COL.en]));
   const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
   const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r[S_COL.cf]);
@@ -1634,7 +1648,11 @@ function renderKpiStudio(rows, targetId) {
     if (seenEnAll.has(en)) return false;
     seenEnAll.add(en); return true;
   });
-  const commRagCounts = countBy(allByEn, r => csatRagInRange(null, r[S_COL.en]));
+  // Pass eid so csatRagInRange uses CSAT_ALL_BY_EID and the date filter
+  // engages. If eid doesn't match CSAT, it falls back to name (no date
+  // filter). Was previously eid=null which forced the name fallback every
+  // time — meaning Studio Communication never reflected the period selector.
+  const commRagCounts = countBy(allByEn, r => csatRagInRange(r[S_COL.eid], r[S_COL.en]));
   // Overall Communication RAG — COMM weights (G:100, A:60, R:20), 80/60 thresh.
   const commRagOverall = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   // Ticket RAG (filter-level) — per-row computeTicketRAG distribution across
@@ -1951,7 +1969,7 @@ function renderRooftop() {
       const rEidT = r[S_COL.eid] || r[S_COL.en];
       const rTixEnt = aggregateTicketsForEids([rEidT], STUDIO_TIX);
       const rTrag = computeTicketRAG({ op:rTixEnt.op, ota:rTixEnt.ota, res:rTixEnt.res, cr:rTixEnt.cr });
-      const rComm = csatRagInRange(null, r[S_COL.en]);
+      const rComm = csatRagInRange(r[S_COL.eid], r[S_COL.en]);
       inc(sComm, rComm);
       inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
       inc(sMbr, r[S_COL.mbr]);
@@ -1985,7 +2003,7 @@ function renderRooftop() {
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
-          csatRagInRange(null, r[S_COL.en])
+          csatRagInRange(r[S_COL.eid], r[S_COL.en])
         ]))}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
@@ -2003,7 +2021,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.res)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:rowTix.op, ota:rowTix.ota, res:rowTix.res, cr:rowTix.cr }))}</td>
-        <td class="cell-comm">${ragSingle(csatRagInRange(null, r[S_COL.en]))}</td>
+        <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
