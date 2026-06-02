@@ -189,12 +189,16 @@ function Find-ColById($cols, $letter) {
 }
 $ppI = @{
     eid   = Find-Col $ppCols @('EnterprisesID','Enterprise ID','EnterpriseID')
-    cs    = Find-Col $ppCols @('customer_status','Customer Status')
+    # IMPORTANT: cols D AND E both carry label 'customer_status' but with
+    # DIFFERENT data — D is account-level ('active') while E is invoice-level
+    # ('paid'/'draft'/'overdue'/'sent'), which is what the user spec calls for.
+    # Force column letter E for this field; never trust the label match.
+    cs    = Find-ColById $ppCols 'E'
     start = Find-Col $ppCols @('Service_period_Start_date','Service period Start date','Service Period Start Date')
     end   = Find-Col $ppCols @('Service_period_End_date','Service period End date','Service Period End Date')
 }
 if ($ppI.eid   -lt 0) { $ppI.eid   = Find-ColById $ppCols 'V' }
-if ($ppI.cs    -lt 0) { $ppI.cs    = Find-ColById $ppCols 'E' }
+if ($ppI.cs    -lt 0) { $ppI.cs    = Find-Col $ppCols @('customer_status','Customer Status') }
 if ($ppI.start -lt 0) { $ppI.start = Find-ColById $ppCols 'Y' }
 if ($ppI.end   -lt 0) { $ppI.end   = Find-ColById $ppCols 'Z' }
 Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3} (rows={4})" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end, $payPeriodsTab.rows.Count)
