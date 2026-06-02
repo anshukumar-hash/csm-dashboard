@@ -965,9 +965,9 @@ const TIPS = {
   pendency:    'Number of VINs awaiting action for longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet (0–10). >8 Green, >5 Amber, <5 Red.',
   usageFactor: 'Usage Factor = # Actual VINs ÷ # Contracted VINs (share of contracted VINs actually being used), shown as %. ≥70% Green, 40–70% Amber, <40% Red. Period-aware via #Actual.',
-  paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
-  paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
-  paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
+  paymentT1:   'T-1 = customer_status of the prior service period (1 back from current). Source: payment-periods tab, DENSE_RANK by (Service_period_Start_date, Service_period_End_date) DESC per enterprise — rank 2 → T-1. Group view shows count of enterprises per status (paid / overdue / sent / draft).',
+  paymentT2:   'T-2 = customer_status of two service periods back (rank 3). Same DENSE_RANK partitioning per enterprise. Group view counts enterprises per status.',
+  paymentT3:   'T-3 = customer_status of three service periods back (rank 4). Same DENSE_RANK partitioning per enterprise. Group view counts enterprises per status.',
   studioRoiPending: '7-day Report Sent trend per enterprise. On group rows (Customer Segment / CSM / Manager / Total) the cell shows that group\'s sent% across its enterprises (≥70 green · ≥40 amber · <40 red). On rooftop rows the cell shows that enterprise\'s daily strip — green = sent, red = skipped/error, amber = pending, gray = no attempt; yesterday\'s dot is blue-ringed. Source: /api/report-tracking.',
   reportCoverage: '7-day average of reports successfully sent across all Studio rooftops. Source: vin-tracker /api/report-coverage. Aggregate only — per-rooftop breakdown not exposed by the API yet, so this value is the same regardless of which segment / CSM you drill into.',
 };
@@ -1459,8 +1459,8 @@ const S_COLS_SHARED = [
   {l:'Website RAG', cc:'cell-quality', tip:'websiteScore'},
   {l:'Inventory Score', cc:'cell-quality', tip:'inventoryScore'},
   // 4 Payment — counts deduped per ENTERPRISE (not per rooftop) per user spec
-  {l:'T1', cc:'cell-payment', tip:'paymentT1'}, {l:'T2', cc:'cell-payment', tip:'paymentT2'},
-  {l:'T3', cc:'cell-payment', tip:'paymentT3'}, {l:'Payment RAG', cc:'cell-payment', tip:'paymentAcct'},
+  {l:'T-1', cc:'cell-payment', tip:'paymentT1'}, {l:'T-2', cc:'cell-payment', tip:'paymentT2'},
+  {l:'T-3', cc:'cell-payment', tip:'paymentT3'}, {l:'Payment RAG', cc:'cell-payment', tip:'paymentAcct'},
   // 5 Tickets
   {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
@@ -1650,7 +1650,7 @@ const V_COLS_SHARED = [
   {l:'Conv Rate', cc:'cell-usage', tip:'convRate'}, {l:'Appt Value ($)', cc:'cell-usage', tip:'apptValue'},
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
   {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
-  {l:'T1', cc:'cell-payment'}, {l:'T2', cc:'cell-payment'}, {l:'T3', cc:'cell-payment'},
+  {l:'T-1', cc:'cell-payment'}, {l:'T-2', cc:'cell-payment'}, {l:'T-3', cc:'cell-payment'},
   {l:'Account Level RAG', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
   {l:'# Created', cc:'cell-tickets', tip:'createdCnt'}, {l:'# Open', cc:'cell-tickets', tip:'openCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
@@ -2152,8 +2152,8 @@ function renderRooftop() {
       '<th class="cell-quality">Pendency (6h)' + tip('pendency') + '</th>' +
       '<th class="cell-quality">Website RAG' + tip('websiteScore') + '</th>' +
       '<th class="cell-quality">Inventory Score' + tip('inventoryScore') + '</th>' +
-      '<th class="cell-payment">T1' + tip('paymentT1') + '</th><th class="cell-payment">T2' + tip('paymentT2') + '</th>' +
-      '<th class="cell-payment">T3' + tip('paymentT3') + '</th><th class="cell-payment">Pay RAG' + tip('paymentAcct') + '</th>' +
+      '<th class="cell-payment">T-1' + tip('paymentT1') + '</th><th class="cell-payment">T-2' + tip('paymentT2') + '</th>' +
+      '<th class="cell-payment">T-3' + tip('paymentT3') + '</th><th class="cell-payment">Pay RAG' + tip('paymentAcct') + '</th>' +
       '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
       '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Ticket RAG' + tip('ticketAcct') + '</th>' +
       '<th class="cell-comm">RAG' + tip('commFinalRag') + '</th>' +
@@ -2357,7 +2357,7 @@ function renderRooftop() {
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
       '<th class="cell-usage">Conv Rate' + tip('convRate') + '</th><th class="cell-usage">Appt Value' + tip('apptValue') + '</th>' +
       '<th class="cell-roi">RoI Factor' + tip('roiFactor') + '</th>' +
-      '<th class="cell-payment">T1</th><th class="cell-payment">T2</th><th class="cell-payment">T3</th><th class="cell-payment">Account Level RAG' + tip('paymentAcct') + '</th>' +
+      '<th class="cell-payment">T-1</th><th class="cell-payment">T-2</th><th class="cell-payment">T-3</th><th class="cell-payment">Account Level RAG' + tip('paymentAcct') + '</th>' +
       '<th class="cell-tickets">#Created' + tip('createdCnt') + '</th><th class="cell-tickets">#Open' + tip('openCnt') + '</th>' +
       '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Account Level RAG' + tip('ticketAcct') + '</th>' +
       '<th class="cell-comm">Score' + tip('commScore') + '</th><th class="cell-comm">Final RAG' + tip('commFinalRag') + '</th>' +
