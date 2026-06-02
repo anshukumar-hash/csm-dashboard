@@ -1248,6 +1248,21 @@ function inventoryColorClass(v) {
   return 'roi-text-r';
 }
 
+// Inventory Score → RAG bucket. Used by studioRow to build the per-group
+// count distribution (similar to websiteRag for the Website RAG column).
+//   > 8   Green
+//   > 5   Amber
+//   < 5   Red
+//   0 / blank → null (excluded from counts)
+function inventoryRag(v) {
+  if (v == null || v === '' || isNaN(Number(v))) return null;
+  const n = Number(v);
+  if (n === 0) return null;
+  if (n > 8) return 'Green';
+  if (n > 5) return 'Amber';
+  return 'Red';
+}
+
 // =====================================================================
 // Account Health "Overall RAG"
 // =====================================================================
@@ -1480,7 +1495,10 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const pen = sumBy(active, r => r[S_COL.pen]);
   // Website RAG — count breakdown across rooftops in the group.
   const wsRagCounts = countBy(active, r => websiteRag(r[S_COL.ws]));
-  const isc = avgBy(active, r => r[S_COL.isc]);
+  // Inventory Score → count distribution (Green/Amber/Red), same pattern
+  // Website RAG uses. The numeric avg is dropped at the group level — the
+  // RAG breakdown is more actionable than an average.
+  const iscRagCounts = countBy(active, r => inventoryRag(r[S_COL.isc]));
   // PAYMENT buckets count by ENTERPRISE not by rooftop (per user spec).
   // Studio rooftops carry an Enterprise ID (eid field — added to schema in
   // this PR); we dedup by eid so a multi-rooftop enterprise contributes one
@@ -1560,7 +1578,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
-    <td class="cell-quality ${inventoryColorClass(isc)}">${isc?isc.toFixed(1):'—'}</td>
+    <td class="cell-quality">${ragStack(iscRagCounts)}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
     <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
@@ -2143,10 +2161,11 @@ function renderRooftop() {
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
     let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0;
-    const sIscVals=[];
+    // sIscVals no longer used — Inventory Score now renders as a RAG count
+    // distribution (sIscRag below) matching the Website RAG pattern.
     // sTrag dropped — ticket RAG distribution now computed from STUDIO_TIX
     // in the Total row block below (see sTotalTrag).
-    const sT1={}, sT2={}, sT3={}, sPrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={};
+    const sT1={}, sT2={}, sT3={}, sPrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={}, sIscRag={};
     // Payment counts dedup by enterprise (eid). Studio Rooftop View aggregates
     // across rows; same enterprise can have multiple rooftops.
     const seenEidPay = new Set();
@@ -2166,7 +2185,8 @@ function renderRooftop() {
       // per-row — they're now derived from STUDIO_TIX at the Total row below
       // (ticket-weighted across all enterprises in scope, deduped by eid).
       inc(sWsRag, websiteRag(r[S_COL.ws]));
-      if (r[S_COL.isc] > 0) sIscVals.push(Number(r[S_COL.isc]));
+      // Inventory Score → RAG count distribution (same pattern as Website RAG).
+      inc(sIscRag, inventoryRag(r[S_COL.isc]));
       // Payment buckets only count ONCE per enterprise (per user spec).
       const payKey = r[S_COL.eid] || r[S_COL.en];
       if (payKey && !seenEidPay.has(payKey)) {
@@ -2272,7 +2292,7 @@ function renderRooftop() {
       <td class="cell-usage ${ufColorClass(totalUf)}">${totalUf?(totalUf*100).toFixed(0)+'%':'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
-      <td class="cell-quality ${sIscVals.length?inventoryColorClass(avg(sIscVals)):''}">${sIscVals.length?avg(sIscVals).toFixed(1):'—'}</td>
+      <td class="cell-quality">${ragStack(sIscRag)}</td>
       <td class="cell-payment">${payTileAgg(sT1)}</td>
       <td class="cell-payment">${payTileAgg(sT2)}</td>
       <td class="cell-payment">${payTileAgg(sT3)}</td>
