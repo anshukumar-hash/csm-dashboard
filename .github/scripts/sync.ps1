@@ -28,6 +28,12 @@ $urls = @{
     # with status sent / skipped / error / pending. Paginated at 500 max.
     # Used to build the per-rooftop dot strip + per-group %.
     tracking = "https://vin-tracker-dashboard.vercel.app/api/report-tracking"
+    # Payment periods — invoice-row granularity per enterprise. Used to derive
+    # T-1 / T-2 / T-3 historical customer_status via dense-rank over
+    # (Service_period_Start_date, Service_period_End_date) DESC, per enterprise.
+    # Cols: E=customer_status, V=EnterprisesID, Y=Service_period_Start_date,
+    # Z=Service_period_End_date.
+    payperiods = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1395015507"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -80,11 +86,12 @@ function Gviz-Val($cell) {
     return $cell.v
 }
 
-Write-Host "=== Fetching 5 data sources ==="
-$viniTab   = Fetch-Gviz $urls.vini
-$payTab    = Fetch-Gviz $urls.payment
-$tixTab    = Fetch-Gviz $urls.tickets
-$studioTab = Fetch-Gviz $urls.studio
+Write-Host "=== Fetching 6 data sources ==="
+$viniTab        = Fetch-Gviz $urls.vini
+$payTab         = Fetch-Gviz $urls.payment
+$tixTab         = Fetch-Gviz $urls.tickets
+$studioTab      = Fetch-Gviz $urls.studio
+$payPeriodsTab  = Fetch-Gviz $urls.payperiods
 
 # CSAT comes back from gid=701797891 (gviz) now that the IMPORTRANGE works.
 # We still keep the "Loading..." sentinel detection from the original gviz
@@ -144,7 +151,81 @@ try {
     $trackingFailed = $true
     $reportTracking = $null
 }
-Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatTab){$csatTab.rows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count)"
+Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatTab){$csatTab.rows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
+
+# --- Payment-period DENSE_RANK from gid=1395015507 ---
+# For each enterprise (col V EnterprisesID), rank unique (start_date, end_date)
+# periods DESC, so rank 1 = current period (T), rank 2 = T-1, rank 3 = T-2,
+# rank 4 = T-3. customer_status (col E) from rank 2/3/4 → t1/t2/t3. When
+# multiple rows share a rank (same start+end), worst-status wins
+# (overdue > sent > draft > paid). This lookup feeds BOTH the Studio Studio
+# rows AND the Vini payment-bucket rows downstream.
+function Get-CanonicalPayStatus($list) {
+    if (-not $list -or $list.Count -eq 0) { return '' }
+    if ($list -contains 'overdue') { return 'overdue' }
+    if ($list -contains 'sent')    { return 'sent' }
+    if ($list -contains 'draft')   { return 'draft' }
+    if ($list -contains 'paid')    { return 'paid' }
+    return [string]$list[0]
+}
+function Compute-PaymentRag($t1, $t2, $t3) {
+    $list = @($t1, $t2, $t3) | Where-Object { $_ -and $_ -ne '' } | ForEach-Object { ([string]$_).ToLower() }
+    if (-not $list -or $list.Count -eq 0) { return '' }
+    if ($list -contains 'overdue') { return 'Red' }
+    if (($list -contains 'sent') -or ($list -contains 'draft')) { return 'Amber' }
+    if ($list -contains 'paid') { return 'Green' }
+    return ''
+}
+
+$ppCols = $payPeriodsTab.cols
+$ppI = @{
+    eid   = Find-Col $ppCols @('EnterprisesID','Enterprise ID','EnterpriseID')
+    cs    = Find-Col $ppCols @('customer_status','Customer Status')
+    start = Find-Col $ppCols @('Service_period_Start_date','Service period Start date','Service Period Start Date')
+    end   = Find-Col $ppCols @('Service_period_End_date','Service period End date','Service Period End Date')
+}
+Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3}" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end)
+if ($ppI.eid -lt 0 -or $ppI.cs -lt 0 -or $ppI.start -lt 0 -or $ppI.end -lt 0) {
+    throw "Payment periods sheet (gid=1395015507) missing one of: EnterprisesID / customer_status / Service_period_Start_date / Service_period_End_date"
+}
+$payByEid = @{}
+foreach ($row in $payPeriodsTab.rows) {
+    if (-not $row) { continue }
+    $c = $row.c
+    $eid = [string](Gviz-Val $c[$ppI.eid])
+    if ([string]::IsNullOrWhiteSpace($eid)) { continue }
+    $st  = [string](Gviz-Date $c[$ppI.start])
+    $en  = [string](Gviz-Date $c[$ppI.end])
+    if ([string]::IsNullOrWhiteSpace($st)) { continue }
+    $cs  = ([string](Gviz-Val $c[$ppI.cs])).ToLower().Trim()
+    if (-not $payByEid.ContainsKey($eid)) {
+        $payByEid[$eid] = New-Object System.Collections.Generic.List[object]
+    }
+    $payByEid[$eid].Add(@{ start=$st; end=$en; status=$cs })
+}
+$payRanks = @{}
+foreach ($eid in $payByEid.Keys) {
+    $rows = $payByEid[$eid]
+    $sorted = @($rows | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
+    $byRank = @{}
+    $rank = 0
+    $prevKey = $null
+    foreach ($pr in $sorted) {
+        $key = "$($pr.start)|$($pr.end)"
+        if ($key -ne $prevKey) { $rank++; $prevKey = $key }
+        if ($rank -gt 4) { break }
+        if (-not $byRank.ContainsKey($rank)) {
+            $byRank[$rank] = New-Object System.Collections.Generic.List[string]
+        }
+        $byRank[$rank].Add([string]$pr.status)
+    }
+    $payRanks[$eid] = @{
+        t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+        t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+        t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
+    }
+}
+Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
 
 # --- Read existing dashboard JSON to learn the v_schema ---
 $lines = [System.IO.File]::ReadAllLines($primary)
@@ -278,9 +359,18 @@ foreach ($row in $payTab.rows) {
     $rec['rid']=$rid; $rec['en']=$en; $rec['rn']=[string](Gviz-Val $c[$pi.rn])
     $rec['eid']=$eid; $rec['mrr']=Parse-Money (Gviz-Val $c[$pi.mrr])
     $rec['arr']=Parse-Money (Gviz-Val $c[$pi.arr]); $rec['stage']=[string](Gviz-Val $c[$pi.stage])
-    $rec['agent']=$agent; $rec['t1']=[string](Gviz-Val $c[$pi.t1])
-    $rec['t2']=[string](Gviz-Val $c[$pi.t2]); $rec['t3']=[string](Gviz-Val $c[$pi.t3])
-    $rec['ps']=[string](Gviz-Val $c[$pi.ps]); $rec['csm']=$csm
+    $rec['agent']=$agent
+    # T-1/T-2/T-3 from gid=1395015507 dense-rank (NOT the payment-master sheet
+    # cols T1/T2/T3). Same lookup the Studio side uses, keyed by enterprise_id.
+    $pr = $null
+    if ($payRanks.ContainsKey($eid)) { $pr = $payRanks[$eid] }
+    if ($pr) {
+        $rec['t1']=[string]$pr.t1; $rec['t2']=[string]$pr.t2; $rec['t3']=[string]$pr.t3
+        $rec['ps']=Compute-PaymentRag $pr.t1 $pr.t2 $pr.t3
+    } else {
+        $rec['t1']=''; $rec['t2']=''; $rec['t3']=''; $rec['ps']=''
+    }
+    $rec['csm']=$csm
     $rec['region']=$region; $rec['seg']=$seg
     # Go-Live Date (ISO YYYY-MM-DD); '' if missing
     $rec['go_live'] = if ($pi.go_live -ge 0 -and $c.Count -gt $pi.go_live) { Gviz-Date $c[$pi.go_live] } else { '' }
@@ -714,10 +804,25 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
     $r[$idx['ws_link']] = if ($si.ws_link -ge 0) { [string](Gviz-Val $c[$si.ws_link]) } else { '' }
     $r[$idx['isc']]     = Gviz-Val $c[$si.isc]
-    $r[$idx['t1']]      = [string](Gviz-Val $c[$si.t1])
-    $r[$idx['t2']]      = [string](Gviz-Val $c[$si.t2])
-    $r[$idx['t3']]      = [string](Gviz-Val $c[$si.t3])
-    $r[$idx['prag']]    = [string](Gviz-Val $c[$si.prag])
+    # T-1 / T-2 / T-3 sourced from gid=1395015507 dense-rank by enterprise_id
+    # (NOT the sheet's Payment T1/T2/T3 columns). Rank 2/3/4 customer_status →
+    # t1/t2/t3. Payment RAG is recomputed worst-wins from the resulting statuses.
+    $eidStr  = [string](Gviz-Val $c[$si.eid])
+    $eidNorm = $eidStr.Trim().ToLower()
+    $pr = $null
+    if ($payRanks.ContainsKey($eidStr))      { $pr = $payRanks[$eidStr] }
+    elseif ($payRanks.ContainsKey($eidNorm)) { $pr = $payRanks[$eidNorm] }
+    if ($pr) {
+        $r[$idx['t1']]   = [string]$pr.t1
+        $r[$idx['t2']]   = [string]$pr.t2
+        $r[$idx['t3']]   = [string]$pr.t3
+        $r[$idx['prag']] = Compute-PaymentRag $pr.t1 $pr.t2 $pr.t3
+    } else {
+        $r[$idx['t1']]   = ''
+        $r[$idx['t2']]   = ''
+        $r[$idx['t3']]   = ''
+        $r[$idx['prag']] = ''
+    }
     $r[$idx['unr']]     = Gviz-Val $c[$si.unr]
     $r[$idx['cr']]      = Gviz-Val $c[$si.cr]
     $r[$idx['ota']]     = Gviz-Val $c[$si.ota]
