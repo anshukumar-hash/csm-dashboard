@@ -1388,7 +1388,9 @@ function computeViniPaymentRAG(t1, t2, t3) {
   return 'Green';
 }
 function payTile(v) {
-  if (!v) return '<span style="color:var(--text-4)">—</span>';
+  // Blank → "No Invoice Paid" placeholder (per user spec). Rendered as a
+  // small neutral pill so it visually fits where PAID/SENT/etc badges sit.
+  if (!v) return '<span class="pay-cell no" title="No Invoice Paid" style="font-size:9px;letter-spacing:0">NO INV<br>PAID</span>';
   v = String(v).toLowerCase();
   if (v === 'paid') return '<span class="pay-cell paid">PAID</span>';
   if (v === 'overdue') return '<span class="pay-cell over">OVRD</span>';
@@ -1399,7 +1401,9 @@ function payTile(v) {
   return `<span style="font-size:10px;color:var(--text-3)">${v}</span>`;
 }
 function payTileAgg(c) {
-  if (!c || Object.keys(c).length === 0) return '<span style="color:var(--text-4)">—</span>';
+  // Empty count distribution → "No Invoice Paid" (per user spec), so empty
+  // group/Total cells communicate intent instead of a bare dash.
+  if (!c || Object.keys(c).length === 0) return '<span class="pay-cell no" title="No Invoice Paid" style="font-size:9px;letter-spacing:0">NO INV<br>PAID</span>';
   const parts = [];
   if (c.paid) parts.push(`<span class="pay-cell paid">${c.paid}</span>`);
   if (c.overdue) parts.push(`<span class="pay-cell over">${c.overdue}</span>`);
@@ -1408,7 +1412,8 @@ function payTileAgg(c) {
   const ni = (c['no invoice raised']||0) + (c['no invoice']||0);
   if (ni) parts.push(`<span class="pay-cell no">${ni}</span>`);
   if (c.partial) parts.push(`<span class="pay-cell part">${c.partial}</span>`);
-  return parts.length ? `<span class="pay-stack">${parts.join('')}</span>` : '<span style="color:var(--text-4)">—</span>';
+  // No counted pills → "No Invoice Paid" indicator (per user spec).
+  return parts.length ? `<span class="pay-stack">${parts.join('')}</span>` : '<span class="pay-cell no" title="No Invoice Paid" style="font-size:9px;letter-spacing:0">NO INV<br>PAID</span>';
 }
 
 function countBy(rows, getter) {
@@ -1437,8 +1442,8 @@ const S_GROUPS = [
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
   { l:'Quality',      span:3, c:'g-quality' },     // Pendency (6h), Website RAG, Inventory Score
-  { l:'Enterprise-Level Payment', span:4, c:'g-payment' },
-  { l:'Tickets',      span:5, c:'g-tickets' },
+  { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
+  { l:'Tickets',      span:6, c:'g-tickets' },                // #Unr · #Cr · Ageing · AvgRes · Score · RAG
   { l:'Communication', span:2, c:'g-comm' },       // Score (count stack) + Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
@@ -1460,11 +1465,12 @@ const S_COLS_SHARED = [
   {l:'Inventory Score', cc:'cell-quality', tip:'inventoryScore'},
   // 4 Payment — counts deduped per ENTERPRISE (not per rooftop) per user spec
   {l:'T-1', cc:'cell-payment', tip:'paymentT1'}, {l:'T-2', cc:'cell-payment', tip:'paymentT2'},
-  {l:'T-3', cc:'cell-payment', tip:'paymentT3'}, {l:'Payment RAG', cc:'cell-payment', tip:'paymentAcct'},
-  // 5 Tickets
+  {l:'T-3', cc:'cell-payment', tip:'paymentT3'},
+  {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
+  // 6 Tickets
   {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
-  {l:'Ticket RAG', cc:'cell-tickets', tip:'ticketAcct'},
+  {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
   // 2 Comm — Score (count stack) + Final RAG
   {l:'Score', cc:'cell-comm', tip:'commScore'}, {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
   // 1 Leader
@@ -1580,9 +1586,11 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
     <td class="cell-quality">${ragStack(iscRagCounts)}</td>
     <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
-    <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(prag)}</td>
+    <td class="cell-payment">${payTileAgg(t3)}</td>
+    <td class="cell-payment">${ragStack(prag)}</td><td class="cell-payment">${ragSingle(scoreRag(prag,80,60))}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
-    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td>
+    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td>
+    <td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(scoreRag(trag,85,65))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td>
@@ -1651,10 +1659,10 @@ const V_COLS_SHARED = [
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
   {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
   {l:'T-1', cc:'cell-payment'}, {l:'T-2', cc:'cell-payment'}, {l:'T-3', cc:'cell-payment'},
-  {l:'Account Level RAG', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
+  {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
   {l:'# Created', cc:'cell-tickets', tip:'createdCnt'}, {l:'# Open', cc:'cell-tickets', tip:'openCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
-  {l:'Account Level RAG', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
+  {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
   {l:'Score', cc:'cell-comm', tip:'commScore'}, {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
