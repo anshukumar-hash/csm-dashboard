@@ -699,8 +699,13 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['en']]      = [string](Gviz-Val $c[$si.en])
     $r[$idx['mrr']]     = $mrrNum
     $r[$idx['arr']]     = $arrNum
-    $r[$idx['av']]      = Gviz-Val $c[$si.av]
-    $r[$idx['cv']]      = Gviz-Val $c[$si.cv]
+    $avVal = Gviz-Val $c[$si.av]
+    $r[$idx['av']]      = $avVal
+    # # Contracted VINs derived from Active VINs (per user spec: 2/3 of av),
+    # not the sheet column Q. Empty/zero av → cv stays 0.
+    $avNum = 0.0
+    try { $avNum = [double]$avVal } catch { $avNum = 0.0 }
+    $r[$idx['cv']]      = if ($avNum -gt 0) { [Math]::Round($avNum * 2.0 / 3.0) } else { 0 }
     $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
     $r[$idx['lm_acv']]  = if ($si.lm_acv -ge 0) { Gviz-Val $c[$si.lm_acv] } else { '' }
     $r[$idx['uf']]      = Gviz-Val $c[$si.uf]
