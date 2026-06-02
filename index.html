@@ -467,6 +467,7 @@ let viniRows = D.v_rows;  // Live-replaceable
 const VINI_TIX   = D.vini_tix   || {};
 const STUDIO_TIX = D.studio_tix || {};
 const REPORT_COVERAGE = D.report_coverage || [];   // aggregate per-day, last 7d
+const REPORT_TRACKING = D.report_tracking || {};   // {eid: [{d,t,s,r}, ...]} from /api/report-tracking
 
 // ============================================================
 // CSAT — Communication health per enterprise (gid=701797891)
@@ -967,7 +968,7 @@ const TIPS = {
   paymentT1:   'T1 invoice status counts across the ENTERPRISES in this group (not rooftops). Each enterprise contributes one badge: paid / overdue / sent / draft / no invoice raised.',
   paymentT2:   'T2 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
   paymentT3:   'T3 invoice status counts across the ENTERPRISES in this group. One row per enterprise (deduped by Enterprise ID).',
-  studioRoiPending: '7-day Report Sent trend. On group rows (Customer Segment / CSM / Manager / Total) the cell shows the 7-day aggregate as a single % (≥70 green · ≥40 amber · <40 red). On rooftop rows the cell shows a daily dot strip with yesterday\'s dot blue-ringed. Source: /api/report-coverage. Per-rooftop breakdown not exposed by the API yet — the rooftop-row strip is portfolio-wide until that endpoint is available.',
+  studioRoiPending: '7-day Report Sent trend per enterprise. On group rows (Customer Segment / CSM / Manager / Total) the cell shows that group\'s sent% across its enterprises (≥70 green · ≥40 amber · <40 red). On rooftop rows the cell shows that enterprise\'s daily strip — green = sent, red = skipped/error, amber = pending, gray = no attempt; yesterday\'s dot is blue-ringed. Source: /api/report-tracking.',
   reportCoverage: '7-day average of reports successfully sent across all Studio rooftops. Source: vin-tracker /api/report-coverage. Aggregate only — per-rooftop breakdown not exposed by the API yet, so this value is the same regardless of which segment / CSM you drill into.',
 };
 
@@ -982,50 +983,95 @@ function reportSentDot(v) {
   return '<span class="rs-dot rs-no" title="Report not sent"></span>';
 }
 
-// 7-day Report Sent aggregate as a single percentage chip. Used at the
-// GROUP level (Customer Segment / CSM / Manager rows + Total row) where
-// repeating the same dot strip on every row was just visual noise — a
-// single % gives the same info at a glance.
-function coverageWeekPercent(coverage) {
-  if (!coverage || !coverage.length) return '<span style="color:var(--text-4)">—</span>';
-  const last7 = coverage.slice(0, 7);
-  const totSent = last7.reduce((s, d) => s + (Number(d.sent)||0), 0);
-  const totAtt  = last7.reduce((s, d) => s + (Number(d.attempted)||0), 0);
-  if (totAtt === 0) return '<span style="color:var(--text-4)">—</span>';
-  const pct = (totSent / totAtt) * 100;
-  const cls = pct >= 70 ? 'roi-text-g' : pct >= 40 ? 'roi-text-a' : 'roi-text-r';
-  const tip = '7-day aggregate: sent ' + totSent + '/' + totAtt + ' (' + pct.toFixed(1) + '%) · /api/report-coverage';
-  return '<span class="' + cls + '" title="' + tip.replace(/"/g,'&quot;') + '">' + pct.toFixed(0) + '%</span>';
+// === Report Sent helpers (new API: /api/report-tracking, per-row data) ===
+//
+// REPORT_TRACKING[eid] is an array of {d (date), t (report_type), s (status),
+// r (reason)} rows for that enterprise across the last 7 days. We collapse
+// to one daily verdict per (eid, date): sent if ANY report of any type was
+// sent that day, else use the worst non-sent status.
+
+// Build the last 7 calendar dates ending at TODAY, in YYYY-MM-DD form.
+function lastSevenDates() {
+  const out = [];
+  const today = new Date(TODAY);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    out.push(ymd(d));
+  }
+  return out;
 }
 
-// 7-day Report Sent trend strip — one colored dot per day across the last
-// 7 days of REPORT_COVERAGE. The yesterday/most-recent dot gets a blue ring
-// + slight scale so it's visually distinguished. Used at the ROOFTOP level
-// (Studio Rooftop View per-row).
-//
-// LIMITATION: the source /api/report-coverage only exposes per-day aggregate
-// counts across ALL Studio rooftops (no team_id / enterprise_id per row).
-// So the strip rendered here is PORTFOLIO-WIDE, not per-rooftop. Tooltip on
-// each dot makes the actual (sent / attempted) numbers visible. The strip
-// becomes truly per-rooftop the moment the API exposes row-level data.
-function dailyDotStrip(coverage) {
-  if (!coverage || !coverage.length) return '<span style="color:var(--text-4)">—</span>';
-  // API returns newest first → reverse for left-to-right time order.
-  const days = coverage.slice(0, 7).reverse();
-  const lastIdx = days.length - 1;   // most recent (yesterday)
-  const parts = days.map((d, i) => {
-    const pct = Number(d.sentPct) || (d.attempted > 0 ? (d.sent / d.attempted) * 100 : 0);
+// Per-enterprise daily map: { 'YYYY-MM-DD': 'sent'|'skipped'|'error'|'pending'|null }
+// "sent" wins over any other status for the same day (one report sent = day sent).
+function eidDailyStatus(eid) {
+  const rows = (eid && REPORT_TRACKING[eid]) || [];
+  const map = {};
+  for (const r of rows) {
+    if (!r.d) continue;
+    const s = String(r.s || '');
+    if (map[r.d] === 'sent') continue;        // already sent — stays sent
+    if (s === 'sent') { map[r.d] = 'sent'; continue; }
+    if (!map[r.d]) map[r.d] = s;              // first status of the day
+  }
+  return map;
+}
+
+// PER-ROOFTOP 7-day dot strip. One dot per day, oldest left → newest right.
+// Last dot (today/yesterday) gets a blue ring + slight scale.
+function perEidDotStrip(eid) {
+  if (!eid || !REPORT_TRACKING[eid] || REPORT_TRACKING[eid].length === 0) {
+    return '<span style="color:var(--text-4)">—</span>';
+  }
+  const dailyMap = eidDailyStatus(eid);
+  const dates = lastSevenDates();
+  const lastIdx = dates.length - 1;
+  const parts = dates.map((d, i) => {
+    const status = dailyMap[d];
     let cls = 'rs-day';
-    if (d.attempted == null || d.attempted === 0) cls += ' rs-na';
-    else if (pct >= 70) cls += ' rs-yes';
-    else if (pct >= 40) cls += ' rs-mid';
-    else cls += ' rs-no';
+    if (!status)                cls += ' rs-na';
+    else if (status === 'sent') cls += ' rs-yes';
+    else if (status === 'pending') cls += ' rs-mid';
+    else                        cls += ' rs-no';   // skipped / error
     if (i === lastIdx) cls += ' rs-yesterday';
-    const dayLabel = String(d.day || '');
-    const tooltip = dayLabel + ': sent ' + (d.sent||0) + '/' + (d.attempted||0) + ' (' + pct.toFixed(0) + '%)';
+    const tooltip = d + ': ' + (status || 'no data');
     return '<span class="' + cls + '" title="' + tooltip.replace(/"/g,'&quot;') + '"></span>';
   });
   return '<span class="rs-strip">' + parts.join('') + '</span>';
+}
+
+// PER-GROUP percentage. Given an array of enterprise IDs (deduped internally),
+// computes sent% across the last 7 days across the union of their daily
+// outcomes. Denominator counts only (eid, date) pairs where the API has data
+// (so a never-attempted enterprise doesn't drag the group down).
+function groupSentPercent(eids) {
+  let sent = 0, attempted = 0;
+  const seen = new Set();
+  for (const eid of eids) {
+    if (!eid || seen.has(eid)) continue;
+    seen.add(eid);
+    const m = eidDailyStatus(eid);
+    for (const d in m) {
+      attempted++;
+      if (m[d] === 'sent') sent++;
+    }
+  }
+  if (attempted === 0) return '<span style="color:var(--text-4)">—</span>';
+  const pct = (sent / attempted) * 100;
+  const cls = pct >= 70 ? 'roi-text-g' : pct >= 40 ? 'roi-text-a' : 'roi-text-r';
+  const tip = '7-day per-enterprise aggregate: sent ' + sent + '/' + attempted + ' (' + pct.toFixed(1) + '%)';
+  return '<span class="' + cls + '" title="' + tip.replace(/"/g,'&quot;') + '">' + pct.toFixed(0) + '%</span>';
+}
+
+// Legacy aliases — keep the same names so the call-sites continue to work.
+// coverageWeekPercent gets a row's eids; dailyDotStrip gets a single eid.
+// Both swap to the real per-rooftop / per-group helpers above.
+function coverageWeekPercent() {
+  // Backwards compatibility shim — should not be reached in new code.
+  return '<span style="color:var(--text-4)">—</span>';
+}
+function dailyDotStrip() {
+  return '<span style="color:var(--text-4)">—</span>';
 }
 
 // Website RAG from the Quality Website Score (Studio gid=603796861 col J).
@@ -1508,7 +1554,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-roi">${coverageWeekPercent(REPORT_COVERAGE)}</td>
+    <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
@@ -2162,7 +2208,7 @@ function renderRooftop() {
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
         <td class="frozen frozen-4">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-5">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-roi">${dailyDotStrip(REPORT_COVERAGE)}</td>
+        <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
@@ -2218,7 +2264,7 @@ function renderRooftop() {
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
       <td class="frozen frozen-4">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-5">${fmtMoney(sArr)}</td>
-      <td class="cell-roi">${coverageWeekPercent(REPORT_COVERAGE)}</td>
+      <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
