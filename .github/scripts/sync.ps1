@@ -33,7 +33,7 @@ $urls = @{
     # (Service_period_Start_date, Service_period_End_date) DESC, per enterprise.
     # Cols: E=customer_status, V=EnterprisesID, Y=Service_period_Start_date,
     # Z=Service_period_End_date.
-    payperiods = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1395015507"
+    payperiods = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1395015507&headers=1"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -178,13 +178,26 @@ function Compute-PaymentRag($t1, $t2, $t3) {
 }
 
 $ppCols = $payPeriodsTab.cols
+# Find-Col by header name; fall back to absolute column letter (gviz cols[i].id)
+# when the header row isn't recognized. Per the sheet schema confirmed manually:
+# E=customer_status, V=EnterprisesID, Y=Service_period_Start_date, Z=Service_period_End_date.
+function Find-ColById($cols, $letter) {
+    for ($i = 0; $i -lt $cols.Count; $i++) {
+        if (([string]$cols[$i].id) -eq $letter) { return $i }
+    }
+    return -1
+}
 $ppI = @{
     eid   = Find-Col $ppCols @('EnterprisesID','Enterprise ID','EnterpriseID')
     cs    = Find-Col $ppCols @('customer_status','Customer Status')
     start = Find-Col $ppCols @('Service_period_Start_date','Service period Start date','Service Period Start Date')
     end   = Find-Col $ppCols @('Service_period_End_date','Service period End date','Service Period End Date')
 }
-Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3}" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end)
+if ($ppI.eid   -lt 0) { $ppI.eid   = Find-ColById $ppCols 'V' }
+if ($ppI.cs    -lt 0) { $ppI.cs    = Find-ColById $ppCols 'E' }
+if ($ppI.start -lt 0) { $ppI.start = Find-ColById $ppCols 'Y' }
+if ($ppI.end   -lt 0) { $ppI.end   = Find-ColById $ppCols 'Z' }
+Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3} (rows={4})" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end, $payPeriodsTab.rows.Count)
 if ($ppI.eid -lt 0 -or $ppI.cs -lt 0 -or $ppI.start -lt 0 -or $ppI.end -lt 0) {
     throw "Payment periods sheet (gid=1395015507) missing one of: EnterprisesID / customer_status / Service_period_Start_date / Service_period_End_date"
 }
