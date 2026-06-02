@@ -701,14 +701,13 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['arr']]     = $arrNum
     $avVal = Gviz-Val $c[$si.av]
     $r[$idx['av']]      = $avVal
-    $acvVal = Gviz-Val $c[$si.acv]
-    $r[$idx['acv']]     = $acvVal
-    # # Contracted VINs derived from # Actual MTD VINs (per user spec:
-    # 2/3 of acv, col P), NOT from sheet column Q and NOT from Active VINs.
-    # Empty/zero acv → cv stays 0.
-    $acvNum = 0.0
-    try { $acvNum = [double]$acvVal } catch { $acvNum = 0.0 }
-    $r[$idx['cv']]      = if ($acvNum -gt 0) { [Math]::Round($acvNum * 2.0 / 3.0) } else { 0 }
+    $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
+    # # Contracted VINs derived from Active VINs (per user spec: 2/3 of av,
+    # col N), NOT from sheet column Q and NOT from # Actual MTD VINs.
+    # Empty/zero av → cv stays 0.
+    $avNum = 0.0
+    try { $avNum = [double]$avVal } catch { $avNum = 0.0 }
+    $r[$idx['cv']]      = if ($avNum -gt 0) { [Math]::Round($avNum * 2.0 / 3.0) } else { 0 }
     $r[$idx['lm_acv']]  = if ($si.lm_acv -ge 0) { Gviz-Val $c[$si.lm_acv] } else { '' }
     $r[$idx['uf']]      = Gviz-Val $c[$si.uf]
     $r[$idx['pen']]     = Gviz-Val $c[$si.pen]
