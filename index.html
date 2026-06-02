@@ -2510,8 +2510,13 @@ function populateCsmDropdown() {
   } else {
     Object.values(VINI_RID_TO_CSM).forEach(v => { if (v) csms.add(v); });
   }
+  // Keep only entries that actually match data rows. The CSM column on
+  // s_rows / vini_stage stores email IDs (e.g. "aman.seth@spyne.ai"), but
+  // MANAGER_MAP keys are display names ("Aman Seth"). Show only emails +
+  // the sentinel "Unassigned CSM" so the filter always returns matches.
+  const filtered = [...csms].filter(c => c.includes('@') || c === 'Unassigned CSM');
   sel.innerHTML = '<option value="">All CSMs</option>'
-    + [...csms].sort().map(c => `<option value="${c}">${c}</option>`).join('');
+    + filtered.sort().map(c => `<option value="${c}">${c}</option>`).join('');
   sel.value = state.filters.csm;
 }
 
