@@ -22,10 +22,12 @@ $urls = @{
     # pre-computed Comm Avg column directly so our display matches the sheet.
     csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
     # Report-coverage API — aggregate per-day counts of reports sent / not sent.
-    # No per-rooftop breakdown available, so we use this for an overview KPI
-    # tile only; the per-row "Report Sent" column on Studio stays blank until
-    # a row-level endpoint is exposed.
+    # Used for the Studio "Reports Sent (7d)" KPI tile.
     coverage = "https://vin-tracker-dashboard.vercel.app/api/report-coverage?days=7"
+    # Report-tracking API — per-row data (one row per enterprise × date × type)
+    # with status sent / skipped / error / pending. Paginated at 500 max.
+    # Used to build the per-rooftop dot strip + per-group %.
+    tracking = "https://vin-tracker-dashboard.vercel.app/api/report-tracking"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -105,6 +107,42 @@ try {
 } catch {
     Write-Host "  coverage: WARNING — fetch failed ($_). Will preserve existing snapshot."
     $reportCoverage = $null
+}
+
+# Report-tracking — paginated per-row data. Returns ~5400 rows / 7 days.
+# Build {eid: [{d (date), t (report_type), s (status), r (reason)}, …]} so the
+# dashboard can render a real per-rooftop dot strip + a real per-group %.
+$reportTracking = @{}
+$trackingFailed = $false
+try {
+    $page = 1; $pageSize = 500
+    do {
+        $url = "$($urls.tracking)?days=7&pageSize=$pageSize&page=$page"
+        Write-Host "  fetch tracking page $page"
+        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
+        $obj = $resp.Content | ConvertFrom-Json
+        if (-not $obj.data) { break }
+        foreach ($row in $obj.data) {
+            $eid = if ($row.enterprise_id) { [string]$row.enterprise_id } else { '' }
+            if (-not $eid) { continue }
+            if (-not $reportTracking.ContainsKey($eid)) {
+                $reportTracking[$eid] = New-Object System.Collections.Generic.List[hashtable]
+            }
+            $reportTracking[$eid].Add(@{
+                d = [string]$row.date
+                t = [string]$row.report_type
+                s = [string]$row.status
+                r = if ($row.reason) { [string]$row.reason } else { '' }
+            })
+        }
+        if ($obj.pageCount -le $page) { break }
+        $page++
+    } while ($page -le 100)
+    Write-Host "  tracking: $($reportTracking.Count) enterprises, total rows across pages"
+} catch {
+    Write-Host "  tracking: WARNING — fetch failed ($_). Will preserve existing snapshot."
+    $trackingFailed = $true
+    $reportTracking = $null
 }
 Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatTab){$csatTab.rows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count)"
 
@@ -841,6 +879,38 @@ function ReportCoverageToJson($arr) {
     }
     return '[' + ($parts -join ',') + ']'
 }
+# report_tracking → JSON. Dict keyed by enterprise_id, each value is the
+# array of per-attempt rows for the last 7 days.
+function ReportTrackingToJson($dict) {
+    if (-not $dict) { return '{}' }
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($k in $dict.Keys) {
+        $items = New-Object System.Collections.Generic.List[string]
+        foreach ($r in $dict[$k]) {
+            $items.Add('{"d":' + (JsEscape $r.d) + ',"t":' + (JsEscape $r.t) + ',"s":' + (JsEscape $r.s) + ',"r":' + (JsEscape $r.r) + '}')
+        }
+        $parts.Add((JsEscape $k) + ':[' + ($items -join ',') + ']')
+    }
+    return '{' + ($parts -join ',') + '}'
+}
+if ($trackingFailed) {
+    # Preserve from previous snapshot if fetch failed.
+    $jsonTracking = '{}'
+    if ($D.report_tracking) {
+        $preserved = @{}
+        foreach ($k in $D.report_tracking.Keys) {
+            $list = New-Object System.Collections.Generic.List[hashtable]
+            foreach ($r in $D.report_tracking[$k]) {
+                $list.Add(@{ d=[string]$r.d; t=[string]$r.t; s=[string]$r.s; r=[string]$r.r })
+            }
+            $preserved[$k] = $list
+        }
+        $jsonTracking = ReportTrackingToJson $preserved
+    }
+} else {
+    $jsonTracking = ReportTrackingToJson $reportTracking
+}
+
 if ($null -eq $reportCoverage) {
     # preserve from snapshot
     $jsonCoverage = '[]'
@@ -896,7 +966,7 @@ function StripKey($s, $key) {
 }
 
 $json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage') {
+foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking') {
     $json=StripKey $json $k
 }
 $lastBrace=$json.LastIndexOf('}')
@@ -910,7 +980,8 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"studio_tix":' + $jsonStudioTix +
             ',"s_rows":' + $jsonSRows +
             ',"s_schema":' + $jsonSSchema +
-            ',"report_coverage":' + $jsonCoverage
+            ',"report_coverage":' + $jsonCoverage +
+            ',"report_tracking":' + $jsonTracking
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 $prefix='window.__DASHBOARD_DATA__ = '
