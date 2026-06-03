@@ -259,6 +259,26 @@ foreach ($eid in $payByEid.Keys) {
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
 
+# --- Studio Customer Segment lookup (source of truth) -----------------------
+# gid=603796861 col G (Customer Segment) carries 'Resellers' which the Vini
+# source (gid=1616842841 col I) doesn't have at all. Build an eid → seg map
+# from Studio so Vini can backfill its segment when its own value is missing
+# or generic — surfaces the Resellers segment on the Vini tab.
+$studioSegByEid = @{}
+foreach ($row in $studioTab.rows) {
+    if (-not $row) { continue }
+    $c = $row.c
+    if ($c.Count -le 6) { continue }
+    $eid = ([string](Gviz-Val $c[0])).Trim()
+    if (-not $eid) { continue }
+    $seg = ([string](Gviz-Val $c[6])).Trim()
+    if (-not $seg) { continue }
+    if ($seg -eq 'Customer Segment') { continue }   # stray header row in source
+    # First-write wins; Studio is consistent within an enterprise.
+    if (-not $studioSegByEid.ContainsKey($eid)) { $studioSegByEid[$eid] = $seg }
+}
+Write-Host ("  studio_seg lookup: {0} enterprises" -f $studioSegByEid.Count)
+
 # --- Read existing dashboard JSON to learn the v_schema ---
 $lines = [System.IO.File]::ReadAllLines($primary)
 $dlIdx = -1
@@ -380,6 +400,12 @@ foreach ($row in $payTab.rows) {
     if ([string]::IsNullOrWhiteSpace($csm) -or $csm.Trim().ToLower() -in 'csm not assigned','not assigned','unassigned','na','tbd') { $csm='Unassigned CSM' }
     $region = if ($meta -and $meta.region) { $meta.region } else { 'AMER' }
     $seg = if ($meta -and $meta.seg -and $meta.seg -ne 'Other') { $meta.seg } else { '' }
+    # Studio (gid=603796861) is the source of truth for Customer Segment, and
+    # it carries 'Resellers' which Vini source doesn't. Prefer Studio's tag
+    # whenever it exists for this eid — keeps the two products aligned and
+    # surfaces Resellers on the Vini tab. Only falls through to manual /
+    # ct-based defaults when Studio doesn't know the enterprise.
+    if ($studioSegByEid.ContainsKey($eid)) { $seg = $studioSegByEid[$eid] }
     if (-not $seg -and $manualSeg.ContainsKey($eid)) { $seg = $manualSeg[$eid] }
     if (-not $seg -and $meta -and $meta.ct) {
         if ($meta.ct -eq 'GROUP_DEALER') { $seg='Ent' }
