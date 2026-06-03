@@ -356,6 +356,7 @@ $ridIdxV=[array]::IndexOf($vSchema,'rid'); $agentIdxV=[array]::IndexOf($vSchema,
 $csmIdxV=[array]::IndexOf($vSchema,'csm'); $regionIdxV=[array]::IndexOf($vSchema,'region')
 $segIdxV=[array]::IndexOf($vSchema,'seg'); $dayIdxV=[array]::IndexOf($vSchema,'day')
 $enIdxV=[array]::IndexOf($vSchema,'en'); $ctIdxV=[array]::IndexOf($vSchema,'ct')
+$cstIdxV=[array]::IndexOf($vSchema,'cst')
 
 $metaByRidAgent=@{}; $metaByRid=@{}; $metaByEn=@{}
 foreach ($r in $vRows) {
@@ -363,15 +364,16 @@ foreach ($r in $vRows) {
     $ag=[string]$r[$agentIdxV]; $day=[string]$r[$dayIdxV]
     $csm=[string]$r[$csmIdxV]; $region=[string]$r[$regionIdxV]; $seg=[string]$r[$segIdxV]
     $en=[string]$r[$enIdxV]; $ct=[string]$r[$ctIdxV]
+    $cst = if ($cstIdxV -ge 0) { [string]$r[$cstIdxV] } else { '' }
     $key = $rid + '|' + $ag
     if (-not $metaByRidAgent.ContainsKey($key) -or $metaByRidAgent[$key].day -lt $day) {
-        $metaByRidAgent[$key]=@{csm=$csm;region=$region;seg=$seg;day=$day;ct=$ct}
+        $metaByRidAgent[$key]=@{csm=$csm;region=$region;seg=$seg;day=$day;ct=$ct;cst=$cst}
     }
     if (-not $metaByRid.ContainsKey($rid) -or $metaByRid[$rid].day -lt $day) {
-        $metaByRid[$rid]=@{csm=$csm;region=$region;seg=$seg;day=$day;ct=$ct}
+        $metaByRid[$rid]=@{csm=$csm;region=$region;seg=$seg;day=$day;ct=$ct;cst=$cst}
     }
     if ($en -and (-not $metaByEn.ContainsKey($en) -or $metaByEn[$en].day -lt $day)) {
-        $metaByEn[$en]=@{csm=$csm;region=$region;seg=$seg;day=$day}
+        $metaByEn[$en]=@{csm=$csm;region=$region;seg=$seg;day=$day;ct=$ct;cst=$cst}
     }
 }
 
@@ -441,6 +443,11 @@ foreach ($row in $payTab.rows) {
     }
     $rec['csm']=$csm
     $rec['region']=$region; $rec['seg']=$seg
+    # account_type / account_subtype — used by the Account Type column +
+    # filter (FGD/GSD/ISD/IGD/Others/Partner). Falls back to '' when v_rows
+    # doesn't have the value for this rooftop/agent pair.
+    $rec['ct']  = if ($meta -and $meta.ct)  { $meta.ct }  else { '' }
+    $rec['cst'] = if ($meta -and $meta.cst) { $meta.cst } else { '' }
     # Go-Live Date (ISO YYYY-MM-DD); '' if missing
     $rec['go_live'] = if ($pi.go_live -ge 0 -and $c.Count -gt $pi.go_live) { Gviz-Date $c[$pi.go_live] } else { '' }
     [void]$viniStage.Add($rec)
