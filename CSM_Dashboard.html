@@ -1050,21 +1050,26 @@ function perEidDotStrip(eid) {
 }
 
 // PER-GROUP percentage. Given an array of enterprise IDs (deduped internally),
-// computes sent% across the last 7 days across the union of their daily
-// outcomes. Denominator counts only (eid, date) pairs where the API has data
-// (so a never-attempted enterprise doesn't drag the group down).
+// computes sent% across the last 7 days. Per user spec: the denominator is
+// the FULL theoretical window — (unique eids) × 7 days — NOT just the
+// (eid, date) pairs the API actually returned. Earlier behavior credited
+// silent enterprises with 100% because attempted=sent for the one eid that
+// reported. With the full denominator, a CSM with 73 enterprises where only
+// 1 sent all 7 days now renders 7 / (73 × 7) ≈ 1% — accurate.
 function groupSentPercent(eids) {
-  let sent = 0, attempted = 0;
+  let sent = 0;
   const seen = new Set();
   for (const eid of eids) {
     if (!eid || seen.has(eid)) continue;
     seen.add(eid);
     const m = eidDailyStatus(eid);
     for (const d in m) {
-      attempted++;
       if (m[d] === 'sent') sent++;
     }
   }
+  const groupSize = seen.size;
+  if (groupSize === 0) return '<span style="color:var(--text-4)">—</span>';
+  const attempted = groupSize * 7;
   if (attempted === 0) return '<span style="color:var(--text-4)">—</span>';
   const pct = (sent / attempted) * 100;
   // ROI Report-Sent RAG (per user spec): > 90% Green, else Red. No Amber.
@@ -2198,7 +2203,10 @@ function renderRooftop() {
     // Look up new schema fields by name (added by the gid=603796861 sync).
     // S_COL[name] is undefined for older snapshots — guarded below.
     const sLinkIdx = S_COL.ws_link;
-    const sliceN = Math.min(rows.length, 500);
+    // Render ALL rooftops — the 500 cap that used to sit here was a legacy
+    // perf guard from when the snapshot was much larger. With 1421 active
+    // s_rows the cap was hiding rooftops 501-1421 from CSMs entirely.
+    const sliceN = rows.length;
     rows.slice(0, sliceN).forEach((r,i) => {
       // Accumulate
       sMrr += Number(r[S_COL.mrr])||0; sArr += Number(r[S_COL.arr])||0;
