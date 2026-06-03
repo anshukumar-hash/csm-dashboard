@@ -266,6 +266,13 @@
   .badge.r{background:var(--red-bg);color:var(--red)}
   .badge.n{background:#F3F4F6;color:var(--text-3)}
   .pay-stack{display:inline-flex;gap:1px;align-items:center}
+  /* Account Type cell — compact code (FGD/GSD/ISD/IGD/Others/Partner).
+     Sits right after the frozen identity block, narrow so it doesn't push
+     the rest of the table out. */
+  .cell-acct{min-width:64px;max-width:74px;font-size:11px;color:var(--text-2);text-align:center;font-weight:500}
+  /* Sortable column header — subtle hover affordance + arrow indicator. */
+  .sort-th{position:relative}
+  .sort-th:hover{background-color:rgba(32,87,196,0.06)}
   .pay-cell{display:inline-block;width:30px;height:16px;border-radius:3px;font-size:9px;font-weight:700;line-height:16px;text-align:center;color:#FFF}
   .pay-cell.paid{background:var(--green)} .pay-cell.over{background:#DC2626}
   .pay-cell.no{background:#9CA3AF} .pay-cell.part{background:#F59E0B}
@@ -338,6 +345,17 @@
     </div>
     <div class="filter-group" id="g-csm"><span class="filter-label">CSM</span>
       <select class="filter-select" id="f-csm"><option value="">All CSMs</option></select>
+    </div>
+    <div class="filter-group"><span class="filter-label">Account Type</span>
+      <select class="filter-select" id="f-acct">
+        <option value="">All</option>
+        <option value="FGD">FGD</option>
+        <option value="GSD">GSD</option>
+        <option value="ISD">ISD</option>
+        <option value="IGD">IGD</option>
+        <option value="Others">Others</option>
+        <option value="Partner">Partner</option>
+      </select>
     </div>
     <button class="filter-reset" id="f-reset">Reset filters</button>
   </div>
@@ -675,7 +693,9 @@ VINI_STAGE.forEach(s => {
 let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
-  filters: { region:'', segment:'', manager:'', csm:'' },
+  filters: { region:'', segment:'', manager:'', csm:'', acct:'' },
+  // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
+  sort: { studioRooftop: null, viniRooftop: null },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -890,8 +910,107 @@ function viniAggregateRooftops() {
 }
 
 // ============================================================
+// SORTING (Rooftop View)
+// ============================================================
+// Generic comparator factory. dir: 'asc' | 'desc'. Numeric-safe — strings
+// fall back to localeCompare; null/undefined sink to the bottom regardless of
+// direction so the sort doesn't flip silent rows to the top of ASC.
+function makeCmp(getter, dir) {
+  const sign = dir === 'desc' ? -1 : 1;
+  return (a, b) => {
+    const va = getter(a), vb = getter(b);
+    const aMissing = va == null || va === '';
+    const bMissing = vb == null || vb === '';
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+    const na = Number(va), nb = Number(vb);
+    if (!isNaN(na) && !isNaN(nb) && (typeof va === 'number' || typeof vb === 'number' || /^-?\d/.test(String(va)))) {
+      return sign * (na - nb);
+    }
+    return sign * String(va).localeCompare(String(vb), undefined, { sensitivity: 'base' });
+  };
+}
+// Studio Rooftop View sorter — sort key is the S_COL field name, dir asc/desc.
+// `acct` is a derived column (acctTypeOf), handled inline.
+function sortStudioRows(rows, sortState) {
+  const s = rows.slice();
+  if (!sortState || !sortState.key) {
+    return s.sort((a, b) => (Number(b[S_COL.arr])||0) - (Number(a[S_COL.arr])||0));
+  }
+  const { key, dir } = sortState;
+  let getter;
+  if (key === 'acct') {
+    getter = r => acctTypeOf(r[S_COL.ct], r[S_COL.cst]);
+  } else {
+    const idx = S_COL[key];
+    if (idx == null) return s;
+    getter = r => r[idx];
+  }
+  return s.sort(makeCmp(getter, dir));
+}
+// Toggle Studio Rooftop sort on header click. First click = asc, second = desc,
+// third = clear (back to default ARR DESC). The render path picks the new state up.
+function toggleStudioSort(key) {
+  const cur = state.sort.studioRooftop;
+  if (!cur || cur.key !== key)         state.sort.studioRooftop = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')          state.sort.studioRooftop = { key, dir: 'desc' };
+  else                                 state.sort.studioRooftop = null;
+  renderAll();
+}
+// Vini Rooftop View — same shape, but rooftop rows are object-keyed dicts
+// (viniAggregateRooftops result) instead of array rows.
+function sortViniRows(rows, sortState) {
+  const s = rows.slice();
+  if (!sortState || !sortState.key) {
+    return s.sort((a, b) => (Number(b.arr)||0) - (Number(a.arr)||0));
+  }
+  const { key, dir } = sortState;
+  const getter = key === 'acct' ? (r => acctTypeOf(r.ct, r.cst)) : (r => r[key]);
+  return s.sort(makeCmp(getter, dir));
+}
+function toggleViniSort(key) {
+  const cur = state.sort.viniRooftop;
+  if (!cur || cur.key !== key) state.sort.viniRooftop = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')  state.sort.viniRooftop = { key, dir: 'desc' };
+  else                         state.sort.viniRooftop = null;
+  renderAll();
+}
+// Helper to stamp a sort indicator + click-binding on a column header.
+// Use inside the rooftop-view header string builders.
+function sortTh(label, key, tableKey, baseClass) {
+  const cur = state.sort[tableKey];
+  const arrow = (cur && cur.key === key) ? (cur.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const cls = baseClass ? baseClass + ' sort-th' : 'sort-th';
+  return `<th class="${cls}" data-sort-key="${key}" data-sort-table="${tableKey}" style="cursor:pointer;user-select:none" title="Click to sort">${label}${arrow}</th>`;
+}
+
+// ============================================================
 // FILTER HELPERS
 // ============================================================
+// Account Type derivation from (account_type, account_subtype) per user spec:
+//   GROUP_DEALER      + FRANCHISE_DEALER   → FGD
+//   INDIVIDUAL_DEALER + INDIVIDUAL_DEALER  → GSD
+//   INDIVIDUAL_DEALER + INDEPENDENT_DEALER → ISD
+//   GROUP_DEALER      + INDEPENDENT_DEALER → IGD
+//   (blank)           + OTHERS             → Others
+//   (blank)           + PARTNER            → Partner
+// Anything else → '' (no tag). Used by the Account Type column AND filter.
+function acctTypeOf(ct, cst) {
+  const a = (ct  || '').toString().toUpperCase().trim();
+  const b = (cst || '').toString().toUpperCase().trim();
+  if (a === 'GROUP_DEALER'      && b === 'FRANCHISE_DEALER')   return 'FGD';
+  if (a === 'INDIVIDUAL_DEALER' && b === 'INDIVIDUAL_DEALER')  return 'GSD';
+  if (a === 'INDIVIDUAL_DEALER' && b === 'INDEPENDENT_DEALER') return 'ISD';
+  if (a === 'GROUP_DEALER'      && b === 'INDEPENDENT_DEALER') return 'IGD';
+  if (!a && b === 'OTHERS')   return 'Others';
+  if (!a && b === 'PARTNER')  return 'Partner';
+  // Fallbacks for combos the spec didn't enumerate: anything tagged PARTNER →
+  // Partner; anything tagged OTHERS → Others; otherwise blank.
+  if (b === 'PARTNER') return 'Partner';
+  if (b === 'OTHERS')  return 'Others';
+  return '';
+}
 function csmMatches(csm) {
   if (state.filters.csm && csm !== state.filters.csm) return false;
   if (state.filters.manager) {
@@ -910,6 +1029,9 @@ function getStudio() {
     if (state.filters.region) {
       const rowRegion = String(r[S_COL.region] || 'AMER').toUpperCase();
       if (rowRegion !== state.filters.region.toUpperCase()) return false;
+    }
+    if (state.filters.acct) {
+      if (acctTypeOf(r[S_COL.ct], r[S_COL.cst]) !== state.filters.acct) return false;
     }
     return true;
   });
@@ -930,6 +1052,9 @@ function getVini() {
     if (state.filters.csm || state.filters.manager) {
       if (r.csm === 'Unassigned CSM') return false;
       if (!csmMatches(r.csm)) return false;
+    }
+    if (state.filters.acct) {
+      if (acctTypeOf(r.ct, r.cst) !== state.filters.acct) return false;
     }
     return true;
   });
@@ -2151,8 +2276,10 @@ function renderRooftop() {
         return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
       });
     }
-    // Sort by ARR descending — biggest accounts first (per user spec).
-    rows = rows.slice().sort((a, b) => (Number(b[S_COL.arr])||0) - (Number(a[S_COL.arr])||0));
+    // Click-to-sort: state.sort.studioRooftop = {key, dir} drives ordering when
+    // set; otherwise fall back to the default ARR-descending order (biggest
+    // accounts first). Click the same column header to toggle asc/desc.
+    rows = sortStudioRows(rows, state.sort.studioRooftop);
     document.getElementById('crumb-context').textContent = contextLabel;
     document.getElementById('rooftop-count-text').textContent = rows.length + ' rooftops';
     // Scorecards above the rooftop table — same 6 KPIs as Overview
@@ -2162,28 +2289,39 @@ function renderRooftop() {
     // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
     let html = '<table class="data rooftop-layout rooftop-layout-5"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th>' +
+      // Empty group header for the new Account Type column (sits between
+      // frozen-5 ARR and the RoI bucket). Quality span drops from 3 → 2 now
+      // that Inventory Score is removed.
+      '<th class="g-acct"></th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
-      '<th colspan="3" class="g-quality">Quality</th>' +
+      '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
       '<th colspan="1" class="g-comm">Communication</th>' +
       '<th colspan="1" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
-      '<th class="left frozen frozen-2">Rooftop</th>' +
-      '<th class="left frozen frozen-3">Enterprise</th>' +
-      '<th class="frozen frozen-4">MRR</th>' +
-      '<th class="frozen frozen-5">ARR</th>' +
+      sortTh('Rooftop',    'rn',  'studioRooftop', 'left frozen frozen-2') +
+      sortTh('Enterprise', 'en',  'studioRooftop', 'left frozen frozen-3') +
+      sortTh('MRR',        'mrr', 'studioRooftop', 'frozen frozen-4') +
+      sortTh('ARR',        'arr', 'studioRooftop', 'frozen frozen-5') +
+      // Account Type (FGD/GSD/ISD/IGD/Others/Partner) — non-frozen, sits
+      // immediately after the frozen 5 so it's visually right next to Enterprise.
+      sortTh('Account Type', 'acct', 'studioRooftop', 'cell-acct') +
       '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
-      '<th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
-      '<th class="cell-usage">Active VINs</th><th class="cell-usage">#Contracted</th><th class="cell-usage">#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')</th>' +
-      '<th class="cell-usage">Usage Factor' + tip('usageFactor') + '</th>' +
-      '<th class="cell-quality">Pendency (6h)' + tip('pendency') + '</th>' +
-      '<th class="cell-quality">Website RAG' + tip('websiteScore') + '</th>' +
-      '<th class="cell-payment">T-1' + tip('paymentT1') + '</th><th class="cell-payment">T-2' + tip('paymentT2') + '</th>' +
-      '<th class="cell-payment">T-3' + tip('paymentT3') + '</th><th class="cell-payment">Pay RAG' + tip('paymentAcct') + '</th>' +
+      sortTh('Overall RAG' + tip('overallRag'), 'rag', 'studioRooftop', 'cell-final') +
+      sortTh('Active VINs', 'av',  'studioRooftop', 'cell-usage') +
+      sortTh('#Contracted', 'cv',  'studioRooftop', 'cell-usage') +
+      sortTh('#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')', studioActualField(), 'studioRooftop', 'cell-usage') +
+      sortTh('Usage Factor' + tip('usageFactor'), 'uf', 'studioRooftop', 'cell-usage') +
+      sortTh('Pendency (6h)' + tip('pendency'),  'pen', 'studioRooftop', 'cell-quality') +
+      sortTh('Website RAG' + tip('websiteScore'), 'ws',  'studioRooftop', 'cell-quality') +
+      sortTh('T-1' + tip('paymentT1'), 't1',   'studioRooftop', 'cell-payment') +
+      sortTh('T-2' + tip('paymentT2'), 't2',   'studioRooftop', 'cell-payment') +
+      sortTh('T-3' + tip('paymentT3'), 't3',   'studioRooftop', 'cell-payment') +
+      sortTh('Pay RAG' + tip('paymentAcct'), 'prag', 'studioRooftop', 'cell-payment') +
       '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
       '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Ticket RAG' + tip('ticketAcct') + '</th>' +
       '<th class="cell-comm">RAG' + tip('commFinalRag') + '</th>' +
@@ -2261,6 +2399,7 @@ function renderRooftop() {
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
         <td class="frozen frozen-4">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-5">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
+        <td class="cell-acct">${acctTypeOf(r[S_COL.ct], r[S_COL.cst]) || '—'}</td>
         <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
@@ -2316,6 +2455,7 @@ function renderRooftop() {
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
       <td class="frozen frozen-4">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-5">${fmtMoney(sArr)}</td>
+      <td class="cell-acct"></td>
       <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
@@ -2352,8 +2492,9 @@ function renderRooftop() {
         return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
       });
     }
-    // Sort by ARR descending — biggest accounts first (per user spec).
-    rows = rows.slice().sort((a, b) => (Number(b.arr)||0) - (Number(a.arr)||0));
+    // Click-to-sort: state.sort.viniRooftop drives ordering when set; otherwise
+    // default ARR DESC (biggest accounts first). Click same header to toggle.
+    rows = sortViniRows(rows, state.sort.viniRooftop);
     document.getElementById('crumb-context').textContent = contextLabel;
     const rooftopN = new Set(rows.map(r => r.rid).filter(Boolean)).size;
     document.getElementById('rooftop-count-text').textContent = rooftopN + ' rooftops · ' + rows.length + ' agents';
@@ -2367,6 +2508,9 @@ function renderRooftop() {
     // Go-Live Date. CSS .rooftop-layout-7 widens frozen-2..4 and pins offsets.
     let html = '<table class="data rooftop-layout rooftop-layout-7"><thead><tr class="group">' +
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th>' +
+      // Empty group header for the new Account Type column (non-frozen, sits
+      // between Live ARR and Report Sent).
+      '<th class="g-acct"></th>' +
       '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
       '<th colspan="2" class="g-final">Final Status</th>' +   // Churned Agent · Overall RAG (account health)
       '<th colspan="5" class="g-usage">Usage</th>' +
@@ -2377,12 +2521,13 @@ function renderRooftop() {
       '<th colspan="2" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
-      '<th class="left frozen frozen-2">Rooftop</th>' +
-      '<th class="left frozen frozen-3">Enterprise</th>' +
-      '<th class="left frozen frozen-4">Agent Type</th>' +
+      sortTh('Rooftop',    'rn',  'viniRooftop', 'left frozen frozen-2') +
+      sortTh('Enterprise', 'en',  'viniRooftop', 'left frozen frozen-3') +
+      sortTh('Agent Type', 'agent', 'viniRooftop', 'left frozen frozen-4') +
       '<th class="frozen frozen-5">Agent Age' + tip('agentAge') + '</th>' +
-      '<th class="frozen frozen-6">MRR</th>' +
-      '<th class="frozen frozen-7">Live ARR</th>' +
+      sortTh('MRR',        'mrr', 'viniRooftop', 'frozen frozen-6') +
+      sortTh('Live ARR',   'arr', 'viniRooftop', 'frozen frozen-7') +
+      sortTh('Account Type', 'acct', 'viniRooftop', 'cell-acct') +
       '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
       '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th><th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
@@ -2454,6 +2599,7 @@ function renderRooftop() {
         <td class="frozen frozen-5">${fmtAgentAge(r.go_live)}</td>
         <td class="frozen frozen-6">${r.mrr?fmtMoney(r.mrr):'—'}</td>
         <td class="frozen frozen-7">${liveArr?fmtMoney(liveArr):'—'}</td>
+        <td class="cell-acct">${acctTypeOf(r.ct, r.cst) || '—'}</td>
         <td class="cell-roi">—</td>
         <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-final">${ragSingle(rowOverall)}</td>
@@ -2502,6 +2648,7 @@ function renderRooftop() {
       <td class="frozen frozen-5">—</td>
       <td class="frozen frozen-6">${fmtMoney(tMrr)}</td>
       <td class="frozen frozen-7">${fmtMoney(tLiveArr)}</td>
+      <td class="cell-acct"></td>
       <td class="cell-roi">—</td>
       <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
       <td class="cell-final">${ragStack(tOverall)}</td>
@@ -2959,19 +3106,32 @@ document.querySelectorAll('.top-tab').forEach(t => {
 document.querySelectorAll('.sub-tab').forEach(t => {
   t.addEventListener('click', () => { state.view = t.dataset.view; renderAll(); });
 });
-['region','segment','manager','csm'].forEach(k => {
+['region','segment','manager','csm','acct'].forEach(k => {
   document.getElementById('f-'+k).addEventListener('change', e => {
     state.filters[k] = e.target.value;
     renderAll();
   });
 });
+// Global click-to-sort delegation for Rooftop View headers. Each sortable
+// th carries data-sort-key + data-sort-table. Third click on the same
+// column clears the sort (returns to default ARR DESC).
+document.addEventListener('click', e => {
+  const th = e.target.closest('th.sort-th');
+  if (!th) return;
+  const key   = th.dataset.sortKey;
+  const table = th.dataset.sortTable;
+  if (!key || !table) return;
+  if (table === 'studioRooftop') toggleStudioSort(key);
+  else if (table === 'viniRooftop') toggleViniSort(key);
+});
 document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:'', segment:'', manager:'', csm:'' };
+  state.filters = { region:'', segment:'', manager:'', csm:'', acct:'' };
+  state.sort = { studioRooftop: null, viniRooftop: null };
   // Also clear any drill-down context (CSM:foo, Segment:bar, Agent:baz) — otherwise
   // the Rooftop View stays filtered to the drill target even after reset.
   state.rooftopContext = { kind:'all', value:null };
-  document.getElementById('f-region').value = 'AMER';
-  ['segment','manager','csm'].forEach(k => document.getElementById('f-'+k).value = '');
+  document.getElementById('f-region').value = '';
+  ['segment','manager','csm','acct'].forEach(k => document.getElementById('f-'+k).value = '');
   renderAll();
 });
 document.getElementById('crumb-back').addEventListener('click', () => {
