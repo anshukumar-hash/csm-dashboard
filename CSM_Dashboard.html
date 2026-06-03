@@ -317,8 +317,8 @@
   <div class="filter-bar">
     <div class="filter-group"><span class="filter-label">Region</span>
       <select class="filter-select" id="f-region">
-        <option value="">All</option>
-        <option value="AMER" selected>AMER</option>
+        <option value="" selected>All</option>
+        <option value="AMER">AMER</option>
         <option value="APAC">APAC</option>
         <option value="EMEA">EMEA</option>
       </select>
@@ -675,7 +675,7 @@ VINI_STAGE.forEach(s => {
 let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
-  filters: { region:'AMER', segment:'', manager:'', csm:'' },
+  filters: { region:'', segment:'', manager:'', csm:'' },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -2966,7 +2966,7 @@ document.querySelectorAll('.sub-tab').forEach(t => {
   });
 });
 document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:'AMER', segment:'', manager:'', csm:'' };
+  state.filters = { region:'', segment:'', manager:'', csm:'' };
   // Also clear any drill-down context (CSM:foo, Segment:bar, Agent:baz) — otherwise
   // the Rooftop View stays filtered to the drill target even after reset.
   state.rooftopContext = { kind:'all', value:null };
