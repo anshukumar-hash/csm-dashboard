@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=940, initial-scale=1">
+<title>CSM Daily Brief — Spyne Studio + Vini</title>
+<style>
+  /* Light, print-friendly, fits an email body / single screenshot.
+     Target width 920px. Sticks to a small palette so it screenshots cleanly. */
+  :root {
+    --bg: #fafbfc;
+    --card: #ffffff;
+    --ink: #111418;
+    --ink-2: #353b41;
+    --ink-3: #6b7480;
+    --line: #e3e7ec;
+    --line-2: #f0f2f5;
+    --g-bg: #e8f5ec; --g-ink: #1e7a3f;
+    --a-bg: #fff5dc; --a-ink: #946800;
+    --r-bg: #fde8e8; --r-ink: #b32424;
+    --n-bg: #f0f2f5; --n-ink: #6b7480;
+    --kpi-accent: #2057c4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 18px 18px 28px; }
+  .topbar { display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .topbar h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar .meta { font-size: 11px; color: var(--ink-3); }
+  .topbar .meta b { color: var(--ink-2); font-weight: 600; }
+
+  /* KPI strip — 5 tiles on one row */
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 12px; }
+  .kpi .lbl { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase;
+    letter-spacing: 0.04em; font-weight: 600; }
+  .kpi .val { font-size: 17px; font-weight: 700; margin-top: 2px; color: var(--ink);
+    letter-spacing: -0.01em; }
+  .kpi .sub { font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
+  .kpi.accent .val { color: var(--kpi-accent); }
+  .kpi.warn  .val { color: var(--r-ink); }
+
+  /* Product section */
+  section.product { margin-bottom: 18px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  section.product header { padding: 10px 14px; background: #f7f9fb;
+    border-bottom: 1px solid var(--line); display: flex; justify-content: space-between;
+    align-items: baseline; }
+  section.product header h2 { font-size: 14px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  section.product header .row-meta { font-size: 11px; color: var(--ink-3); }
+  section.product header .row-meta span { margin-left: 12px; }
+  section.product header .row-meta b { color: var(--ink-2); font-weight: 600; }
+
+  .product-body { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0;
+    border-top: 1px solid var(--line); }
+  .panel { padding: 12px 14px; }
+  .panel + .panel { border-left: 1px solid var(--line); }
+  .panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-3); margin: 0 0 8px; font-weight: 600; }
+
+  /* Segment table */
+  table.seg { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.seg th, table.seg td { padding: 5px 6px; text-align: right;
+    border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  table.seg th { font-weight: 600; color: var(--ink-3); font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--line); }
+  table.seg th:first-child, table.seg td:first-child { text-align: left; font-weight: 500; }
+  table.seg tr.total td { border-top: 1px solid var(--line); font-weight: 700;
+    border-bottom: none; padding-top: 7px; }
+
+  /* RAG badges */
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 700; min-width: 18px; text-align: center; line-height: 14px; }
+  .badge.g { background: var(--g-bg); color: var(--g-ink); }
+  .badge.a { background: var(--a-bg); color: var(--a-ink); }
+  .badge.r { background: var(--r-bg); color: var(--r-ink); }
+  .badge.n { background: var(--n-bg); color: var(--n-ink); }
+  .stack { display: inline-flex; gap: 3px; }
+
+  /* Watchlist (Top-N red rooftops) */
+  ul.watch { list-style: none; padding: 0; margin: 0; }
+  ul.watch li { display: flex; justify-content: space-between; align-items: baseline;
+    padding: 5px 0; border-bottom: 1px dashed var(--line-2); font-size: 12px; gap: 8px; }
+  ul.watch li:last-child { border-bottom: none; }
+  ul.watch .nm { color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-weight: 500; }
+  ul.watch .nm small { color: var(--ink-3); font-weight: 400; }
+  ul.watch .arr { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 600; }
+  ul.watch .why { color: var(--ink-3); font-size: 10.5px; margin-left: 6px; }
+
+  footer { font-size: 11px; color: var(--ink-3); text-align: center; padding-top: 14px;
+    border-top: 1px solid var(--line); margin-top: 10px; }
+  footer a { color: var(--kpi-accent); text-decoration: none; }
+
+  .loader { padding: 60px; text-align: center; color: var(--ink-3); }
+  .err { padding: 14px; background: var(--r-bg); color: var(--r-ink); border-radius: 6px; }
+
+  @media print {
+    body { background: white; }
+    .wrap { padding: 0; }
+    section.product, .kpi { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+  <div class="loader">Loading dashboard snapshot…</div>
+</div>
+
+<script>
+/* ---------- Boot: pull __DASHBOARD_DATA__ from index.html ----------
+   Same-origin fetch, then carve out the JSON literal between
+   `window.__DASHBOARD_DATA__ = {` and its matching close brace.
+   We DO NOT eval index.html — we only parse the data object. */
+(async function () {
+  const root = document.getElementById('root');
+  try {
+    const html = await fetch('./index.html', { cache: 'no-store' }).then(r => r.text());
+    const start = html.indexOf('window.__DASHBOARD_DATA__');
+    if (start < 0) throw new Error('No __DASHBOARD_DATA__ in index.html');
+    const eq    = html.indexOf('=', start);
+    const open  = html.indexOf('{', eq);
+    // Scan for the matching close brace, respecting strings + escapes.
+    let depth = 0, end = -1, inStr = false, esc = false;
+    for (let i = open; i < html.length; i++) {
+      const ch = html[i];
+      if (esc) { esc = false; continue; }
+      if (inStr) {
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"')  { inStr = false; }
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    if (end < 0) throw new Error('Could not bracket-match the JSON literal');
+    const D = JSON.parse(html.substring(open, end));
+    render(D);
+  } catch (e) {
+    root.innerHTML = `<div class="err">Failed to load snapshot: ${e.message}</div>`;
+    console.error(e);
+  }
+})();
+
+/* ---------- Helpers ---------- */
+const fmtUsd = n => {
+  if (!n || !isFinite(n)) return '$0';
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(0) + 'k';
+  return '$' + Math.round(n);
+};
+const fmtPct = (num, den) => den > 0 ? Math.round(100 * num / den) + '%' : '–';
+const todayStr = () => {
+  const d = new Date();
+  return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+function ragOf(v) {
+  if (!v) return null;
+  const s = String(v).trim().toLowerCase();
+  if (s === 'green' || s === 'g') return 'Green';
+  if (s === 'amber' || s === 'a' || s === 'yellow') return 'Amber';
+  if (s === 'red' || s === 'r') return 'Red';
+  return null;
+}
+function ragBadge(label, n) {
+  if (!n) return '';
+  const cls = label === 'Green' ? 'g' : label === 'Amber' ? 'a' : label === 'Red' ? 'r' : 'n';
+  const txt = label === 'Green' ? 'G' : label === 'Amber' ? 'A' : label === 'Red' ? 'R' : 'NA';
+  return `<span class="badge ${cls}" title="${label}">${n}${txt!=='NA'?'':''}</span>`;
+}
+function ragStack(counts) {
+  const order = ['Green', 'Amber', 'Red', 'NA'];
+  const parts = order.map(k => counts[k] ? ragBadge(k, counts[k]) : '').filter(Boolean);
+  return parts.length ? `<span class="stack">${parts.join('')}</span>` : '–';
+}
+
+/* Single composite RAG for a rooftop/enterprise: worst of (payment, ticket, comm).
+   Mirrors the dashboard's computeOverallRAG approach (worst-of). */
+function overallRagOne(pay, tix, com) {
+  const buckets = [ragOf(pay), ragOf(tix), ragOf(com)].filter(Boolean);
+  if (!buckets.length) return null;
+  if (buckets.includes('Red')) return 'Red';
+  if (buckets.includes('Amber')) return 'Amber';
+  return 'Green';
+}
+
+/* ---------- Render ---------- */
+function render(D) {
+  const root = document.getElementById('root');
+
+  // --- Studio side: per-rooftop rows in D.s_rows ----------------------------
+  const S = (D.s_rows || []).slice();
+  const sSchema = D.s_schema || [];
+  const sCol = {}; sSchema.forEach((k, i) => sCol[k] = i);
+
+  // Resolve a rooftop's comm RAG from latest CSAT entry by EID
+  const CSAT_BY_EID = D.csat_by_eid || {};
+  const commRagForEid = eid => {
+    const e = CSAT_BY_EID[eid];
+    if (!e) return null;
+    return ragOf(e.rag || e.r || e.RAG);
+  };
+
+  // Studio per-rooftop digest, with the composite (overall) RAG
+  const studio = S.map(r => ({
+    eid: r[sCol.eid],
+    rid: r[sCol.rid],
+    en:  r[sCol.en],
+    rn:  r[sCol.rn],
+    seg: r[sCol.seg] || 'Other',
+    arr: Number(r[sCol.arr]) || 0,
+    payRag:    ragOf(r[sCol.prag]),
+    tixRag:    ragOf(r[sCol.trag]),
+    commRag:   ragOf(r[sCol.red]) || commRagForEid(r[sCol.eid]),
+    get overall() { return overallRagOne(this.payRag, this.tixRag, this.commRag); }
+  }));
+
+  // --- Vini side: per-(rooftop x agent) rows in D.vini_stage. We need an
+  // enterprise-level rollup to read like the Studio side does. -------------
+  const ViniStage = D.vini_stage || [];
+  // VINI_STAGE rows are dicts (PowerShell serialized hashtables), not arrays.
+  // Roll up by enterprise_id and keep the latest payment/comm RAGs.
+  const byEnt = {};
+  ViniStage.forEach(s => {
+    const eid = s.eid || s.enterprise_id;
+    if (!eid) return;
+    if (!byEnt[eid]) {
+      byEnt[eid] = {
+        eid, en: s.en || s.enterprise_name || '',
+        seg: s.seg || 'Other',
+        arr: 0,
+        payRag: ragOf(s.ps),
+        commRag: null,
+        tixRag: null,
+        stage: (s.stage || '').toLowerCase()
+      };
+    }
+    byEnt[eid].arr = Math.max(byEnt[eid].arr, Number(s.arr) || 0);
+    if (!byEnt[eid].payRag) byEnt[eid].payRag = ragOf(s.ps);
+  });
+  // Tickets RAG from VINI_TIX (count-based — Red if any open ticket).
+  const VINI_TIX = D.vini_tix || {};
+  Object.keys(byEnt).forEach(eid => {
+    const t = VINI_TIX[eid];
+    if (t && Array.isArray(t.rows) && t.rows.length) {
+      const open = t.rows.filter(x => Number(x.o) > 0).length;
+      byEnt[eid].tixRag = open > 0 ? 'Amber' : 'Green';
+    }
+    // Comm RAG: latest CSAT for that eid
+    const c = CSAT_BY_EID[eid];
+    if (c) byEnt[eid].commRag = ragOf(c.rag || c.r || c.RAG);
+    byEnt[eid].overall = overallRagOne(byEnt[eid].payRag, byEnt[eid].tixRag, byEnt[eid].commRag);
+  });
+  // Vini "live" set: stage !== churned
+  const viniLive = Object.values(byEnt).filter(e => e.stage !== 'churned');
+
+  // --- Top-line KPI strip ---------------------------------------------------
+  const studioLive    = studio; // s_rows are already enterprise-rooftops in scope
+  const studioRedRoof = studioLive.filter(r => r.overall === 'Red').length;
+  const studioArr     = studioLive.reduce((s, r) => s + r.arr, 0);
+  const studioEnts    = new Set(studioLive.map(r => r.eid)).size;
+
+  const viniArr  = viniLive.reduce((s, e) => s + e.arr, 0);
+  const viniRed  = viniLive.filter(e => e.overall === 'Red').length;
+  const viniEnts = viniLive.length;
+
+  const reportTracking = D.report_tracking || {};
+  const repEids = Object.keys(reportTracking);
+  let sent7 = 0, attempts7 = 0;
+  repEids.forEach(eid => {
+    const arr = reportTracking[eid];
+    if (!Array.isArray(arr)) return;
+    arr.forEach(d => {
+      if (typeof d?.sent === 'number') { sent7 += d.sent; attempts7 += (d.sent + (d.skipped||0) + (d.error||0)); }
+    });
+  });
+  const reportPct = fmtPct(sent7, attempts7);
+
+  // --- Render header + KPIs -------------------------------------------------
+  const lastSync = D.last_sync || D.synced_at || '';
+  const html = [];
+  html.push(`
+    <div class="topbar">
+      <h1>CSM Daily Brief — Spyne Studio + Vini</h1>
+      <div class="meta">
+        <b>${todayStr()}</b> · Snapshot: ${escapeHtml(lastSync || '—')}
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi accent"><div class="lbl">Live ARR</div>
+        <div class="val">${fmtUsd(studioArr + viniArr)}</div>
+        <div class="sub">Studio ${fmtUsd(studioArr)} · Vini ${fmtUsd(viniArr)}</div></div>
+      <div class="kpi"><div class="lbl">Live Enterprises</div>
+        <div class="val">${studioEnts + viniEnts}</div>
+        <div class="sub">Studio ${studioEnts} · Vini ${viniEnts}</div></div>
+      <div class="kpi"><div class="lbl">Live Rooftops</div>
+        <div class="val">${studioLive.length + viniEnts}</div>
+        <div class="sub">Studio ${studioLive.length} · Vini ${viniEnts}</div></div>
+      <div class="kpi"><div class="lbl">Reports Sent (7d)</div>
+        <div class="val">${reportPct}</div>
+        <div class="sub">${sent7} sent / ${attempts7} attempts</div></div>
+      <div class="kpi warn"><div class="lbl">Red Rooftops</div>
+        <div class="val">${studioRedRoof + viniRed}</div>
+        <div class="sub">Studio ${studioRedRoof} · Vini ${viniRed}</div></div>
+    </div>
+  `);
+
+  // --- Product sections ----------------------------------------------------
+  html.push(productSection('Studio', studioLive, { unit: 'rooftops' }));
+  html.push(productSection('Vini',   viniLive,   { unit: 'enterprises' }));
+
+  html.push(`
+    <footer>
+      Compiled for daily share — for full drill-down see the interactive dashboard:
+      <a href="./index.html">CSM Dashboard →</a>
+    </footer>
+  `);
+
+  root.innerHTML = html.join('');
+}
+
+function productSection(title, rows, opts) {
+  // Group by segment, then per-segment counts
+  const bySeg = {};
+  rows.forEach(r => {
+    const seg = r.seg || 'Other';
+    if (!bySeg[seg]) bySeg[seg] = { n: 0, arr: 0, overall: { Green:0, Amber:0, Red:0, NA:0 },
+      pay: { Green:0, Amber:0, Red:0, NA:0 }, tix: { Green:0, Amber:0, Red:0, NA:0 },
+      com: { Green:0, Amber:0, Red:0, NA:0 } };
+    bySeg[seg].n++;
+    bySeg[seg].arr += r.arr || 0;
+    bySeg[seg].overall[r.overall || 'NA']++;
+    bySeg[seg].pay[r.payRag || 'NA']++;
+    bySeg[seg].tix[r.tixRag || 'NA']++;
+    bySeg[seg].com[r.commRag || 'NA']++;
+  });
+  const segs = Object.keys(bySeg).sort((a, b) => bySeg[b].arr - bySeg[a].arr);
+  const totalN   = rows.length;
+  const totalArr = rows.reduce((s, r) => s + (r.arr || 0), 0);
+  const totalOverall = rows.reduce((acc, r) => { acc[r.overall || 'NA']++; return acc; },
+    { Green:0, Amber:0, Red:0, NA:0 });
+  const totalPay = rows.reduce((acc, r) => { acc[r.payRag || 'NA']++; return acc; },
+    { Green:0, Amber:0, Red:0, NA:0 });
+  const totalTix = rows.reduce((acc, r) => { acc[r.tixRag || 'NA']++; return acc; },
+    { Green:0, Amber:0, Red:0, NA:0 });
+  const totalCom = rows.reduce((acc, r) => { acc[r.commRag || 'NA']++; return acc; },
+    { Green:0, Amber:0, Red:0, NA:0 });
+
+  // Top-5 red watchlist (by ARR DESC)
+  const watch = rows.filter(r => r.overall === 'Red')
+    .sort((a, b) => (b.arr || 0) - (a.arr || 0))
+    .slice(0, 5);
+
+  const reds  = totalOverall.Red;
+  const greens = totalOverall.Green;
+  const amber  = totalOverall.Amber;
+
+  const segRows = segs.map(seg => {
+    const s = bySeg[seg];
+    return `<tr>
+      <td>${escapeHtml(seg)}</td>
+      <td>${s.n}</td>
+      <td>${fmtUsd(s.arr)}</td>
+      <td>${ragStack(s.com)}</td>
+      <td>${ragStack(s.pay)}</td>
+      <td>${ragStack(s.tix)}</td>
+      <td>${ragStack(s.overall)}</td>
+    </tr>`;
+  }).join('');
+
+  const watchHtml = watch.length ? watch.map(w => `
+    <li>
+      <span class="nm">${escapeHtml(w.en || w.rn || w.eid)}<br>
+        <small>${escapeHtml(w.seg)}${w.rn && w.en !== w.rn ? ' · ' + escapeHtml(w.rn) : ''}</small></span>
+      <span class="arr">${fmtUsd(w.arr)}
+        <span class="why">${reasonFor(w)}</span></span>
+    </li>`).join('') : `<li style="color:var(--ink-3); border:none;">No red ${opts.unit} — clean slate today.</li>`;
+
+  return `
+    <section class="product">
+      <header>
+        <h2>${escapeHtml(title)}</h2>
+        <div class="row-meta">
+          <span>${opts.unit === 'rooftops' ? 'Rooftops' : 'Enterprises'}: <b>${totalN}</b></span>
+          <span>Live ARR: <b>${fmtUsd(totalArr)}</b></span>
+          <span>Green: <b>${greens}</b></span>
+          <span>Amber: <b>${amber}</b></span>
+          <span>Red: <b style="color:var(--r-ink)">${reds}</b></span>
+        </div>
+      </header>
+      <div class="product-body">
+        <div class="panel">
+          <h3>By Segment</h3>
+          <table class="seg">
+            <thead><tr>
+              <th>Segment</th><th>${opts.unit==='rooftops'?'Roof':'Ent'}</th>
+              <th>ARR</th><th>Comm</th><th>Pay</th><th>Tix</th><th>Overall</th>
+            </tr></thead>
+            <tbody>${segRows}
+              <tr class="total">
+                <td>Total</td><td>${totalN}</td><td>${fmtUsd(totalArr)}</td>
+                <td>${ragStack(totalCom)}</td><td>${ragStack(totalPay)}</td>
+                <td>${ragStack(totalTix)}</td><td>${ragStack(totalOverall)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Top 5 — Needs Attention (Red, by ARR)</h3>
+          <ul class="watch">${watchHtml}</ul>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function reasonFor(r) {
+  const parts = [];
+  if (r.payRag  === 'Red') parts.push('Pay');
+  if (r.tixRag  === 'Red') parts.push('Tix');
+  if (r.commRag === 'Red') parts.push('Comm');
+  return parts.length ? `· ${parts.join(' + ')} Red` : '';
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>
