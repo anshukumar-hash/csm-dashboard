@@ -166,6 +166,22 @@
   table.data.rooftop-layout-5 .frozen-4{left:318px; width:80px;  min-width:80px;  max-width:80px}
   table.data.rooftop-layout-5 .frozen-5{left:398px; width:80px;  min-width:80px;  max-width:80px; box-shadow:1px 0 0 var(--border)}
   table.data.rooftop-layout-5 .frozen-6{box-shadow:none}
+  /* 6-frozen variant: Studio Rooftop View WITH Account Type pill column —
+     # · Rooftop · Enterprise · Account Type · MRR · ARR. Account Type sits
+     between Enterprise and MRR so the user sees the dealer classification
+     right next to the enterprise name, even when scrolling right. */
+  table.data.rooftop-layout-6 .frozen-3{left:158px; width:160px; min-width:160px; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-6 .frozen-4{left:318px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-6 .frozen-5{left:438px; width:80px;  min-width:80px;  max-width:80px}
+  table.data.rooftop-layout-6 .frozen-6{left:518px; width:80px;  min-width:80px;  max-width:80px; box-shadow:1px 0 0 var(--border)}
+  /* 8-frozen variant: Vini Rooftop View WITH Account Type pill column —
+     # · Rooftop · Enterprise · Account Type · Agent · Agent Age · MRR · ARR. */
+  table.data.rooftop-layout-8 .frozen-3{left:158px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-8 .frozen-4{left:278px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-8 .frozen-5{left:398px; width:120px; min-width:120px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  table.data.rooftop-layout-8 .frozen-6{left:518px; width:70px;  min-width:70px;  max-width:70px}
+  table.data.rooftop-layout-8 .frozen-7{left:588px; width:60px;  min-width:60px;  max-width:60px}
+  table.data.rooftop-layout-8 .frozen-8{left:648px; width:60px;  min-width:60px;  max-width:60px; box-shadow:1px 0 0 var(--border)}
   /* Long content in NAME column must ellipsis to honor the locked width */
   table.data .frozen-2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   table.data tbody tr:hover .frozen{background:#FAFAFA}
@@ -266,10 +282,12 @@
   .badge.r{background:var(--red-bg);color:var(--red)}
   .badge.n{background:#F3F4F6;color:var(--text-3)}
   .pay-stack{display:inline-flex;gap:1px;align-items:center}
-  /* Account Type cell — compact code (FGD/GSD/ISD/IGD/Others/Partner).
-     Sits right after the frozen identity block, narrow so it doesn't push
-     the rest of the table out. */
-  .cell-acct{min-width:64px;max-width:74px;font-size:11px;color:var(--text-2);text-align:center;font-weight:500}
+  /* Account Type column — frozen between Enterprise and MRR. Renders the
+     classification as a soft-blue rounded pill (see .acct-pill below). */
+  .cell-acct{padding:6px 8px;text-align:center}
+  .acct-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:10.5px;
+    font-weight:500;line-height:1.25;text-align:center;
+    background:#E8EDFB;color:#2C3E83;border:1px solid #C9D4F6;white-space:normal;max-width:104px}
   /* Sortable column header — subtle hover affordance + arrow indicator. */
   .sort-th{position:relative}
   .sort-th:hover{background-color:rgba(32,87,196,0.06)}
@@ -1010,6 +1028,25 @@ function acctTypeOf(ct, cst) {
   if (b === 'PARTNER') return 'Partner';
   if (b === 'OTHERS')  return 'Others';
   return '';
+}
+// Human-readable label for an Account Type code — shown on the rooftop-view
+// pill. Code stays the source of truth for filters; only the display differs.
+function acctTypeLabelOf(code) {
+  switch (code) {
+    case 'FGD': return 'Franchise Group';
+    case 'GSD': return 'Group Single';
+    case 'ISD': return 'Independent Single';
+    case 'IGD': return 'Independent Group';
+    case 'Others':  return 'Others';
+    case 'Partner': return 'Partner';
+    default: return '';
+  }
+}
+function acctTypePill(ct, cst) {
+  const code = acctTypeOf(ct, cst);
+  if (!code) return '<span style="color:var(--text-4)">—</span>';
+  const label = acctTypeLabelOf(code) || code;
+  return `<span class="acct-pill" title="${code}">${label}</span>`;
 }
 function csmMatches(csm) {
   if (state.filters.csm && csm !== state.filters.csm) return false;
@@ -2287,12 +2324,9 @@ function renderRooftop() {
 
     // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
     // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
-    let html = '<table class="data rooftop-layout rooftop-layout-5"><thead><tr class="group">' +
-      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th>' +
-      // Empty group header for the new Account Type column (sits between
-      // frozen-5 ARR and the RoI bucket). Quality span drops from 3 → 2 now
-      // that Inventory Score is removed.
-      '<th class="g-acct"></th>' +
+    let html = '<table class="data rooftop-layout rooftop-layout-6"><thead><tr class="group">' +
+      // 6 frozen identity cells: # · Rooftop · Enterprise · Account Type · MRR · ARR
+      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
@@ -2303,13 +2337,12 @@ function renderRooftop() {
       '<th colspan="1" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
-      sortTh('Rooftop',    'rn',  'studioRooftop', 'left frozen frozen-2') +
-      sortTh('Enterprise', 'en',  'studioRooftop', 'left frozen frozen-3') +
-      sortTh('MRR',        'mrr', 'studioRooftop', 'frozen frozen-4') +
-      sortTh('ARR',        'arr', 'studioRooftop', 'frozen frozen-5') +
-      // Account Type (FGD/GSD/ISD/IGD/Others/Partner) — non-frozen, sits
-      // immediately after the frozen 5 so it's visually right next to Enterprise.
-      sortTh('Account Type', 'acct', 'studioRooftop', 'cell-acct') +
+      sortTh('Rooftop',      'rn',   'studioRooftop', 'left frozen frozen-2') +
+      sortTh('Enterprise',   'en',   'studioRooftop', 'left frozen frozen-3') +
+      // Account Type — frozen, sits IMMEDIATELY after Enterprise per user spec.
+      sortTh('Account Type', 'acct', 'studioRooftop', 'frozen frozen-4') +
+      sortTh('MRR',          'mrr',  'studioRooftop', 'frozen frozen-5') +
+      sortTh('ARR',          'arr',  'studioRooftop', 'frozen frozen-6') +
       '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       sortTh('Overall RAG' + tip('overallRag'), 'rag', 'studioRooftop', 'cell-final') +
       sortTh('Active VINs', 'av',  'studioRooftop', 'cell-usage') +
@@ -2397,9 +2430,9 @@ function renderRooftop() {
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r[S_COL.rn]||'—'}</td>
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
-        <td class="frozen frozen-4">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
-        <td class="frozen frozen-5">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-acct">${acctTypeOf(r[S_COL.ct], r[S_COL.cst]) || '—'}</td>
+        <td class="frozen frozen-4 cell-acct">${acctTypePill(r[S_COL.ct], r[S_COL.cst])}</td>
+        <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
+        <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
         <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
@@ -2453,9 +2486,9 @@ function renderRooftop() {
       <td class="left idx frozen frozen-1"></td>
       <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${sliceN} rows${rows.length>500?` of ${rows.length}`:''}</td>
-      <td class="frozen frozen-4">${fmtMoney(sMrr)}</td>
-      <td class="frozen frozen-5">${fmtMoney(sArr)}</td>
-      <td class="cell-acct"></td>
+      <td class="frozen frozen-4 cell-acct"></td>
+      <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
+      <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
       <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
@@ -2506,11 +2539,9 @@ function renderRooftop() {
     // 7-frozen layout for Vini Rooftop View: # / Rooftop / Enterprise /
     // Agent Type / Agent Age / MRR / Live ARR. Agent Age = months/days since
     // Go-Live Date. CSS .rooftop-layout-7 widens frozen-2..4 and pins offsets.
-    let html = '<table class="data rooftop-layout rooftop-layout-7"><thead><tr class="group">' +
-      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th>' +
-      // Empty group header for the new Account Type column (non-frozen, sits
-      // between Live ARR and Report Sent).
-      '<th class="g-acct"></th>' +
+    let html = '<table class="data rooftop-layout rooftop-layout-8"><thead><tr class="group">' +
+      // 8 frozen identity cells: # · Rooftop · Enterprise · Account Type · Agent · Agent Age · MRR · ARR
+      '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th><th class="frozen frozen-8"></th>' +
       '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
       '<th colspan="2" class="g-final">Final Status</th>' +   // Churned Agent · Overall RAG (account health)
       '<th colspan="5" class="g-usage">Usage</th>' +
@@ -2521,13 +2552,13 @@ function renderRooftop() {
       '<th colspan="2" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
-      sortTh('Rooftop',    'rn',  'viniRooftop', 'left frozen frozen-2') +
-      sortTh('Enterprise', 'en',  'viniRooftop', 'left frozen frozen-3') +
-      sortTh('Agent Type', 'agent', 'viniRooftop', 'left frozen frozen-4') +
-      '<th class="frozen frozen-5">Agent Age' + tip('agentAge') + '</th>' +
-      sortTh('MRR',        'mrr', 'viniRooftop', 'frozen frozen-6') +
-      sortTh('Live ARR',   'arr', 'viniRooftop', 'frozen frozen-7') +
-      sortTh('Account Type', 'acct', 'viniRooftop', 'cell-acct') +
+      sortTh('Rooftop',      'rn',    'viniRooftop', 'left frozen frozen-2') +
+      sortTh('Enterprise',   'en',    'viniRooftop', 'left frozen frozen-3') +
+      sortTh('Account Type', 'acct',  'viniRooftop', 'left frozen frozen-4') +
+      sortTh('Agent Type',   'agent', 'viniRooftop', 'left frozen frozen-5') +
+      '<th class="frozen frozen-6">Agent Age' + tip('agentAge') + '</th>' +
+      sortTh('MRR',          'mrr',   'viniRooftop', 'frozen frozen-7') +
+      sortTh('Live ARR',     'arr',   'viniRooftop', 'frozen frozen-8') +
       '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
       '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th><th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
       '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
@@ -2595,11 +2626,11 @@ function renderRooftop() {
         <td class="left idx frozen frozen-1">${i+1}</td>
         <td class="left frozen frozen-2">${r.rn||'—'}</td>
         <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r.en||'—'}</td>
-        <td class="left frozen frozen-4">${r.agent||'—'} <span class="csm-mgr">${r.stage?'· '+r.stage:''} ${r.seg?'· '+r.seg:''}</span></td>
-        <td class="frozen frozen-5">${fmtAgentAge(r.go_live)}</td>
-        <td class="frozen frozen-6">${r.mrr?fmtMoney(r.mrr):'—'}</td>
-        <td class="frozen frozen-7">${liveArr?fmtMoney(liveArr):'—'}</td>
-        <td class="cell-acct">${acctTypeOf(r.ct, r.cst) || '—'}</td>
+        <td class="left frozen frozen-4 cell-acct">${acctTypePill(r.ct, r.cst)}</td>
+        <td class="left frozen frozen-5">${r.agent||'—'} <span class="csm-mgr">${r.stage?'· '+r.stage:''} ${r.seg?'· '+r.seg:''}</span></td>
+        <td class="frozen frozen-6">${fmtAgentAge(r.go_live)}</td>
+        <td class="frozen frozen-7">${r.mrr?fmtMoney(r.mrr):'—'}</td>
+        <td class="frozen frozen-8">${liveArr?fmtMoney(liveArr):'—'}</td>
         <td class="cell-roi">—</td>
         <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-final">${ragSingle(rowOverall)}</td>
@@ -2644,11 +2675,11 @@ function renderRooftop() {
       <td class="left idx frozen frozen-1"></td>
       <td class="left frozen frozen-2"><strong>TOTAL</strong></td>
       <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${rows.length} rows</td>
-      <td class="left frozen frozen-4">—</td>
-      <td class="frozen frozen-5">—</td>
-      <td class="frozen frozen-6">${fmtMoney(tMrr)}</td>
-      <td class="frozen frozen-7">${fmtMoney(tLiveArr)}</td>
-      <td class="cell-acct"></td>
+      <td class="left frozen frozen-4 cell-acct"></td>
+      <td class="left frozen frozen-5">—</td>
+      <td class="frozen frozen-6">—</td>
+      <td class="frozen frozen-7">${fmtMoney(tMrr)}</td>
+      <td class="frozen frozen-8">${fmtMoney(tLiveArr)}</td>
       <td class="cell-roi">—</td>
       <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
       <td class="cell-final">${ragStack(tOverall)}</td>
