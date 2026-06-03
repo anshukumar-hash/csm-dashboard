@@ -225,7 +225,10 @@
   .rs-strip .rs-day.rs-mid{background:#F59E0B}
   .rs-strip .rs-day.rs-no{background:#DC2626}
   .rs-strip .rs-day.rs-na{background:#D1D5DB}
-  .rs-strip .rs-day.rs-yesterday{box-shadow:0 0 0 2px var(--blue);transform:scale(1.35);margin-left:1px}
+  /* Yesterday's dot used to get a blue ring + scale — removed per user spec.
+     Keep the class hook so JS can still tag the last dot if we need a tooltip
+     or aria-label later, but the visual emphasis is now just "no different". */
+  .rs-strip .rs-day.rs-yesterday{margin-left:1px}
   /* Per-bucket hide classes — apply on the parent table to drop entire buckets
      (headers, column headers, body cells). Used by the Agent-level view which
      only needs identity + Final Status + Usage + RoI. */
@@ -901,7 +904,13 @@ function getStudio() {
   return D.s_rows.filter(r => {
     if (state.filters.segment && r[S_COL.seg] !== state.filters.segment) return false;
     if (!csmMatches(r[S_COL.csm])) return false;
-    if (state.filters.region !== 'AMER') return false;  // Sheet has only AMER for now
+    // Region filter (per user spec): read from S_COL.region (gid=603796861 col I)
+    // and match against the picked region. Empty/blank region defaults to AMER
+    // so legacy rows that haven't been region-tagged still show under AMER.
+    if (state.filters.region) {
+      const rowRegion = String(r[S_COL.region] || 'AMER').toUpperCase();
+      if (rowRegion !== state.filters.region.toUpperCase()) return false;
+    }
     return true;
   });
 }
@@ -965,9 +974,9 @@ const TIPS = {
   pendency:    'Number of VINs awaiting action for longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet (0–10). >8 Green, >5 Amber, <5 Red.',
   usageFactor: 'Usage Factor = # Actual VINs ÷ # Contracted VINs (share of contracted VINs actually being used), shown as %. ≥70% Green, 40–70% Amber, <40% Red. Period-aware via #Actual.',
-  paymentT1:   'T-1 = customer_status of the prior service period (1 back from current). Source: payment-periods tab, DENSE_RANK by (Service_period_Start_date, Service_period_End_date) DESC per enterprise — rank 2 → T-1. Group view shows count of enterprises per status (paid / overdue / sent / draft).',
-  paymentT2:   'T-2 = customer_status of two service periods back (rank 3). Same DENSE_RANK partitioning per enterprise. Group view counts enterprises per status.',
-  paymentT3:   'T-3 = customer_status of three service periods back (rank 4). Same DENSE_RANK partitioning per enterprise. Group view counts enterprises per status.',
+  paymentT1:   'T-1 = customer_status of the most-recent CLOSED service period (paid/overdue only — sent/draft rows are skipped before ranking). Source: payment-periods tab, DENSE_RANK by (Service_period_Start_date, Service_period_End_date) DESC per enterprise. Group view counts enterprises per status; the "No Invoice Raised" badge accounts for enterprises with no closed invoice in this slot.',
+  paymentT2:   'T-2 = customer_status of the 2nd most-recent CLOSED period. Same filter (sent/draft skipped) + DENSE_RANK per enterprise. Group view counts enterprises per status.',
+  paymentT3:   'T-3 = customer_status of the 3rd most-recent CLOSED period. Same filter + DENSE_RANK per enterprise. Group view counts enterprises per status.',
   studioRoiPending: '7-day Report Sent trend per enterprise. On group rows (Customer Segment / CSM / Manager / Total) the cell shows that group\'s sent% across its enterprises (≥70 green · ≥40 amber · <40 red). On rooftop rows the cell shows that enterprise\'s daily strip — green = sent, red = skipped/error, amber = pending, gray = no attempt; yesterday\'s dot is blue-ringed. Source: /api/report-tracking.',
   reportCoverage: '7-day average of reports successfully sent across all Studio rooftops. Source: vin-tracker /api/report-coverage. Aggregate only — per-rooftop breakdown not exposed by the API yet, so this value is the same regardless of which segment / CSM you drill into.',
 };
@@ -1058,7 +1067,8 @@ function groupSentPercent(eids) {
   }
   if (attempted === 0) return '<span style="color:var(--text-4)">—</span>';
   const pct = (sent / attempted) * 100;
-  const cls = pct >= 70 ? 'roi-text-g' : pct >= 40 ? 'roi-text-a' : 'roi-text-r';
+  // ROI Report-Sent RAG (per user spec): > 90% Green, else Red. No Amber.
+  const cls = pct > 90 ? 'roi-text-g' : 'roi-text-r';
   const tip = '7-day per-enterprise aggregate: sent ' + sent + '/' + attempted + ' (' + pct.toFixed(1) + '%)';
   return '<span class="' + cls + '" title="' + tip.replace(/"/g,'&quot;') + '">' + pct.toFixed(0) + '%</span>';
 }
@@ -1400,10 +1410,11 @@ function payTile(v) {
   if (v.includes('partial')) return '<span class="pay-cell part">PRT</span>';
   return `<span style="font-size:10px;color:var(--text-3)">${v}</span>`;
 }
-function payTileAgg(c) {
-  // Empty count distribution → "No Invoice Paid" (per user spec), so empty
-  // group/Total cells communicate intent instead of a bare dash.
-  if (!c || Object.keys(c).length === 0) return '<span class="pay-cell no" title="No Invoice Paid" style="font-size:9px;letter-spacing:0">NO INV<br>PAID</span>';
+function payTileAgg(c, totalEnts) {
+  // Empty count distribution → "No Invoice Raised" indicator (per user spec).
+  // When totalEnts is passed, also include a "No Invoice Raised" count in the
+  // stack so all the badges sum to the total enterprise count.
+  if (!c || Object.keys(c).length === 0) return '<span class="pay-cell no" title="No Invoice Raised" style="font-size:9px;letter-spacing:0">NO INV<br>RAISED</span>';
   const parts = [];
   if (c.paid) parts.push(`<span class="pay-cell paid">${c.paid}</span>`);
   if (c.overdue) parts.push(`<span class="pay-cell over">${c.overdue}</span>`);
@@ -1412,8 +1423,16 @@ function payTileAgg(c) {
   const ni = (c['no invoice raised']||0) + (c['no invoice']||0);
   if (ni) parts.push(`<span class="pay-cell no">${ni}</span>`);
   if (c.partial) parts.push(`<span class="pay-cell part">${c.partial}</span>`);
-  // No counted pills → "No Invoice Paid" indicator (per user spec).
-  return parts.length ? `<span class="pay-stack">${parts.join('')}</span>` : '<span class="pay-cell no" title="No Invoice Paid" style="font-size:9px;letter-spacing:0">NO INV<br>PAID</span>';
+  // Append a "No Invoice Raised" count so the badges sum to the group's total
+  // enterprise count when totalEnts is passed. Difference = enterprises with
+  // no closed (paid/overdue) invoice at all in this rank slot.
+  if (typeof totalEnts === 'number' && totalEnts > 0) {
+    const accounted = (c.paid||0) + (c.overdue||0) + (c.sent||0) + (c.draft||0)
+      + (c['no invoice raised']||0) + (c['no invoice']||0) + (c.partial||0);
+    const nir = Math.max(0, totalEnts - accounted);
+    if (nir) parts.push(`<span class="pay-cell no" title="No Invoice Raised">${nir}</span>`);
+  }
+  return parts.length ? `<span class="pay-stack">${parts.join('')}</span>` : '<span class="pay-cell no" title="No Invoice Raised" style="font-size:9px;letter-spacing:0">NO INV<br>RAISED</span>';
 }
 
 function countBy(rows, getter) {
@@ -1441,7 +1460,7 @@ const S_GROUPS = [
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent — placeholder (blank) until daily history wired up
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
-  { l:'Quality',      span:3, c:'g-quality' },     // Pendency (6h), Website RAG, Inventory Score
+  { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
   { l:'Tickets',      span:6, c:'g-tickets' },                // #Unr · #Cr · Ageing · AvgRes · Score · RAG
   { l:'Communication', span:2, c:'g-comm' },       // Score (count stack) + Final RAG
@@ -1459,10 +1478,10 @@ const S_COLS_SHARED = [
   // 4 Usage (Usage Factor now = #Contracted / #Actual, recomputed in studioRow)
   {l:'Active VINs', cc:'cell-usage'}, {l:'#Contracted', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
   {l:'Usage Factor', cc:'cell-usage', tip:'usageFactor'},
-  // 3 Quality
+  // 2 Quality (Inventory Score removed per user spec — kept the data path in
+  // sync.ps1 so we can bring it back without a resync if needed).
   {l:'Pendency (6h)', cc:'cell-quality', tip:'pendency'},
   {l:'Website RAG', cc:'cell-quality', tip:'websiteScore'},
-  {l:'Inventory Score', cc:'cell-quality', tip:'inventoryScore'},
   // 4 Payment — counts deduped per ENTERPRISE (not per rooftop) per user spec
   {l:'T-1', cc:'cell-payment', tip:'paymentT1'}, {l:'T-2', cc:'cell-payment', tip:'paymentT2'},
   {l:'T-3', cc:'cell-payment', tip:'paymentT3'},
@@ -1584,9 +1603,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
-    <td class="cell-quality">${ragStack(iscRagCounts)}</td>
-    <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
-    <td class="cell-payment">${payTileAgg(t3)}</td>
+    <td class="cell-payment">${payTileAgg(t1, enterprisesPayment.length)}</td><td class="cell-payment">${payTileAgg(t2, enterprisesPayment.length)}</td>
+    <td class="cell-payment">${payTileAgg(t3, enterprisesPayment.length)}</td>
     <td class="cell-payment">${ragStack(prag)}</td><td class="cell-payment">${ragSingle(scoreRag(prag,80,60))}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td>
@@ -1772,8 +1790,8 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
-    <td class="cell-payment">${payTileAgg(t1)}</td><td class="cell-payment">${payTileAgg(t2)}</td>
-    <td class="cell-payment">${payTileAgg(t3)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
+    <td class="cell-payment">${payTileAgg(t1, allByEid.length)}</td><td class="cell-payment">${payTileAgg(t2, allByEid.length)}</td>
+    <td class="cell-payment">${payTileAgg(t3, allByEid.length)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
     <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(ticketRag)}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
@@ -2159,7 +2177,6 @@ function renderRooftop() {
       '<th class="cell-usage">Usage Factor' + tip('usageFactor') + '</th>' +
       '<th class="cell-quality">Pendency (6h)' + tip('pendency') + '</th>' +
       '<th class="cell-quality">Website RAG' + tip('websiteScore') + '</th>' +
-      '<th class="cell-quality">Inventory Score' + tip('inventoryScore') + '</th>' +
       '<th class="cell-payment">T-1' + tip('paymentT1') + '</th><th class="cell-payment">T-2' + tip('paymentT2') + '</th>' +
       '<th class="cell-payment">T-3' + tip('paymentT3') + '</th><th class="cell-payment">Pay RAG' + tip('paymentAcct') + '</th>' +
       '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
@@ -2248,7 +2265,6 @@ function renderRooftop() {
         <td class="cell-usage ${ufColorClass(rowUf)}">${rowUf?(rowUf*100).toFixed(0)+'%':'—'}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
-        <td class="cell-quality ${inventoryColorClass(r[S_COL.isc])}">${r[S_COL.isc]?Number(r[S_COL.isc]).toFixed(1):'—'}</td>
         <td class="cell-payment">${payTile(r[S_COL.t1])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
@@ -2300,10 +2316,9 @@ function renderRooftop() {
       <td class="cell-usage ${ufColorClass(totalUf)}">${totalUf?(totalUf*100).toFixed(0)+'%':'—'}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
-      <td class="cell-quality">${ragStack(sIscRag)}</td>
-      <td class="cell-payment">${payTileAgg(sT1)}</td>
-      <td class="cell-payment">${payTileAgg(sT2)}</td>
-      <td class="cell-payment">${payTileAgg(sT3)}</td>
+      <td class="cell-payment">${payTileAgg(sT1, seenEidPay.size)}</td>
+      <td class="cell-payment">${payTileAgg(sT2, seenEidPay.size)}</td>
+      <td class="cell-payment">${payTileAgg(sT3, seenEidPay.size)}</td>
       <td class="cell-payment">${ragStack(sPrag)}</td>
       <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtNum(totalStudioTix.cr)}</td>
