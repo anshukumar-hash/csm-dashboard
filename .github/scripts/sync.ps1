@@ -161,14 +161,19 @@ Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Cou
 # (overdue > sent > draft > paid). This lookup feeds BOTH the Studio Studio
 # rows AND the Vini payment-bucket rows downstream.
 function Get-CanonicalPayStatus($list) {
+    # Worst-wins per ranked slot. After the sent/draft filter above these
+    # should now be only paid/overdue, but keep defensive fallbacks in case
+    # the sheet adds new statuses later.
     if (-not $list -or $list.Count -eq 0) { return '' }
     if ($list -contains 'overdue') { return 'overdue' }
+    if ($list -contains 'paid')    { return 'paid' }
     if ($list -contains 'sent')    { return 'sent' }
     if ($list -contains 'draft')   { return 'draft' }
-    if ($list -contains 'paid')    { return 'paid' }
     return [string]$list[0]
 }
 function Compute-PaymentRag($t1, $t2, $t3) {
+    # After the sent/draft filter, T-1/2/3 are paid or overdue (or blank).
+    # Worst-wins: any overdue → Red, all paid → Green, nothing → blank.
     $list = @($t1, $t2, $t3) | Where-Object { $_ -and $_ -ne '' } | ForEach-Object { ([string]$_).ToLower() }
     if (-not $list -or $list.Count -eq 0) { return '' }
     if ($list -contains 'overdue') { return 'Red' }
@@ -223,23 +228,33 @@ foreach ($row in $payPeriodsTab.rows) {
 $payRanks = @{}
 foreach ($eid in $payByEid.Keys) {
     $rows = $payByEid[$eid]
-    $sorted = @($rows | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
+    # Per user spec: when ranking, IGNORE rows whose status is 'sent' or 'draft'
+    # (these are in-flight, not closed). Then dense-rank the remaining
+    # paid/overdue rows by (start, end) DESC. Top 3 → T-1 / T-2 / T-3 so even
+    # enterprises with only 1-2 closed rows surface their status (instead of
+    # all-blank because rank 2/3/4 didn't exist).
+    $closed = @($rows | Where-Object {
+        $s = [string]$_.status
+        $s -and $s -ne 'sent' -and $s -ne 'draft'
+    })
+    $sorted = @($closed | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
     $byRank = @{}
     $rank = 0
     $prevKey = $null
     foreach ($pr in $sorted) {
         $key = "$($pr.start)|$($pr.end)"
         if ($key -ne $prevKey) { $rank++; $prevKey = $key }
-        if ($rank -gt 4) { break }
+        if ($rank -gt 3) { break }
         if (-not $byRank.ContainsKey($rank)) {
             $byRank[$rank] = New-Object System.Collections.Generic.List[string]
         }
         $byRank[$rank].Add([string]$pr.status)
     }
     $payRanks[$eid] = @{
-        t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
-        t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
-        t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
+        # rank 1 (most recent closed) → T-1, rank 2 → T-2, rank 3 → T-3
+        t1 = if ($byRank.ContainsKey(1)) { Get-CanonicalPayStatus $byRank[1] } else { '' }
+        t2 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+        t3 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
     }
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
