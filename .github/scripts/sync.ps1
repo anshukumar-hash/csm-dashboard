@@ -378,6 +378,13 @@ foreach ($r in $vRows) {
 $manualSeg = @{
     'c68580ae5'='SMB'; '9bc114fc6'='SMB'; '9d4468871'='SMB'; '82255fce5'='Ent'
 }
+# Per-enterprise segment overrides that WIN over both Vini source and Studio
+# sheet — for cases like CallSource (62f962c8e) where the enterprise only
+# appears in the payment-periods tab and neither product tab tags it as a
+# Reseller. Add entries here as more such enterprises come up.
+$manualReseller = @{
+    '62f962c8e' = 'Resellers'   # CallSource — per user override
+}
 function Parse-Money($v) {
     if ($null -eq $v -or $v -eq '') { return 0 }
     $c = ([string]$v -replace '[\$,]', '').Trim()
@@ -406,6 +413,10 @@ foreach ($row in $payTab.rows) {
     # surfaces Resellers on the Vini tab. Only falls through to manual /
     # ct-based defaults when Studio doesn't know the enterprise.
     if ($studioSegByEid.ContainsKey($eid)) { $seg = $studioSegByEid[$eid] }
+    # Per-enterprise reseller overrides WIN over both Vini source and Studio
+    # sheet (e.g. CallSource lives only in the payment-periods tab so neither
+    # product tab carries the right tag).
+    if ($manualReseller.ContainsKey($eid)) { $seg = $manualReseller[$eid] }
     if (-not $seg -and $manualSeg.ContainsKey($eid)) { $seg = $manualSeg[$eid] }
     if (-not $seg -and $meta -and $meta.ct) {
         if ($meta.ct -eq 'GROUP_DEALER') { $seg='Ent' }
