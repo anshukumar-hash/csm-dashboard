@@ -235,8 +235,10 @@
   /* 7-day trend strip — one dot per day, oldest left → newest right. Color
      per day (≥70% sent green, ≥40% amber, else red). Yesterday's dot gets a
      blue ring + slight scale so it's unambiguous. */
-  .rs-strip{display:inline-flex;gap:3px;align-items:center;justify-content:flex-end;line-height:1}
-  .rs-strip .rs-day{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;cursor:default}
+  .rs-strip{display:inline-flex;gap:4px;align-items:center;justify-content:flex-end;line-height:1}
+  /* Report Sent dots — bumped from 8px → 11px so the daily status is
+     readable at a glance from a screenshot (per user spec). */
+  .rs-strip .rs-day{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:middle;cursor:default}
   .rs-strip .rs-day.rs-yes{background:var(--green)}
   .rs-strip .rs-day.rs-mid{background:#F59E0B}
   .rs-strip .rs-day.rs-no{background:#DC2626}
