@@ -228,54 +228,35 @@ foreach ($row in $payPeriodsTab.rows) {
 $payRanks = @{}
 foreach ($eid in $payByEid.Keys) {
     $rows = $payByEid[$eid]
-    # Per user spec: dense-rank ALL invoices by (Service_period_Start_date,
-    # Service_period_End_date) DESC. Each unique (start, end) tuple is one
-    # rank — rank 1 is the most-recent service period (typically still in
-    # flight / sent / draft), rank 2 is the prior closed period, etc.
-    $sorted = @($rows | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
+    # Per latest user spec: EXCLUDE sent/draft entirely from the source
+    # before ranking. Then dense-rank the remaining (paid / overdue) rows
+    # by (Service_period_Start_date, Service_period_End_date) DESC. Take
+    # ranks 1 / 2 / 3 → T-1 / T-2 / T-3. This guarantees the rendered
+    # T-1/T-2/T-3 cells never carry sent or draft, AND enterprises with
+    # only 1-2 closed periods still surface their status (instead of
+    # going blank because rank 2/3/4 doesn't exist).
+    $closed = @($rows | Where-Object {
+        $s = [string]$_.status
+        $s -and $s -ne 'sent' -and $s -ne 'draft'
+    })
+    $sorted = @($closed | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
     $byRank = @{}
     $rank = 0
     $prevKey = $null
     foreach ($pr in $sorted) {
         $key = "$($pr.start)|$($pr.end)"
         if ($key -ne $prevKey) { $rank++; $prevKey = $key }
-        if ($rank -gt 4) { break }   # we only care about ranks 1-4
+        if ($rank -gt 3) { break }
         if (-not $byRank.ContainsKey($rank)) {
             $byRank[$rank] = New-Object System.Collections.Generic.List[string]
         }
         $byRank[$rank].Add([string]$pr.status)
     }
-    $rankCount = $byRank.Count
-    $statusAt = @{}
-    foreach ($r in $byRank.Keys) {
-        $statusAt[$r] = Get-CanonicalPayStatus $byRank[$r]
-    }
-
-    # SPARSE promote: enterprises with only 1 or 2 ranks AND none of those
-    # statuses is sent/draft → use rank 1 → T-1, rank 2 → T-2 so the user
-    # sees the status they have instead of all-blank. Only the closed cases
-    # qualify (paid / overdue / partial) — accounts whose only history is
-    # sent/draft are still treated like there's no closed history.
-    $sparse    = ($rankCount -le 2)
-    $allClosed = $true
-    foreach ($r in $statusAt.Keys) {
-        $st = $statusAt[$r]
-        if ($st -eq 'sent' -or $st -eq 'draft') { $allClosed = $false; break }
-    }
-    if ($sparse -and $allClosed) {
-        $payRanks[$eid] = @{
-            t1 = if ($statusAt.ContainsKey(1)) { $statusAt[1] } else { '' }
-            t2 = if ($statusAt.ContainsKey(2)) { $statusAt[2] } else { '' }
-            t3 = ''
-        }
-    } else {
-        # Default: SKIP rank 1 (current in-flight period). T-1 = rank 2,
-        # T-2 = rank 3, T-3 = rank 4 — matches user's literal spec.
-        $payRanks[$eid] = @{
-            t1 = if ($statusAt.ContainsKey(2)) { $statusAt[2] } else { '' }
-            t2 = if ($statusAt.ContainsKey(3)) { $statusAt[3] } else { '' }
-            t3 = if ($statusAt.ContainsKey(4)) { $statusAt[4] } else { '' }
-        }
+    $payRanks[$eid] = @{
+        # rank 1 (most recent CLOSED period) → T-1, rank 2 → T-2, rank 3 → T-3
+        t1 = if ($byRank.ContainsKey(1)) { Get-CanonicalPayStatus $byRank[1] } else { '' }
+        t2 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+        t3 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
     }
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
