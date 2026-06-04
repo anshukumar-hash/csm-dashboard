@@ -3063,14 +3063,17 @@ function gvizToViniStage(table) {
       agent, stage: String(gvizVal(c[idx.stage]) || ''),
       mrr:   stripMoney(gvizVal(c[idx.mrr])),
       arr:   stripMoney(gvizVal(c[idx.arr])),
-      // Payment fields come from the snapshot (sync.ps1 dense-rank over
-      // gid=1395015507 with sent/draft skipped). Fall back to the raw sheet
-      // value only when an entirely-new (rid, agent) pair appears that the
-      // snapshot didn't carry — better to render *something* than blank.
-      t1:    m.t1 != null ? m.t1 : String(gvizVal(c[idx.t1]) || ''),
-      t2:    m.t2 != null ? m.t2 : String(gvizVal(c[idx.t2]) || ''),
-      t3:    m.t3 != null ? m.t3 : String(gvizVal(c[idx.t3]) || ''),
-      ps:    m.ps != null ? m.ps : String(gvizVal(c[idx.ps]) || ''),
+      // Payment fields come EXCLUSIVELY from the snapshot (sync.ps1 dense-
+      // rank over gid=1395015507 with sent/draft pre-filtered). The raw
+      // Payment T1/T2/T3 columns on this tab (gid=674556270) still carry
+      // sent/draft values, so reading from them — even as a fallback for
+      // new (rid, agent) pairs — would resurface the very statuses the
+      // sync just filtered out. New pairs simply render blank until the
+      // next sync.ps1 run (every 15 min) refreshes the snapshot.
+      t1:    m.t1 != null ? m.t1 : '',
+      t2:    m.t2 != null ? m.t2 : '',
+      t3:    m.t3 != null ? m.t3 : '',
+      ps:    m.ps != null ? m.ps : '',
       go_live: gvizDate(c[idx.go_live]),
       csm,
       region: m.region || 'AMER',
