@@ -285,9 +285,9 @@
   /* Account Type column — frozen between Enterprise and MRR. Renders the
      classification as a soft-blue rounded pill (see .acct-pill below). */
   .cell-acct{padding:6px 8px;text-align:center}
-  .acct-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:10.5px;
-    font-weight:500;line-height:1.25;text-align:center;
-    background:#E8EDFB;color:#2C3E83;border:1px solid #C9D4F6;white-space:normal;max-width:104px}
+  .acct-pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;
+    font-weight:600;letter-spacing:0.02em;line-height:1.2;text-align:center;
+    background:#E8EDFB;color:#2C3E83;border:1px solid #C9D4F6;white-space:nowrap}
   /* Sortable column header — subtle hover affordance + arrow indicator. */
   .sort-th{position:relative}
   .sort-th:hover{background-color:rgba(32,87,196,0.06)}
@@ -949,17 +949,33 @@ function makeCmp(getter, dir) {
     return sign * String(va).localeCompare(String(vb), undefined, { sensitivity: 'base' });
   };
 }
+// RAG string → numeric rank for sorting. Green=1 (best), Amber=2, Red=3,
+// blank/NA=4 (worst → sinks to bottom). Asc shows healthiest first; desc
+// surfaces problem accounts at the top.
+function ragSortKey(v) {
+  const s = (v || '').toString().trim().toLowerCase();
+  if (s === 'green' || s === 'g') return 1;
+  if (s === 'amber' || s === 'a' || s === 'yellow') return 2;
+  if (s === 'red'   || s === 'r') return 3;
+  return 4;
+}
 // Studio Rooftop View sorter — sort key is the S_COL field name, dir asc/desc.
-// `acct` is a derived column (acctTypeOf), handled inline.
+// `acct` derives via acctTypeOf; RAG-string columns (trag, red, mbr) use
+// ragSortKey so the order follows Green → Amber → Red semantically.
 function sortStudioRows(rows, sortState) {
   const s = rows.slice();
   if (!sortState || !sortState.key) {
     return s.sort((a, b) => (Number(b[S_COL.arr])||0) - (Number(a[S_COL.arr])||0));
   }
   const { key, dir } = sortState;
+  const RAG_KEYS = new Set(['trag', 'red', 'mbr', 'prag', 'rag']);
   let getter;
   if (key === 'acct') {
     getter = r => acctTypeOf(r[S_COL.ct], r[S_COL.cst]);
+  } else if (RAG_KEYS.has(key)) {
+    const idx = S_COL[key];
+    if (idx == null) return s;
+    getter = r => ragSortKey(r[idx]);
   } else {
     const idx = S_COL[key];
     if (idx == null) return s;
@@ -976,15 +992,46 @@ function toggleStudioSort(key) {
   else                                 state.sort.studioRooftop = null;
   renderAll();
 }
-// Vini Rooftop View — same shape, but rooftop rows are object-keyed dicts
-// (viniAggregateRooftops result) instead of array rows.
+// Vini Rooftop View — rooftop rows are object-keyed dicts (viniAggregateRooftops
+// result). Direct fields go through r[key]; derived columns (account type,
+// ticket / comm RAG, overall composite, etc.) are computed via lightweight
+// getters so the header click still produces a meaningful order.
 function sortViniRows(rows, sortState) {
   const s = rows.slice();
   if (!sortState || !sortState.key) {
     return s.sort((a, b) => (Number(b.arr)||0) - (Number(a.arr)||0));
   }
   const { key, dir } = sortState;
-  const getter = key === 'acct' ? (r => acctTypeOf(r.ct, r.cst)) : (r => r[key]);
+  const RAG_KEYS = new Set(['ps', 'mbr', 'overall']);
+  let getter;
+  switch (key) {
+    case 'acct':
+      getter = r => acctTypeOf(r.ct, r.cst);
+      break;
+    case 'tixRag':
+      getter = r => ragSortKey(computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+      break;
+    case 'commScore':
+      getter = r => scoreValue(csatRagCountsForInRange(r.eid, r.en), COMM_WEIGHTS);
+      break;
+    case 'commRag':
+      getter = r => ragSortKey(scoreRag(csatRagCountsForInRange(r.eid, r.en), COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS));
+      break;
+    case 'overall':
+      getter = r => {
+        const counts = csatRagCountsForInRange(r.eid, r.en);
+        const overall = computeOverallRAG([
+          r.ps,
+          computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }),
+          scoreRag(counts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS)
+        ]);
+        return ragSortKey(overall);
+      };
+      break;
+    default:
+      if (RAG_KEYS.has(key)) getter = r => ragSortKey(r[key]);
+      else                   getter = r => r[key];
+  }
   return s.sort(makeCmp(getter, dir));
 }
 function toggleViniSort(key) {
@@ -1029,24 +1076,13 @@ function acctTypeOf(ct, cst) {
   if (b === 'OTHERS')  return 'Others';
   return '';
 }
-// Human-readable label for an Account Type code — shown on the rooftop-view
-// pill. Code stays the source of truth for filters; only the display differs.
-function acctTypeLabelOf(code) {
-  switch (code) {
-    case 'FGD': return 'Franchise Group';
-    case 'GSD': return 'Group Single';
-    case 'ISD': return 'Independent Single';
-    case 'IGD': return 'Independent Group';
-    case 'Others':  return 'Others';
-    case 'Partner': return 'Partner';
-    default: return '';
-  }
-}
+// Per user spec: show the SHORT code on the pill (FGD/GSD/ISD/IGD/Others/
+// Partner) — not a long descriptive name. Keeps the pill chip styling so it
+// reads as a tag while staying compact.
 function acctTypePill(ct, cst) {
   const code = acctTypeOf(ct, cst);
   if (!code) return '<span style="color:var(--text-4)">—</span>';
-  const label = acctTypeLabelOf(code) || code;
-  return `<span class="acct-pill" title="${code}">${label}</span>`;
+  return `<span class="acct-pill">${code}</span>`;
 }
 function csmMatches(csm) {
   if (state.filters.csm && csm !== state.filters.csm) return false;
@@ -2355,10 +2391,13 @@ function renderRooftop() {
       sortTh('T-2' + tip('paymentT2'), 't2',   'studioRooftop', 'cell-payment') +
       sortTh('T-3' + tip('paymentT3'), 't3',   'studioRooftop', 'cell-payment') +
       sortTh('Pay RAG' + tip('paymentAcct'), 'prag', 'studioRooftop', 'cell-payment') +
-      '<th class="cell-tickets">#Unresolved</th><th class="cell-tickets">#Created' + tip('createdCnt') + '</th>' +
-      '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Ticket RAG' + tip('ticketAcct') + '</th>' +
-      '<th class="cell-comm">RAG' + tip('commFinalRag') + '</th>' +
-      '<th class="cell-leader">MBR</th>' +
+      sortTh('#Unresolved',  'unr',  'studioRooftop', 'cell-tickets') +
+      sortTh('#Created' + tip('createdCnt'),   'cr',   'studioRooftop', 'cell-tickets') +
+      sortTh('Open Ageing' + tip('openAgeing'),'ota',  'studioRooftop', 'cell-tickets') +
+      sortTh('Avg Res'    + tip('avgResCol'),  'res',  'studioRooftop', 'cell-tickets') +
+      sortTh('Ticket RAG' + tip('ticketAcct'), 'trag', 'studioRooftop', 'cell-tickets') +
+      sortTh('RAG' + tip('commFinalRag'),      'red',  'studioRooftop', 'cell-comm') +
+      sortTh('MBR',                            'mbr',  'studioRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
     let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0;
@@ -2560,15 +2599,27 @@ function renderRooftop() {
       sortTh('MRR',          'mrr',   'viniRooftop', 'frozen frozen-7') +
       sortTh('Live ARR',     'arr',   'viniRooftop', 'frozen frozen-8') +
       '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
-      '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th><th class="cell-final">Overall RAG' + tip('overallRag') + '</th>' +
-      '<th class="cell-usage">#Touched</th><th class="cell-usage">#Qualified</th><th class="cell-usage">#Appt Booked</th>' +
-      '<th class="cell-usage">Conv Rate' + tip('convRate') + '</th><th class="cell-usage">Appt Value' + tip('apptValue') + '</th>' +
-      '<th class="cell-roi">RoI Factor' + tip('roiFactor') + '</th>' +
-      '<th class="cell-payment">T-1</th><th class="cell-payment">T-2</th><th class="cell-payment">T-3</th><th class="cell-payment">Account Level RAG' + tip('paymentAcct') + '</th>' +
-      '<th class="cell-tickets">#Created' + tip('createdCnt') + '</th><th class="cell-tickets">#Open' + tip('openCnt') + '</th>' +
-      '<th class="cell-tickets">Open Ageing' + tip('openAgeing') + '</th><th class="cell-tickets">Avg Res' + tip('avgResCol') + '</th><th class="cell-tickets">Account Level RAG' + tip('ticketAcct') + '</th>' +
-      '<th class="cell-comm">Score' + tip('commScore') + '</th><th class="cell-comm">Final RAG' + tip('commFinalRag') + '</th>' +
-      '<th class="cell-leader">MBR</th><th class="cell-leader">Contact Freq</th>' +
+      '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th>' +
+      sortTh('Overall RAG' + tip('overallRag'), 'overall', 'viniRooftop', 'cell-final') +
+      sortTh('#Touched',     'touched',   'viniRooftop', 'cell-usage') +
+      sortTh('#Qualified',   'qualified', 'viniRooftop', 'cell-usage') +
+      sortTh('#Appt Booked', 'appts',     'viniRooftop', 'cell-usage') +
+      sortTh('Conv Rate' + tip('convRate'),   'convRate', 'viniRooftop', 'cell-usage') +
+      sortTh('Appt Value' + tip('apptValue'), 'apptValue','viniRooftop', 'cell-usage') +
+      sortTh('RoI Factor' + tip('roiFactor'), 'roi',      'viniRooftop', 'cell-roi') +
+      sortTh('T-1', 't1', 'viniRooftop', 'cell-payment') +
+      sortTh('T-2', 't2', 'viniRooftop', 'cell-payment') +
+      sortTh('T-3', 't3', 'viniRooftop', 'cell-payment') +
+      sortTh('Account Level RAG' + tip('paymentAcct'), 'ps', 'viniRooftop', 'cell-payment') +
+      sortTh('#Created' + tip('createdCnt'),    'cr',     'viniRooftop', 'cell-tickets') +
+      sortTh('#Open'    + tip('openCnt'),       'op',     'viniRooftop', 'cell-tickets') +
+      sortTh('Open Ageing' + tip('openAgeing'), 'otaMax', 'viniRooftop', 'cell-tickets') +
+      sortTh('Avg Res'  + tip('avgResCol'),     'avgRes', 'viniRooftop', 'cell-tickets') +
+      sortTh('Account Level RAG' + tip('ticketAcct'),   'tixRag',     'viniRooftop', 'cell-tickets') +
+      sortTh('Score'    + tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
+      sortTh('Final RAG' + tip('commFinalRag'), 'commRag',   'viniRooftop', 'cell-comm') +
+      sortTh('MBR',          'mbr', 'viniRooftop', 'cell-leader') +
+      sortTh('Contact Freq', 'cf',  'viniRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
     // Track aggregates for the Total row at the bottom.
     let tMrr=0, tLiveArr=0, tTouch=0, tQual=0, tAppts=0, tApptVal=0, tCr=0, tOp=0;
