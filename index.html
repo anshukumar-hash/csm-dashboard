@@ -377,6 +377,9 @@
         <option value="Partner">Partner</option>
       </select>
     </div>
+    <div class="filter-group" id="g-agent"><span class="filter-label">Agent</span>
+      <select class="filter-select" id="f-agent"><option value="">All Agents</option></select>
+    </div>
     <button class="filter-reset" id="f-reset">Reset filters</button>
   </div>
 
@@ -713,7 +716,7 @@ VINI_STAGE.forEach(s => {
 let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
-  filters: { region:'', segment:'', manager:'', csm:'', acct:'' },
+  filters: { region:'', segment:'', manager:'', csm:'', acct:'', agent:'' },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
   sort: { studioRooftop: null, viniRooftop: null },
   rooftopContext: { kind:'all', value:null },
@@ -894,7 +897,13 @@ function viniAggregateRooftops() {
     a.roi       = a.mrr > 0 ? a.apptValue / a.mrr : 0;
     // Per-period RoI (calendar MTD / Last Month / L2L Month). Numerator uses
     // the period's apptValue (already weighted by agent type during fold).
-    a.roi_mtd = a.mrr > 0 ? a.apptValue_mtd / a.mrr : 0;
+    // MTD prorates MRR by (days passed / total days in month) so the
+    // denominator matches the partial window the numerator covers — without
+    // this, MTD ROI looks artificially low early in the month.
+    const _today    = new Date();
+    const _mrrMtdFactor = _today.getDate() /
+      new Date(_today.getFullYear(), _today.getMonth()+1, 0).getDate();
+    a.roi_mtd = (a.mrr * _mrrMtdFactor) > 0 ? a.apptValue_mtd / (a.mrr * _mrrMtdFactor) : 0;
     a.roi_lm  = a.mrr > 0 ? a.apptValue_lm  / a.mrr : 0;
     a.roi_l2l = a.mrr > 0 ? a.apptValue_l2l / a.mrr : 0;
 
@@ -1130,6 +1139,11 @@ function getVini() {
     }
     if (state.filters.acct) {
       if (acctTypeOf(r.ct, r.cst) !== state.filters.acct) return false;
+    }
+    if (state.filters.agent) {
+      // Vini-only filter: match the row's Agent Opted exactly. Studio doesn't
+      // carry agents so getStudio() ignores this filter.
+      if ((r.agent || '') !== state.filters.agent) return false;
     }
     return true;
   });
@@ -1662,8 +1676,10 @@ function uniqueSet(rows, getter) {
 // ============================================================
 const S_GROUPS = [
   { l:'',             span:6, c:'' },              // # · NAME · Rooftops · Enterprises · MRR · ARR (frozen)
-  { l:'RoI',          span:1, c:'g-roi' },         // Report Sent — placeholder (blank) until daily history wired up
+  // Final Status moved BEFORE Report Sent per user spec (so overall account
+  // health is visible at a glance, with the 7-day report trend right after).
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
+  { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
   { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
@@ -1676,10 +1692,10 @@ const S_COLS_SHARED = [
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
   {l:'Rooftops', cls:'frozen frozen-3'}, {l:'Enterprises', cls:'frozen frozen-4'},
   {l:'MRR', cls:'frozen frozen-5'}, {l:'ARR', cls:'frozen frozen-6'},
-  // 1 RoI — placeholder for upcoming last-7-days Report Sent trend
-  {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
-  // 1 Final Status — Overall RAG only
+  // 1 Final Status — Overall RAG only (now BEFORE the RoI / Report Sent col)
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
+  // 1 RoI — Report Sent (7-day per-enterprise aggregate)
+  {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
   // 4 Usage (Usage Factor now = #Contracted / #Actual, recomputed in studioRow)
   {l:'Active VINs', cc:'cell-usage'}, {l:'#Contracted', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
   {l:'Usage Factor', cc:'cell-usage', tip:'usageFactor'},
@@ -1802,8 +1818,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
     <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
+    <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
     <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
     <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
@@ -1860,8 +1876,9 @@ function buildStudioTable(target, firstColLabel, groupingFn, drillKey) {
 // ============================================================
 const V_GROUPS = [
   { l:'',             span:7, c:'' },              // # · NAME · Agents · Rooftops · Enterprises · MRR · ARR (7 frozen)
-  { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
+  // Final Status now BEFORE Report Sent per user spec.
   { l:'Final Status', span:2, c:'g-final' },       // Churned Agent · Overall RAG (account health)
+  { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
   { l:'Usage',        span:5, c:'g-usage' },
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
@@ -1875,8 +1892,9 @@ const V_COLS_SHARED = [
   {l:'Rooftops', cls:'frozen frozen-4'},
   {l:'Enterprises', cls:'frozen frozen-5'},     // distinct enterprises in group
   {l:'MRR', cls:'frozen frozen-6'}, {l:'Live ARR', cls:'frozen frozen-7'},
-  {l:'Report Sent', cc:'cell-rs', tip:'reportSent'},
+  // Final Status moved BEFORE Report Sent per user spec.
   {l:'Churned Agent', cc:'cell-final', tip:'churnedAgent'}, {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
+  {l:'Report Sent', cc:'cell-rs', tip:'reportSent'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
   {l:'Conv Rate', cc:'cell-usage', tip:'convRate'}, {l:'Appt Value ($)', cc:'cell-usage', tip:'apptValue'},
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
@@ -1922,10 +1940,19 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const apptValueL2L = sumBy(active, r => r.apptValue_l2l || 0);
   const apptValueLM  = sumBy(active, r => r.apptValue_lm  || 0);
   const apptValueMTD = sumBy(active, r => r.apptValue_mtd || 0);
-  // Numeric values used both for display + for the inline G/A/R text-color
+  // Numeric values used both for display + for the inline G/A/R text-color.
+  // MTD ROI per user spec: prorate MRR by (days passed in current month) /
+  // (total days in current month) so the denominator matches the partial
+  // window the numerator covers. Otherwise early-month MTD always looks low
+  // because full-month MRR is divided into partial-month appointment value.
+  //   roiMTD = apptValueMTD / (activeMrr × daysPassed / daysInMonth)
+  const today        = new Date();
+  const daysPassed   = today.getDate();
+  const daysInMonth  = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
+  const mrrMtd       = activeMrr * (daysPassed / daysInMonth);
   const roiL2LNum = activeMrr>0 ? apptValueL2L / activeMrr : null;
   const roiLMNum  = activeMrr>0 ? apptValueLM  / activeMrr : null;
-  const roiMTDNum = activeMrr>0 ? apptValueMTD / activeMrr : null;
+  const roiMTDNum = mrrMtd  >0   ? apptValueMTD / mrrMtd   : null;
   const roiL2L = roiL2LNum !== null ? roiL2LNum.toFixed(2)+'x' : '—';
   const roiLM  = roiLMNum  !== null ? roiLMNum.toFixed(2)+'x'  : '—';
   const roiMTD = roiMTDNum !== null ? roiMTDNum.toFixed(2)+'x' : '—';
@@ -1990,8 +2017,8 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-5">${ents}</td>
     <td class="frozen frozen-6">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-7">${fmtMoney(arr)}</td>
-    <td class="cell-rs">—</td>
     <td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([roiMtdRag(roiMTDNum), paymentRag, commFinalRag]))}</td>
+    <td class="cell-rs">—</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
@@ -2365,8 +2392,8 @@ function renderRooftop() {
     let html = '<table class="data rooftop-layout rooftop-layout-6"><thead><tr class="group">' +
       // 6 frozen identity cells: # · Rooftop · Enterprise · Account Type · MRR · ARR
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
-      '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
+      '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="4" class="g-usage">Usage</th>' +
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
@@ -2381,8 +2408,8 @@ function renderRooftop() {
       sortTh('Account Type', 'acct', 'studioRooftop', 'frozen frozen-4') +
       sortTh('MRR',          'mrr',  'studioRooftop', 'frozen frozen-5') +
       sortTh('ARR',          'arr',  'studioRooftop', 'frozen frozen-6') +
-      '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       sortTh('Overall RAG' + tip('overallRag'), 'rag', 'studioRooftop', 'cell-final') +
+      '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       sortTh('Active VINs', 'av',  'studioRooftop', 'cell-usage') +
       sortTh('#Contracted', 'cv',  'studioRooftop', 'cell-usage') +
       sortTh('#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')', studioActualField(), 'studioRooftop', 'cell-usage') +
@@ -2474,12 +2501,12 @@ function renderRooftop() {
         <td class="frozen frozen-4 cell-acct">${acctTypePill(r[S_COL.ct], r[S_COL.cst])}</td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-final">${ragSingle(computeOverallRAG([
           r[S_COL.prag],
           computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
           csatRagInRange(r[S_COL.eid], r[S_COL.en])
         ]))}</td>
+        <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL[studioActualField()]])}</td>
@@ -2530,8 +2557,8 @@ function renderRooftop() {
       <td class="frozen frozen-4 cell-acct"></td>
       <td class="frozen frozen-5">${fmtMoney(sMrr)}</td>
       <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
-      <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
+      <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
       <td class="cell-usage">${fmtNum(sAv)}</td>
       <td class="cell-usage">${fmtNum(sCv)}</td>
       <td class="cell-usage">${fmtNum(sAcv)}</td>
@@ -2583,8 +2610,8 @@ function renderRooftop() {
     let html = '<table class="data rooftop-layout rooftop-layout-8"><thead><tr class="group">' +
       // 8 frozen identity cells: # · Rooftop · Enterprise · Account Type · Agent · Agent Age · MRR · ARR
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th><th class="frozen frozen-7"></th><th class="frozen frozen-8"></th>' +
-      '<th colspan="1" class="g-roi">Report Sent</th>' +     // moved out of RoI bucket, sits right after ARR
-      '<th colspan="2" class="g-final">Final Status</th>' +   // Churned Agent · Overall RAG (account health)
+      '<th colspan="2" class="g-final">Final Status</th>' +   // Final Status now BEFORE Report Sent per user spec
+      '<th colspan="1" class="g-roi">Report Sent</th>' +     // 7-day per-enterprise (placeholder dash for rooftop level)
       '<th colspan="5" class="g-usage">Usage</th>' +
       '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
@@ -2600,9 +2627,9 @@ function renderRooftop() {
       '<th class="frozen frozen-6">Agent Age' + tip('agentAge') + '</th>' +
       sortTh('MRR',          'mrr',   'viniRooftop', 'frozen frozen-7') +
       sortTh('Live ARR',     'arr',   'viniRooftop', 'frozen frozen-8') +
-      '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
       '<th class="cell-final">Churned Agent' + tip('churnedAgent') + '</th>' +
       sortTh('Overall RAG' + tip('overallRag'), 'overall', 'viniRooftop', 'cell-final') +
+      '<th class="cell-roi">Report Sent' + tip('reportSent') + '</th>' +
       sortTh('#Touched',     'touched',   'viniRooftop', 'cell-usage') +
       sortTh('#Qualified',   'qualified', 'viniRooftop', 'cell-usage') +
       sortTh('#Appt Booked', 'appts',     'viniRooftop', 'cell-usage') +
@@ -2684,9 +2711,9 @@ function renderRooftop() {
         <td class="frozen frozen-6">${fmtAgentAge(r.go_live)}</td>
         <td class="frozen frozen-7">${r.mrr?fmtMoney(r.mrr):'—'}</td>
         <td class="frozen frozen-8">${liveArr?fmtMoney(liveArr):'—'}</td>
-        <td class="cell-roi">—</td>
         <td class="cell-final">${isChurned ? '<span class="badge r">Churned</span>' : (r.churn||'—')}</td>
         <td class="cell-final">${ragSingle(rowOverall)}</td>
+        <td class="cell-roi">—</td>
         <td class="cell-usage">${fmtNum(r.touched)}</td>
         <td class="cell-usage">${fmtNum(r.qualified)}</td>
         <td class="cell-usage">${fmtNum(r.appts)}</td>
@@ -2733,9 +2760,9 @@ function renderRooftop() {
       <td class="frozen frozen-6">—</td>
       <td class="frozen frozen-7">${fmtMoney(tMrr)}</td>
       <td class="frozen frozen-8">${fmtMoney(tLiveArr)}</td>
-      <td class="cell-roi">—</td>
       <td class="cell-final">${tChurned>0?`<span class="drill-red">${tChurned}</span>`:'0'}</td>
       <td class="cell-final">${ragStack(tOverall)}</td>
+      <td class="cell-roi">—</td>
       <td class="cell-usage">${fmtNum(tTouch)}</td>
       <td class="cell-usage">${fmtNum(tQual)}</td>
       <td class="cell-usage">${fmtNum(tAppts)}</td>
@@ -3179,6 +3206,10 @@ function renderAll() {
   // CSM filter is shown on both tabs; the Customer Type / Customer Subtype
   // filters have been removed per spec.
   document.getElementById('g-csm').style.display = 'flex';
+  // Agent filter only applies to Vini. Refresh its options every render so
+  // newly-synced agents appear automatically.
+  toggleAgentFilter();
+  if (state.product === 'vini') populateAgentFilter();
 
   if (state.view === 'overview') {
     if (isStudio) renderOverviewStudio(); else renderOverviewVini();
@@ -3224,15 +3255,36 @@ document.addEventListener('click', e => {
   else if (table === 'viniRooftop') toggleViniSort(key);
 });
 document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:'', segment:'', manager:'', csm:'', acct:'' };
+  state.filters = { region:'', segment:'', manager:'', csm:'', acct:'', agent:'' };
   state.sort = { studioRooftop: null, viniRooftop: null };
   // Also clear any drill-down context (CSM:foo, Segment:bar, Agent:baz) — otherwise
   // the Rooftop View stays filtered to the drill target even after reset.
   state.rooftopContext = { kind:'all', value:null };
   document.getElementById('f-region').value = '';
-  ['segment','manager','csm','acct'].forEach(k => document.getElementById('f-'+k).value = '');
+  ['segment','manager','csm','acct','agent'].forEach(k => document.getElementById('f-'+k).value = '');
   renderAll();
 });
+
+// Populate the Agent dropdown with the distinct Vini agents seen in
+// VINI_STAGE. Re-run on each render so newly-added agents show up.
+function populateAgentFilter() {
+  const sel = document.getElementById('f-agent');
+  if (!sel) return;
+  const cur = sel.value;
+  const agents = new Set();
+  (VINI_STAGE || []).forEach(s => { if (s.agent) agents.add(s.agent); });
+  const sorted = [...agents].sort((a,b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">All Agents</option>' +
+    sorted.map(a => `<option value="${a.replace(/"/g,'&quot;')}">${a}</option>`).join('');
+  if (cur && agents.has(cur)) sel.value = cur;
+  else { sel.value = ''; state.filters.agent = ''; }
+}
+// Show / hide the Agent filter based on the active product (Vini only —
+// Studio rows don't carry an agent dimension).
+function toggleAgentFilter() {
+  const grp = document.getElementById('g-agent');
+  if (grp) grp.style.display = (state.product === 'vini') ? '' : 'none';
+}
 document.getElementById('crumb-back').addEventListener('click', () => {
   state.view = 'overview';
   state.rooftopContext = { kind:'all', value:null };
