@@ -26,3 +26,12 @@ csm-dashboard.zip
 # OS junk
 Thumbs.db
 .DS_Store
+
+# Integrations Tracker — raw source data (contains PII/customer data) + rebuildable artifacts.
+# Keep only the standalone dashboard, build scripts, and the irreproducible Contracted cache.
+integrations_tracker/build/*
+!integrations_tracker/build/build.js
+!integrations_tracker/build/build2.js
+!integrations_tracker/build/partners_match.js
+!integrations_tracker/build/contracted_cache.json
+integrations_tracker/_serve.js
