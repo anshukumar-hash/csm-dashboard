@@ -430,6 +430,16 @@
       </div>
       <div class="table-wrap" id="rooftop-table-wrap"></div>
     </div>
+    <!-- Enterprise List — one row per unique enterprise with the three
+         account-health buckets (Payment · Tickets · Communication). Same
+         filters as the rooftop list above; same product (Studio / Vini). -->
+    <div class="section" id="enterprise-list-section">
+      <div class="section-head">
+        <span class="section-title">Enterprise List</span>
+        <span style="font-size:11.5px;color:var(--text-3)" id="enterprise-list-count"></span>
+      </div>
+      <div class="table-wrap" id="enterprise-list-wrap"></div>
+    </div>
   </div>
 </div>
 
@@ -601,15 +611,22 @@ function csatRagCountsFor(eid) {
 // whose date_iso falls in that window. Returns G/A/R from the AVG Comm Avg.
 // across in-range readings; NA when no readings in window.
 // Count of CSAT interactions captured for an enterprise (gid=701797891).
-// Used by the new "# Interaction" column in the Communication bucket.
-// Falls back to a name-based lookup if the eid has nothing (legacy rows
-// only carry the name).
+// Used by the "# Interaction" column in the Communication bucket. Per user
+// spec, the count is FILTERED to the active periodRange() — so MTD vs Last
+// Month vs custom-range show genuinely different numbers driven by the
+// date column in the CSAT source. Falls back to a name-based lookup if
+// the eid has nothing (legacy rows only carry the name).
 function commInteractionCount(eid, en) {
+  const range = periodRange();
+  const filterByDate = arr =>
+    Array.isArray(arr)
+      ? arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to)
+      : [];
   let n = 0;
-  if (eid && Array.isArray(CSAT_ALL_BY_EID[eid])) n += CSAT_ALL_BY_EID[eid].length;
+  if (eid) n += filterByDate(CSAT_ALL_BY_EID[eid]).length;
   if (!n && en) {
-    const k = String(en).toLowerCase().trim();
-    if (Array.isArray(CSAT_ALL_BY_NAME[k])) n += CSAT_ALL_BY_NAME[k].length;
+    const k = typeof normCsatName === 'function' ? normCsatName(en) : String(en).toLowerCase().trim();
+    n += filterByDate(CSAT_ALL_BY_NAME[k]).length;
   }
   return n;
 }
@@ -1089,7 +1106,7 @@ function acctTypeOf(ct, cst) {
   const a = (ct  || '').toString().toUpperCase().trim();
   const b = (cst || '').toString().toUpperCase().trim();
   if (a === 'GROUP_DEALER'      && b === 'FRANCHISE_DEALER')   return 'FGD';
-  if (a === 'INDIVIDUAL_DEALER' && b === 'INDIVIDUAL_DEALER')  return 'FSD'; // renamed from GSD per user spec
+  if (a === 'INDIVIDUAL_DEALER' && b === 'FRANCHISE_DEALER')   return 'FSD'; // matches FRANCHISE_DEALER + INDIVIDUAL_DEALER per user spec
   if (a === 'INDIVIDUAL_DEALER' && b === 'INDEPENDENT_DEALER') return 'ISD';
   if (a === 'GROUP_DEALER'      && b === 'INDEPENDENT_DEALER') return 'IGD';
   if (!a && b === 'OTHERS')   return 'Others';
@@ -2380,6 +2397,112 @@ function renderOverviewVini() {
 // ============================================================
 // ROOFTOP VIEW
 // ============================================================
+// ============================================================
+// ENTERPRISE LIST (Rooftop View) — one row per unique enterprise with
+// Enterprise-Level Payment + Tickets + Communication buckets. Works for
+// both Studio (reads from filtered s_rows) and Vini (filtered Vini
+// aggregate). Honors all active filters + the period selector.
+// ============================================================
+function renderEnterpriseList() {
+  const wrap = document.getElementById('enterprise-list-wrap');
+  if (!wrap) return;
+  const isStudio = state.product === 'studio';
+  // Group rows by eid → enterprise summary. For Studio we use s_rows
+  // (already filtered by getStudio); for Vini we use the rooftop
+  // aggregate (filtered by getVini).
+  const ents = new Map();   // eid → { eid, en, arr, t1, t2, t3, prag, tixSrc, ridList }
+  if (isStudio) {
+    const filtered = getStudio();
+    filtered.forEach(r => {
+      const eid = r[S_COL.eid] || r[S_COL.en] || '';
+      if (!eid) return;
+      let e = ents.get(eid);
+      if (!e) {
+        e = { eid, en: r[S_COL.en] || '', arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
+        ents.set(eid, e);
+      }
+      e.arr += Number(r[S_COL.arr]) || 0;
+      if (r[S_COL.rid]) e.ridList.add(r[S_COL.rid]);
+      // Payment fields are per-enterprise — first non-empty wins.
+      if (!e.t1 && r[S_COL.t1]) e.t1 = r[S_COL.t1];
+      if (!e.t2 && r[S_COL.t2]) e.t2 = r[S_COL.t2];
+      if (!e.t3 && r[S_COL.t3]) e.t3 = r[S_COL.t3];
+      if (!e.prag && r[S_COL.prag]) e.prag = r[S_COL.prag];
+    });
+  } else {
+    const filtered = getVini();
+    filtered.forEach(r => {
+      const eid = r.eid || r.en || '';
+      if (!eid) return;
+      let e = ents.get(eid);
+      if (!e) {
+        e = { eid, en: r.en || '', arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
+        ents.set(eid, e);
+      }
+      e.arr += Number(r.arr) || 0;
+      if (r.rid) e.ridList.add(r.rid);
+      if (!e.t1 && r.t1) e.t1 = r.t1;
+      if (!e.t2 && r.t2) e.t2 = r.t2;
+      if (!e.t3 && r.t3) e.t3 = r.t3;
+      if (!e.prag && r.ps) e.prag = r.ps;
+    });
+  }
+  // Default order: ARR DESC (biggest accounts first).
+  const sorted = [...ents.values()].sort((a, b) => (b.arr || 0) - (a.arr || 0));
+  document.getElementById('enterprise-list-count').textContent =
+    `· ${sorted.length} enterprise${sorted.length === 1 ? '' : 's'}`;
+  const TIX = isStudio ? STUDIO_TIX : VINI_TIX;
+  let html = '<table class="data"><thead>' +
+    '<tr class="group">' +
+      '<th></th><th></th><th></th>' +
+      '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
+      '<th colspan="3" class="g-tickets">Tickets</th>' +
+      '<th colspan="3" class="g-comm">Communication</th>' +
+    '</tr>' +
+    '<tr class="cols">' +
+      '<th class="left">#</th>' +
+      '<th class="left">Enterprise</th>' +
+      '<th>ARR</th>' +
+      '<th class="cell-payment">T-1</th>' +
+      '<th class="cell-payment">T-2</th>' +
+      '<th class="cell-payment">T-3</th>' +
+      '<th class="cell-payment">Pay RAG</th>' +
+      '<th class="cell-tickets"># Open</th>' +
+      '<th class="cell-tickets"># Created</th>' +
+      '<th class="cell-tickets">Ticket RAG</th>' +
+      '<th class="cell-comm">Score</th>' +
+      '<th class="cell-comm"># Interaction</th>' +
+      '<th class="cell-comm">Final RAG</th>' +
+    '</tr></thead><tbody>';
+  sorted.forEach((e, i) => {
+    // Ticket aggregate for this single enterprise
+    const tix = aggregateTicketsForEids([e.eid].filter(Boolean), TIX);
+    const tixRag = computeTicketRAG({ op: tix.op, ota: tix.ota, res: tix.res, cr: tix.cr });
+    // Communication via existing date-aware helpers
+    const commCounts = csatRagCountsForInRange(e.eid, e.en);
+    const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
+    const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+    const interactions = commInteractionCount(e.eid, e.en);
+    html += `<tr>
+      <td class="left idx">${i+1}</td>
+      <td class="left">${e.en || e.eid}</td>
+      <td>${e.arr ? fmtMoney(e.arr) : '—'}</td>
+      <td class="cell-payment">${payTile(e.t1)}</td>
+      <td class="cell-payment">${payTile(e.t2)}</td>
+      <td class="cell-payment">${payTile(e.t3)}</td>
+      <td class="cell-payment">${ragSingle(e.prag)}</td>
+      <td class="cell-tickets">${fmtNum(tix.op)}</td>
+      <td class="cell-tickets">${fmtNum(tix.cr)}</td>
+      <td class="cell-tickets">${ragSingle(tixRag)}</td>
+      <td class="cell-comm">${commScoreNum == null ? '—' : ragStack(commCounts)}</td>
+      <td class="cell-comm">${fmtNum(interactions)}</td>
+      <td class="cell-comm">${ragSingle(commFinalRag)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
 function renderRooftop() {
   const ctx = state.rooftopContext;
   let rows, contextLabel = 'All rooftops';
@@ -2816,6 +2939,9 @@ function renderRooftop() {
     html += '</tbody></table>';
     document.getElementById('rooftop-table-wrap').innerHTML = html;
   }
+  // Render the Enterprise List table below the rooftop list — same filters,
+  // same active product. Lives in the rooftop view only.
+  renderEnterpriseList();
 }
 
 function attachDrills() {
