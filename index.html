@@ -36,24 +36,17 @@
   .pill-btn:hover{background:var(--bg)}
   .pill-btn.primary:hover{background:#4338CA}
 
-  /* Sticky-top scaffolding — keep nav + sub-tabs + filter bar pinned at the
-     top so they stay visible while the user scrolls through the rooftop or
-     enterprise lists below. Stacked z-indexes so the upper bars overlap
-     lower ones if their backgrounds clip. */
-  .top-tabs{display:flex;gap:4px;margin:16px 0 18px;border-bottom:1px solid var(--border);
-    position:sticky;top:0;background:var(--bg);z-index:30;padding-top:6px}
+  .top-tabs{display:flex;gap:4px;margin:16px 0 18px;border-bottom:1px solid var(--border)}
   .top-tab{padding:11px 26px;font-size:14px;font-weight:600;color:var(--text-3);cursor:pointer;background:transparent;border:none;border-bottom:3px solid transparent;transition:all .15s;margin-bottom:-1px}
   .top-tab:hover{color:var(--text)}
   .top-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 
-  .sub-tabs{display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;width:fit-content;
-    position:sticky;top:54px;z-index:29}
+  .sub-tabs{display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;width:fit-content}
   .sub-tab{padding:7px 18px;font-size:12.5px;color:var(--text-3);cursor:pointer;border-radius:6px;font-weight:500;transition:all .15s}
   .sub-tab:hover{color:var(--text)}
   .sub-tab.active{color:var(--text);background:var(--bg);font-weight:600}
 
-  .filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;
-    position:sticky;top:104px;z-index:28}
+  .filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
   .filter-group{display:flex;flex-direction:column;gap:4px;min-width:160px}
   .filter-label{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
   .filter-select{padding:6px 10px;font-size:12.5px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;outline:none;min-height:30px}
@@ -1186,13 +1179,25 @@ function getVini() {
       if (acctTypeOf(r.ct, r.cst) !== state.filters.acct) return false;
     }
     if (state.filters.agent) {
-      // Vini-only filter: case- and whitespace-insensitive match on Agent
-      // Opted. Source values can have subtle differences (trailing spaces,
-      // capitalization drift) so be defensive. Studio rows ignore this
-      // filter since getStudio() doesn't check it.
-      const rowAg  = String(r.agent || '').trim().toLowerCase();
+      // Vini-only filter: match against ALL Agent Type values seen for the
+      // rooftop in viniRows (gid=1616842841 col B), case- and whitespace-
+      // insensitive. Studio rows ignore this filter since getStudio() doesn't
+      // check it. The earlier implementation compared against r.agent which
+      // came from VINI_STAGE's "Agent Opted" (gid=674556270 col E) — that
+      // diverged from the daily-tab Agent Type for some contracts, breaking
+      // the filter for those rooftops.
       const wantAg = String(state.filters.agent || '').trim().toLowerCase();
-      if (rowAg !== wantAg) return false;
+      if (!__viniAgentTypesByRid) __viniAgentTypesByRid = agentTypesByRid();
+      const set = __viniAgentTypesByRid.get(r.rid);
+      let hit = false;
+      if (set) for (const a of set) {
+        if (a.trim().toLowerCase() === wantAg) { hit = true; break; }
+      }
+      // Fallback: contract-level "Agent Opted" (still works for normalized
+      // rows) so the filter degrades gracefully if a rooftop has no daily
+      // history yet.
+      if (!hit && String(r.agent || '').trim().toLowerCase() === wantAg) hit = true;
+      if (!hit) return false;
     }
     return true;
   });
@@ -3392,7 +3397,9 @@ function renderAll() {
   // filters have been removed per spec.
   document.getElementById('g-csm').style.display = 'flex';
   // Agent filter only applies to Vini. Refresh its options every render so
-  // newly-synced agents appear automatically.
+  // newly-synced agents appear automatically. Invalidate the rid→AgentType
+  // cache so a fresh viniRows snapshot is reflected immediately.
+  __viniAgentTypesByRid = null;
   toggleAgentFilter();
   if (state.product === 'vini') populateAgentFilter();
 
@@ -3450,14 +3457,37 @@ document.getElementById('f-reset').addEventListener('click', () => {
   renderAll();
 });
 
-// Populate the Agent dropdown with the distinct Vini agents seen in
-// VINI_STAGE. Re-run on each render so newly-added agents show up.
+// rid → Set<agentType> built from the Vini daily tab (gid=1616842841 col B
+// "Agent Type"). This is the source of truth for the Agent filter per user
+// spec — VINI_STAGE's "Agent Opted" value diverged in some rows. Rebuilt on
+// demand so refreshes pick up newly-synced rows automatically.
+// Cache populated lazily inside getVini() and invalidated each renderAll so
+// the rid→AgentType lookup is built once per render instead of once per row.
+let __viniAgentTypesByRid = null;
+function agentTypesByRid() {
+  const map = new Map();
+  if (!viniRows || !viniRows.length || V_COL.agent == null || V_COL.rid == null) return map;
+  for (const r of viniRows) {
+    const rid = r[V_COL.rid];
+    const ag  = r[V_COL.agent];
+    if (!rid || !ag) continue;
+    let s = map.get(rid);
+    if (!s) { s = new Set(); map.set(rid, s); }
+    s.add(String(ag).trim());
+  }
+  return map;
+}
+// Populate the Agent dropdown with the distinct Vini Agent Type values
+// from viniRows (gid=1616842841 col B). Re-runs on each render so newly-
+// added agents show up automatically; preserves the user's selection.
 function populateAgentFilter() {
   const sel = document.getElementById('f-agent');
   if (!sel) return;
   const cur = sel.value;
   const agents = new Set();
-  (VINI_STAGE || []).forEach(s => { if (s.agent) agents.add(s.agent); });
+  for (const s of agentTypesByRid().values()) {
+    for (const a of s) agents.add(a);
+  }
   const sorted = [...agents].sort((a,b) => a.localeCompare(b));
   sel.innerHTML = '<option value="">All Agents</option>' +
     sorted.map(a => `<option value="${a.replace(/"/g,'&quot;')}">${a}</option>`).join('');
