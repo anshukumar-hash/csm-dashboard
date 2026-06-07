@@ -370,7 +370,7 @@
       <select class="filter-select" id="f-acct">
         <option value="">All</option>
         <option value="FGD">FGD</option>
-        <option value="GSD">GSD</option>
+        <option value="FSD">FSD</option>
         <option value="ISD">ISD</option>
         <option value="IGD">IGD</option>
         <option value="Others">Others</option>
@@ -600,6 +600,19 @@ function csatRagCountsFor(eid) {
 // MTD or custom date range, the Communication RAG should reflect ONLY readings
 // whose date_iso falls in that window. Returns G/A/R from the AVG Comm Avg.
 // across in-range readings; NA when no readings in window.
+// Count of CSAT interactions captured for an enterprise (gid=701797891).
+// Used by the new "# Interaction" column in the Communication bucket.
+// Falls back to a name-based lookup if the eid has nothing (legacy rows
+// only carry the name).
+function commInteractionCount(eid, en) {
+  let n = 0;
+  if (eid && Array.isArray(CSAT_ALL_BY_EID[eid])) n += CSAT_ALL_BY_EID[eid].length;
+  if (!n && en) {
+    const k = String(en).toLowerCase().trim();
+    if (Array.isArray(CSAT_ALL_BY_NAME[k])) n += CSAT_ALL_BY_NAME[k].length;
+  }
+  return n;
+}
 function csatRagInRange(eid, en) {
   // Try eid history first; if absent OR no in-range readings, FALL THROUGH to
   // name history with the same date filter. Previously the name path used the
@@ -1076,7 +1089,7 @@ function acctTypeOf(ct, cst) {
   const a = (ct  || '').toString().toUpperCase().trim();
   const b = (cst || '').toString().toUpperCase().trim();
   if (a === 'GROUP_DEALER'      && b === 'FRANCHISE_DEALER')   return 'FGD';
-  if (a === 'INDIVIDUAL_DEALER' && b === 'INDIVIDUAL_DEALER')  return 'GSD';
+  if (a === 'INDIVIDUAL_DEALER' && b === 'INDIVIDUAL_DEALER')  return 'FSD'; // renamed from GSD per user spec
   if (a === 'INDIVIDUAL_DEALER' && b === 'INDEPENDENT_DEALER') return 'ISD';
   if (a === 'GROUP_DEALER'      && b === 'INDEPENDENT_DEALER') return 'IGD';
   if (!a && b === 'OTHERS')   return 'Others';
@@ -1141,9 +1154,13 @@ function getVini() {
       if (acctTypeOf(r.ct, r.cst) !== state.filters.acct) return false;
     }
     if (state.filters.agent) {
-      // Vini-only filter: match the row's Agent Opted exactly. Studio doesn't
-      // carry agents so getStudio() ignores this filter.
-      if ((r.agent || '') !== state.filters.agent) return false;
+      // Vini-only filter: case- and whitespace-insensitive match on Agent
+      // Opted. Source values can have subtle differences (trailing spaces,
+      // capitalization drift) so be defensive. Studio rows ignore this
+      // filter since getStudio() doesn't check it.
+      const rowAg  = String(r.agent || '').trim().toLowerCase();
+      const wantAg = String(state.filters.agent || '').trim().toLowerCase();
+      if (rowAg !== wantAg) return false;
     }
     return true;
   });
@@ -1174,6 +1191,7 @@ const TIPS = {
   ticketAcct:  'Per-enterprise: from the slower of Open Ticket Ageing and Avg Resolution. <8h Green, <24h Amber, else Red. Counts based on tickets created in the selected period.',
   ticketRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Ticket RAGs (G=100, A=50, R=0). ≥85 Green, ≥65 Amber, <65 Red.',
   commScore:   'Count of CSAT readings in the selected date range, by RAG. CSAT avg ≥4 = Green, 2.5–4 = Amber, <2.5 = Red. Source: Metabase CSAT export.',
+  commInteractions: 'Total number of CSAT interactions captured for the enterprise(s) in this row. Source: gid=701797891 (CSAT_ALL_BY_EID array length). Group rows sum across all enterprises in the group.',
   commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
   overallRag:  'Account health rolled up from 3 signals: MTD RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
   churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
@@ -1684,7 +1702,7 @@ const S_GROUPS = [
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
   { l:'Tickets',      span:6, c:'g-tickets' },                // #Unr · #Cr · Ageing · AvgRes · Score · RAG
-  { l:'Communication', span:2, c:'g-comm' },       // Score (count stack) + Final RAG
+  { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · # Interaction · Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
 const S_COLS_SHARED = [
@@ -1711,8 +1729,10 @@ const S_COLS_SHARED = [
   {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
   {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
-  // 2 Comm — Score (count stack) + Final RAG
-  {l:'Score', cc:'cell-comm', tip:'commScore'}, {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
+  // 3 Comm — Score (count stack) · # Interaction · Final RAG
+  {l:'Score', cc:'cell-comm', tip:'commScore'},
+  {l:'# Interaction', cc:'cell-comm', tip:'commInteractions'},
+  {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
   // 1 Leader
   {l:'MBR', cc:'cell-leader'},
 ];
@@ -1831,6 +1851,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td>
     <td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(scoreRag(trag,85,65))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${fmtNum(sumBy(allByEn, r => commInteractionCount(r[S_COL.eid], r[S_COL.en])))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td>
   </tr>`;
@@ -1883,7 +1904,7 @@ const V_GROUPS = [
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
   { l:'Tickets',      span:6, c:'g-tickets' },              // Created · Open · Ageing · AvgRes · Account Level RAG · RAG (score)
-  { l:'Communication', span:2, c:'g-comm' },       // Score (weighted, with count) + Final RAG
+  { l:'Communication', span:3, c:'g-comm' },       // Score (weighted, with count) · # Interaction · Final RAG
   { l:'Leadership',   span:2, c:'g-leader' },      // MBR + Contact Freq
 ];
 const V_COLS_SHARED = [
@@ -1904,7 +1925,9 @@ const V_COLS_SHARED = [
   {l:'# Created', cc:'cell-tickets', tip:'createdCnt'}, {l:'# Open', cc:'cell-tickets', tip:'openCnt'},
   {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
   {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
-  {l:'Score', cc:'cell-comm', tip:'commScore'}, {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
+  {l:'Score', cc:'cell-comm', tip:'commScore'},
+  {l:'# Interaction', cc:'cell-comm', tip:'commInteractions'},
+  {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
 
@@ -2027,6 +2050,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(ticketRag)}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${fmtNum(sumBy(allByEid, r => commInteractionCount(r.eid, r.en)))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
   </tr>`;
@@ -2398,7 +2422,7 @@ function renderRooftop() {
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="1" class="g-comm">Communication</th>' +
+      '<th colspan="2" class="g-comm">Communication</th>' +   // # Interaction + RAG
       '<th colspan="1" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
@@ -2425,6 +2449,7 @@ function renderRooftop() {
       sortTh('Open Ageing' + tip('openAgeing'),'ota',  'studioRooftop', 'cell-tickets') +
       sortTh('Avg Res'    + tip('avgResCol'),  'res',  'studioRooftop', 'cell-tickets') +
       sortTh('Ticket RAG' + tip('ticketAcct'), 'trag', 'studioRooftop', 'cell-tickets') +
+      '<th class="cell-comm"># Interaction' + tip('commInteractions') + '</th>' +
       sortTh('RAG' + tip('commFinalRag'),      'red',  'studioRooftop', 'cell-comm') +
       sortTh('MBR',                            'mbr',  'studioRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
@@ -2522,6 +2547,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.res)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:rowTix.op, ota:rowTix.ota, res:rowTix.res, cr:rowTix.cr }))}</td>
+        <td class="cell-comm">${fmtNum(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
@@ -2574,6 +2600,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.res)}</td>
       <td class="cell-tickets">${ragStack(sTotalTrag)}</td>
+      <td class="cell-comm">${fmtNum(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
     </tr>`;
@@ -2616,7 +2643,7 @@ function renderRooftop() {
       '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="2" class="g-comm">Communication</th>' +   // Score (numeric+counts) + Final RAG
+      '<th colspan="3" class="g-comm">Communication</th>' +   // Score (numeric+counts) · # Interaction · Final RAG
       '<th colspan="2" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
@@ -2646,6 +2673,7 @@ function renderRooftop() {
       sortTh('Avg Res'  + tip('avgResCol'),     'avgRes', 'viniRooftop', 'cell-tickets') +
       sortTh('Account Level RAG' + tip('ticketAcct'),   'tixRag',     'viniRooftop', 'cell-tickets') +
       sortTh('Score'    + tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
+      '<th class="cell-comm"># Interaction' + tip('commInteractions') + '</th>' +
       sortTh('Final RAG' + tip('commFinalRag'), 'commRag',   'viniRooftop', 'cell-comm') +
       sortTh('MBR',          'mbr', 'viniRooftop', 'cell-leader') +
       sortTh('Contact Freq', 'cf',  'viniRooftop', 'cell-leader') +
@@ -2730,6 +2758,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(r.avgRes)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }))}</td>
         <td class="cell-comm">${commScoreCell}</td>
+        <td class="cell-comm">${fmtNum(commInteractionCount(r.eid, r.en))}</td>
         <td class="cell-comm">${ragSingle(commFinalRag)}</td>
         <td class="cell-leader">${r.mbr?ragSingle(r.mbr):'—'}</td>
         <td class="cell-leader">${r.cf||'—'}</td>
@@ -2779,6 +2808,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtHrs(totalRes)}</td>
       <td class="cell-tickets">${ragSingle(totalTrag)}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
+      <td class="cell-comm">${fmtNum(rows.reduce((s, r) => s + commInteractionCount(r.eid, r.en), 0))}</td>
       <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
       <td class="cell-leader">${ragStack(tMbr)}</td>
       <td class="cell-leader">—</td>
