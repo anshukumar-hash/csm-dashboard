@@ -36,17 +36,24 @@
   .pill-btn:hover{background:var(--bg)}
   .pill-btn.primary:hover{background:#4338CA}
 
-  .top-tabs{display:flex;gap:4px;margin:16px 0 18px;border-bottom:1px solid var(--border)}
+  /* Sticky-top scaffolding — keep nav + sub-tabs + filter bar pinned at the
+     top so they stay visible while the user scrolls through the rooftop or
+     enterprise lists below. Stacked z-indexes so the upper bars overlap
+     lower ones if their backgrounds clip. */
+  .top-tabs{display:flex;gap:4px;margin:16px 0 18px;border-bottom:1px solid var(--border);
+    position:sticky;top:0;background:var(--bg);z-index:30;padding-top:6px}
   .top-tab{padding:11px 26px;font-size:14px;font-weight:600;color:var(--text-3);cursor:pointer;background:transparent;border:none;border-bottom:3px solid transparent;transition:all .15s;margin-bottom:-1px}
   .top-tab:hover{color:var(--text)}
   .top-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 
-  .sub-tabs{display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;width:fit-content}
+  .sub-tabs{display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;width:fit-content;
+    position:sticky;top:54px;z-index:29}
   .sub-tab{padding:7px 18px;font-size:12.5px;color:var(--text-3);cursor:pointer;border-radius:6px;font-weight:500;transition:all .15s}
   .sub-tab:hover{color:var(--text)}
   .sub-tab.active{color:var(--text);background:var(--bg);font-weight:600}
 
-  .filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+  .filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    position:sticky;top:104px;z-index:28}
   .filter-group{display:flex;flex-direction:column;gap:4px;min-width:160px}
   .filter-label{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
   .filter-select{padding:6px 10px;font-size:12.5px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;outline:none;min-height:30px}
@@ -290,6 +297,14 @@
   .acct-pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;
     font-weight:600;letter-spacing:0.02em;line-height:1.2;text-align:center;
     background:#E8EDFB;color:#2C3E83;border:1px solid #C9D4F6;white-space:nowrap}
+  /* Enterprise List table layout — narrow # column, generous Enterprise +
+     Account Type + MRR / ARR. Prevents the index column from eating space. */
+  table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
+  table.data.ent-list .ent-name{min-width:200px;max-width:260px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  table.data.ent-list .ent-acct{width:84px;min-width:84px;text-align:center}
+  table.data.ent-list .ent-money{width:80px;min-width:80px;text-align:right;
+    font-variant-numeric:tabular-nums}
   /* Sortable column header — subtle hover affordance + arrow indicator. */
   .sort-th{position:relative}
   .sort-th:hover{background-color:rgba(32,87,196,0.06)}
@@ -2410,7 +2425,7 @@ function renderEnterpriseList() {
   // Group rows by eid → enterprise summary. For Studio we use s_rows
   // (already filtered by getStudio); for Vini we use the rooftop
   // aggregate (filtered by getVini).
-  const ents = new Map();   // eid → { eid, en, arr, t1, t2, t3, prag, tixSrc, ridList }
+  const ents = new Map();   // eid → enterprise summary record
   if (isStudio) {
     const filtered = getStudio();
     filtered.forEach(r => {
@@ -2418,9 +2433,11 @@ function renderEnterpriseList() {
       if (!eid) return;
       let e = ents.get(eid);
       if (!e) {
-        e = { eid, en: r[S_COL.en] || '', arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
+        e = { eid, en: r[S_COL.en] || '', acct: acctTypeOf(r[S_COL.ct], r[S_COL.cst]),
+              mrr: 0, arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
         ents.set(eid, e);
       }
+      e.mrr += Number(r[S_COL.mrr]) || 0;
       e.arr += Number(r[S_COL.arr]) || 0;
       if (r[S_COL.rid]) e.ridList.add(r[S_COL.rid]);
       // Payment fields are per-enterprise — first non-empty wins.
@@ -2428,6 +2445,7 @@ function renderEnterpriseList() {
       if (!e.t2 && r[S_COL.t2]) e.t2 = r[S_COL.t2];
       if (!e.t3 && r[S_COL.t3]) e.t3 = r[S_COL.t3];
       if (!e.prag && r[S_COL.prag]) e.prag = r[S_COL.prag];
+      if (!e.acct) e.acct = acctTypeOf(r[S_COL.ct], r[S_COL.cst]);
     });
   } else {
     const filtered = getVini();
@@ -2436,15 +2454,18 @@ function renderEnterpriseList() {
       if (!eid) return;
       let e = ents.get(eid);
       if (!e) {
-        e = { eid, en: r.en || '', arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
+        e = { eid, en: r.en || '', acct: acctTypeOf(r.ct, r.cst),
+              mrr: 0, arr: 0, t1:'', t2:'', t3:'', prag:'', ridList: new Set() };
         ents.set(eid, e);
       }
+      e.mrr += Number(r.mrr) || 0;
       e.arr += Number(r.arr) || 0;
       if (r.rid) e.ridList.add(r.rid);
       if (!e.t1 && r.t1) e.t1 = r.t1;
       if (!e.t2 && r.t2) e.t2 = r.t2;
       if (!e.t3 && r.t3) e.t3 = r.t3;
       if (!e.prag && r.ps) e.prag = r.ps;
+      if (!e.acct) e.acct = acctTypeOf(r.ct, r.cst);
     });
   }
   // Default order: ARR DESC (biggest accounts first).
@@ -2452,17 +2473,20 @@ function renderEnterpriseList() {
   document.getElementById('enterprise-list-count').textContent =
     `· ${sorted.length} enterprise${sorted.length === 1 ? '' : 's'}`;
   const TIX = isStudio ? STUDIO_TIX : VINI_TIX;
-  let html = '<table class="data"><thead>' +
+  let html = '<table class="data ent-list"><thead>' +
     '<tr class="group">' +
-      '<th></th><th></th><th></th>' +
+      // 5 identity cells (#, Enterprise, Account Type, MRR, ARR)
+      '<th></th><th></th><th></th><th></th><th></th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="3" class="g-tickets">Tickets</th>' +
       '<th colspan="3" class="g-comm">Communication</th>' +
     '</tr>' +
     '<tr class="cols">' +
-      '<th class="left">#</th>' +
-      '<th class="left">Enterprise</th>' +
-      '<th>ARR</th>' +
+      '<th class="left ent-idx">#</th>' +
+      '<th class="left ent-name">Enterprise</th>' +
+      '<th class="ent-acct">Account Type</th>' +
+      '<th class="ent-money">MRR</th>' +
+      '<th class="ent-money">ARR</th>' +
       '<th class="cell-payment">T-1</th>' +
       '<th class="cell-payment">T-2</th>' +
       '<th class="cell-payment">T-3</th>' +
@@ -2483,10 +2507,15 @@ function renderEnterpriseList() {
     const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
     const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
     const interactions = commInteractionCount(e.eid, e.en);
+    const acctPill = e.acct
+      ? `<span class="acct-pill">${e.acct}</span>`
+      : '<span style="color:var(--text-4)">—</span>';
     html += `<tr>
-      <td class="left idx">${i+1}</td>
-      <td class="left">${e.en || e.eid}</td>
-      <td>${e.arr ? fmtMoney(e.arr) : '—'}</td>
+      <td class="left idx ent-idx">${i+1}</td>
+      <td class="left ent-name">${e.en || e.eid}</td>
+      <td class="ent-acct">${acctPill}</td>
+      <td class="ent-money">${e.mrr ? fmtMoney(e.mrr) : '—'}</td>
+      <td class="ent-money">${e.arr ? fmtMoney(e.arr) : '—'}</td>
       <td class="cell-payment">${payTile(e.t1)}</td>
       <td class="cell-payment">${payTile(e.t2)}</td>
       <td class="cell-payment">${payTile(e.t3)}</td>
