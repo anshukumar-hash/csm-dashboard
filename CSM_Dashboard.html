@@ -970,6 +970,8 @@ function viniAggregateRooftops() {
       a.cr = tixInRange.length;
       const openRows = tixInRange.filter(t => t.o);
       a.op = openRows.length;
+      // SLA Violated count for the new Ticket RAG logic (col I = 'SLA Violated')
+      a.sla = tixInRange.filter(t => t.s).length;
       const ageVals = openRows.map(t => Number(t.a)).filter(v => v > 0);
       a.otaMax = ageVals.length ? ageVals.reduce((s,v)=>s+v,0) / ageVals.length : 0;
       const resVals = tixInRange.filter(t => !t.o).map(t => Number(t.r)).filter(v => v > 0);
@@ -1230,6 +1232,9 @@ const TIPS = {
   paymentRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Payment Scores (G=100, A=50, R=0). ≥80 Green, ≥60 Amber, <60 Red.',
   ticketAcct:  'Per-enterprise: from the slower of Open Ticket Ageing and Avg Resolution. <8h Green, <24h Amber, else Red. Counts based on tickets created in the selected period.',
   ticketRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Ticket RAGs (G=100, A=50, R=0). ≥85 Green, ≥65 Amber, <65 Red.',
+  // New SLA-driven Ticket RAG (per user spec, replaces the slower-of-ageing-and-res logic)
+  ticketRagSla:'Ticket RAG (gid=832733618). Red = at least one ticket whose col I "Resolution status" = "SLA Violated" in the selected period. Amber = no SLA violations but at least one ticket still actively open (Status NOT IN Open / Closed / Resolved). Green = no SLA violations AND nothing actively open. NA = no tickets at all in scope. Studio / Vini split by col L.',
+  unresolvedCnt:'Count of actively-open tickets — Status NOT IN ("Open", "Closed", "Resolved") so Pending / Waiting / On Hold all count. Source: Ticket_Dump (gid=832733618), filtered to the period and matched to Enterprise ID (col M).',
   commScore:   'Count of CSAT readings in the selected date range, by RAG. CSAT avg ≥4 = Green, 2.5–4 = Amber, <2.5 = Red. Source: Metabase CSAT export.',
   commInteractions: 'Total number of CSAT interactions captured for the enterprise(s) in this row. Source: gid=701797891 (CSAT_ALL_BY_EID array length). Group rows sum across all enterprises in the group.',
   commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
@@ -1745,7 +1750,7 @@ const S_GROUPS = [
   { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
-  { l:'Tickets',      span:6, c:'g-tickets' },                // #Unr · #Cr · Ageing · AvgRes · Score · RAG
+  { l:'Tickets',      span:4, c:'g-tickets' },                // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
   { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · # Interaction · Final RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
@@ -1770,9 +1775,11 @@ const S_COLS_SHARED = [
   {l:'T-3', cc:'cell-payment', tip:'paymentT3'},
   {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
   // 6 Tickets
-  {l:'#Unresolved', cc:'cell-tickets'}, {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
-  {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
-  {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
+  // Ticket bucket per user spec: #Created · #Unresolved · Open Ageing · RAG
+  {l:'#Created', cc:'cell-tickets', tip:'createdCnt'},
+  {l:'#Unresolved', cc:'cell-tickets', tip:'unresolvedCnt'},
+  {l:'Open Ageing (Hrs)', cc:'cell-tickets', tip:'openAgeing'},
+  {l:'Ticket RAG', cc:'cell-tickets', tip:'ticketRagSla'},
   // 3 Comm — Score (count stack) · # Interaction · Final RAG
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'# Interaction', cc:'cell-comm', tip:'commInteractions'},
@@ -1829,10 +1836,11 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // than the (often stale) sheet's pre-computed ticket columns.
   const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
   const studioTixAgg = aggregateTicketsForEids(eidList, STUDIO_TIX);
-  const unr = studioTixAgg.op;   // "Unresolved" = open tickets
+  const unr = studioTixAgg.op;   // "Unresolved" = open tickets (NOT IN Open/Closed/Resolved)
   const cr  = studioTixAgg.cr;
   const ota = studioTixAgg.ota;
   const res = studioTixAgg.res;
+  const sla = studioTixAgg.sla;  // SLA Violated count (col I = 'SLA Violated')
   // Per-enterprise ticket RAG distribution — for each unique enterprise,
   // derive its own RAG from its own ticket aggregate and count.
   const trag = (() => {
@@ -1891,9 +1899,10 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-payment">${payTileAgg(t1, enterprisesPayment.length)}</td><td class="cell-payment">${payTileAgg(t2, enterprisesPayment.length)}</td>
     <td class="cell-payment">${payTileAgg(t3, enterprisesPayment.length)}</td>
     <td class="cell-payment">${ragStack(prag)}</td><td class="cell-payment">${ragSingle(scoreRag(prag,80,60))}</td>
-    <td class="cell-tickets">${fmtNum(unr)}</td><td class="cell-tickets">${fmtNum(cr)}</td>
-    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td>
-    <td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(scoreRag(trag,85,65))}</td>
+    <td class="cell-tickets">${fmtNum(cr)}</td>
+    <td class="cell-tickets">${fmtNum(unr)}</td>
+    <td class="cell-tickets">${fmtHrs(ota)}</td>
+    <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op:unr, sla }))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${fmtNum(sumBy(allByEn, r => commInteractionCount(r[S_COL.eid], r[S_COL.en])))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -1947,7 +1956,7 @@ const V_GROUPS = [
   { l:'Usage',        span:5, c:'g-usage' },
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
-  { l:'Tickets',      span:6, c:'g-tickets' },              // Created · Open · Ageing · AvgRes · Account Level RAG · RAG (score)
+  { l:'Tickets',      span:4, c:'g-tickets' },              // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
   { l:'Communication', span:3, c:'g-comm' },       // Score (weighted, with count) · # Interaction · Final RAG
   { l:'Leadership',   span:2, c:'g-leader' },      // MBR + Contact Freq
 ];
@@ -1966,9 +1975,11 @@ const V_COLS_SHARED = [
   {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
   {l:'T-1', cc:'cell-payment'}, {l:'T-2', cc:'cell-payment'}, {l:'T-3', cc:'cell-payment'},
   {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
-  {l:'# Created', cc:'cell-tickets', tip:'createdCnt'}, {l:'# Open', cc:'cell-tickets', tip:'openCnt'},
-  {l:'Open Ageing (hrs)', cc:'cell-tickets', tip:'openAgeing'}, {l:'Avg Res hrs', cc:'cell-tickets', tip:'avgResCol'},
-  {l:'Score', cc:'cell-tickets', tip:'ticketAcct'}, {l:'RAG', cc:'cell-tickets', tip:'ticketRagCol'},
+  // Ticket bucket per user spec: # Created · # Unresolved · Open Ageing · Ticket RAG
+  {l:'# Created', cc:'cell-tickets', tip:'createdCnt'},
+  {l:'# Unresolved', cc:'cell-tickets', tip:'unresolvedCnt'},
+  {l:'Open Ageing (Hrs)', cc:'cell-tickets', tip:'openAgeing'},
+  {l:'Ticket RAG', cc:'cell-tickets', tip:'ticketRagSla'},
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'# Interaction', cc:'cell-comm', tip:'commInteractions'},
   {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
@@ -2091,8 +2102,10 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
     <td class="cell-payment">${payTileAgg(t1, allByEid.length)}</td><td class="cell-payment">${payTileAgg(t2, allByEid.length)}</td>
     <td class="cell-payment">${payTileAgg(t3, allByEid.length)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
-    <td class="cell-tickets">${fmtNum(cr)}</td><td class="cell-tickets">${fmtNum(op)}</td>
-    <td class="cell-tickets">${fmtHrs(ota)}</td><td class="cell-tickets">${fmtHrs(res)}</td><td class="cell-tickets">${ragStack(trag)}</td><td class="cell-tickets">${ragSingle(ticketRag)}</td>
+    <td class="cell-tickets">${fmtNum(cr)}</td>
+    <td class="cell-tickets">${fmtNum(op)}</td>
+    <td class="cell-tickets">${fmtHrs(ota)}</td>
+    <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op, sla: tixAgg.sla }))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${fmtNum(sumBy(allByEid, r => commInteractionCount(r.eid, r.en)))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -2490,7 +2503,7 @@ function renderEnterpriseList() {
       // 5 identity cells (#, Enterprise, Account Type, MRR, ARR)
       '<th></th><th></th><th></th><th></th><th></th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
-      '<th colspan="3" class="g-tickets">Tickets</th>' +
+      '<th colspan="4" class="g-tickets">Tickets</th>' +
       '<th colspan="3" class="g-comm">Communication</th>' +
     '</tr>' +
     '<tr class="cols">' +
@@ -2503,8 +2516,9 @@ function renderEnterpriseList() {
       '<th class="cell-payment">T-2</th>' +
       '<th class="cell-payment">T-3</th>' +
       '<th class="cell-payment">Pay RAG</th>' +
-      '<th class="cell-tickets"># Open</th>' +
       '<th class="cell-tickets"># Created</th>' +
+      '<th class="cell-tickets"># Unresolved</th>' +
+      '<th class="cell-tickets">Open Ageing (Hrs)</th>' +
       '<th class="cell-tickets">Ticket RAG</th>' +
       '<th class="cell-comm">Score</th>' +
       '<th class="cell-comm"># Interaction</th>' +
@@ -2513,7 +2527,7 @@ function renderEnterpriseList() {
   sorted.forEach((e, i) => {
     // Ticket aggregate for this single enterprise
     const tix = aggregateTicketsForEids([e.eid].filter(Boolean), TIX);
-    const tixRag = computeTicketRAG({ op: tix.op, ota: tix.ota, res: tix.res, cr: tix.cr });
+    const tixRag = computeTicketRAG({ cr: tix.cr, op: tix.op, sla: tix.sla });
     // Communication via existing date-aware helpers
     const commCounts = csatRagCountsForInRange(e.eid, e.en);
     const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
@@ -2532,8 +2546,9 @@ function renderEnterpriseList() {
       <td class="cell-payment">${payTile(e.t2)}</td>
       <td class="cell-payment">${payTile(e.t3)}</td>
       <td class="cell-payment">${ragSingle(e.prag)}</td>
-      <td class="cell-tickets">${fmtNum(tix.op)}</td>
       <td class="cell-tickets">${fmtNum(tix.cr)}</td>
+      <td class="cell-tickets">${fmtNum(tix.op)}</td>
+      <td class="cell-tickets">${fmtHrs(tix.ota)}</td>
       <td class="cell-tickets">${ragSingle(tixRag)}</td>
       <td class="cell-comm">${commScoreNum == null ? '—' : ragStack(commCounts)}</td>
       <td class="cell-comm">${fmtNum(interactions)}</td>
@@ -2608,11 +2623,10 @@ function renderRooftop() {
       sortTh('T-2' + tip('paymentT2'), 't2',   'studioRooftop', 'cell-payment') +
       sortTh('T-3' + tip('paymentT3'), 't3',   'studioRooftop', 'cell-payment') +
       sortTh('Pay RAG' + tip('paymentAcct'), 'prag', 'studioRooftop', 'cell-payment') +
-      sortTh('#Unresolved',  'unr',  'studioRooftop', 'cell-tickets') +
-      sortTh('#Created' + tip('createdCnt'),   'cr',   'studioRooftop', 'cell-tickets') +
-      sortTh('Open Ageing' + tip('openAgeing'),'ota',  'studioRooftop', 'cell-tickets') +
-      sortTh('Avg Res'    + tip('avgResCol'),  'res',  'studioRooftop', 'cell-tickets') +
-      sortTh('Ticket RAG' + tip('ticketAcct'), 'trag', 'studioRooftop', 'cell-tickets') +
+      sortTh('#Created' + tip('createdCnt'),       'cr',   'studioRooftop', 'cell-tickets') +
+      sortTh('#Unresolved' + tip('unresolvedCnt'), 'unr',  'studioRooftop', 'cell-tickets') +
+      sortTh('Open Ageing (Hrs)' + tip('openAgeing'), 'ota', 'studioRooftop', 'cell-tickets') +
+      sortTh('Ticket RAG' + tip('ticketRagSla'),   'trag', 'studioRooftop', 'cell-tickets') +
       '<th class="cell-comm"># Interaction' + tip('commInteractions') + '</th>' +
       sortTh('RAG' + tip('commFinalRag'),      'red',  'studioRooftop', 'cell-comm') +
       sortTh('MBR',                            'mbr',  'studioRooftop', 'cell-leader') +
@@ -2706,11 +2720,10 @@ function renderRooftop() {
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
         <td class="cell-payment">${ragSingle(r[S_COL.prag])}</td>
-        <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtNum(rowTix.cr)}</td>
+        <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
-        <td class="cell-tickets">${fmtHrs(rowTix.res)}</td>
-        <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:rowTix.op, ota:rowTix.ota, res:rowTix.res, cr:rowTix.cr }))}</td>
+        <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:rowTix.cr, op:rowTix.op, sla:rowTix.sla }))}</td>
         <td class="cell-comm">${fmtNum(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
@@ -2759,11 +2772,10 @@ function renderRooftop() {
       <td class="cell-payment">${payTileAgg(sT2, seenEidPay.size)}</td>
       <td class="cell-payment">${payTileAgg(sT3, seenEidPay.size)}</td>
       <td class="cell-payment">${ragStack(sPrag)}</td>
-      <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtNum(totalStudioTix.cr)}</td>
+      <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
-      <td class="cell-tickets">${fmtHrs(totalStudioTix.res)}</td>
-      <td class="cell-tickets">${ragStack(sTotalTrag)}</td>
+      <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:totalStudioTix.cr, op:totalStudioTix.op, sla:totalStudioTix.sla }))}</td>
       <td class="cell-comm">${fmtNum(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
@@ -2831,11 +2843,10 @@ function renderRooftop() {
       sortTh('T-2', 't2', 'viniRooftop', 'cell-payment') +
       sortTh('T-3', 't3', 'viniRooftop', 'cell-payment') +
       sortTh('Account Level RAG' + tip('paymentAcct'), 'ps', 'viniRooftop', 'cell-payment') +
-      sortTh('#Created' + tip('createdCnt'),    'cr',     'viniRooftop', 'cell-tickets') +
-      sortTh('#Open'    + tip('openCnt'),       'op',     'viniRooftop', 'cell-tickets') +
-      sortTh('Open Ageing' + tip('openAgeing'), 'otaMax', 'viniRooftop', 'cell-tickets') +
-      sortTh('Avg Res'  + tip('avgResCol'),     'avgRes', 'viniRooftop', 'cell-tickets') +
-      sortTh('Account Level RAG' + tip('ticketAcct'),   'tixRag',     'viniRooftop', 'cell-tickets') +
+      sortTh('# Created' + tip('createdCnt'),       'cr',     'viniRooftop', 'cell-tickets') +
+      sortTh('# Unresolved' + tip('unresolvedCnt'), 'op',     'viniRooftop', 'cell-tickets') +
+      sortTh('Open Ageing (Hrs)' + tip('openAgeing'), 'otaMax', 'viniRooftop', 'cell-tickets') +
+      sortTh('Ticket RAG' + tip('ticketRagSla'),    'tixRag', 'viniRooftop', 'cell-tickets') +
       sortTh('Score'    + tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractions') + '</th>' +
       sortTh('Final RAG' + tip('commFinalRag'), 'commRag',   'viniRooftop', 'cell-comm') +
@@ -2880,7 +2891,7 @@ function renderRooftop() {
         seenEidTix.add(r.eid);
         tCr += Number(r.cr) || 0;
         tOp += Number(r.op) || 0;
-        incCount(tTrag, computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }));
+        incCount(tTrag, computeTicketRAG({ cr:r.cr, op:r.op, sla:r.sla }));
       }
       if (r.eid && !seenEidComm.has(r.eid)) {
         seenEidComm.add(r.eid);
@@ -2919,8 +2930,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(r.cr)}</td>
         <td class="cell-tickets">${fmtNum(r.op)}</td>
         <td class="cell-tickets">${fmtHrs(r.otaMax)}</td>
-        <td class="cell-tickets">${fmtHrs(r.avgRes)}</td>
-        <td class="cell-tickets">${ragSingle(computeTicketRAG({ op:r.op, ota:r.otaMax, res:r.avgRes, cr:r.cr }))}</td>
+        <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:r.cr, op:r.op, sla:r.sla }))}</td>
         <td class="cell-comm">${commScoreCell}</td>
         <td class="cell-comm">${fmtNum(commInteractionCount(r.eid, r.en))}</td>
         <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -2969,8 +2979,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(tCr)}</td>
       <td class="cell-tickets">${fmtNum(tOp)}</td>
       <td class="cell-tickets">${fmtHrs(totalOta)}</td>
-      <td class="cell-tickets">${fmtHrs(totalRes)}</td>
-      <td class="cell-tickets">${ragSingle(totalTrag)}</td>
+      <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:tCr, op:tOp, sla:rows.reduce((s,r)=>s+(Number(r.sla)||0),0) }))}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
       <td class="cell-comm">${fmtNum(rows.reduce((s, r) => s + commInteractionCount(r.eid, r.en), 0))}</td>
       <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
