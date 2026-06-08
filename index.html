@@ -1598,7 +1598,7 @@ function aggregateTicketsForEids(eids, tixDict) {
   // aggregating Studio enterprise tickets.
   tixDict = tixDict || VINI_TIX;
   const range = periodRange();
-  let cr = 0, op = 0, resSum = 0, resCount = 0, ageSum = 0, ageCount = 0;
+  let cr = 0, op = 0, sla = 0, resSum = 0, resCount = 0, ageSum = 0, ageCount = 0;
   const seen = new Set();
   for (const eid of eids) {
     if (!eid || seen.has(eid)) continue;
@@ -1608,6 +1608,7 @@ function aggregateTicketsForEids(eids, tixDict) {
     for (const t of tx.rows) {
       if (!t.c || t.c < range.from || t.c > range.to) continue;
       cr++;
+      if (t.s) sla++;   // Resolution status = 'SLA Violated' per user spec
       if (t.o) {
         op++;
         if (Number(t.a) > 0) { ageSum += Number(t.a); ageCount++; }
@@ -1617,7 +1618,7 @@ function aggregateTicketsForEids(eids, tixDict) {
     }
   }
   return {
-    cr, op,
+    cr, op, sla,
     ota: ageCount ? ageSum / ageCount : 0,
     res: resCount ? resSum / resCount : 0
   };
@@ -1646,16 +1647,19 @@ function fmtAgentAge(goLiveIso) {
 // Ticket RAG — based on the slower of Avg Resolution and Open Ticket Ageing.
 // Green when both < 8h, Amber when both < 24h, Red otherwise.
 // Returns NA when there is no ticket signal at all.
+// New Ticket RAG logic per user spec — driven by SLA Violated count + #Open:
+//   Red   : any SLA Violated tickets at all
+//   Amber : no SLA violations but tickets are still actively open
+//   Green : no SLA violations AND nothing actively open
+//   NA    : no tickets at all in the active period
 function computeTicketRAG(t) {
-  const op  = Number(t.op)  || 0;
-  const ota = Number(t.ota) || 0;
-  const res = Number(t.res) || 0;
-  const created = Number(t.cr) || 0;
-  if (op === 0 && ota === 0 && res === 0 && created === 0) return 'NA';
-  const worst = Math.max(ota, res);
-  if (worst < 8)  return 'Green';
-  if (worst < 24) return 'Amber';
-  return 'Red';
+  const op      = Number(t.op)  || 0;
+  const sla     = Number(t.sla) || 0;
+  const created = Number(t.cr)  || 0;
+  if (created === 0 && op === 0 && sla === 0) return 'NA';
+  if (sla > 0) return 'Red';
+  if (op  > 0) return 'Amber';
+  return 'Green';
 }
 
 // Vini Payment RAG — mirrors the user's ARRAYFORMULA / BYROW LAMBDA on T1/T2/T3 (sheet cols X,Y,Z).
