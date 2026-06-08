@@ -1058,7 +1058,10 @@ function ViniTixToJson($dict) {
         $items = New-Object System.Collections.Generic.List[string]
         foreach ($r in $dict[$k]) {
             $oBool = if ($r.o) { 'true' } else { 'false' }
-            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + '}')
+            # s = SLA Violated flag (col I 'Resolution status' = 'SLA Violated').
+            # Per-row so the dashboard can date-range aggregate at render time.
+            $sBool = if ($r.s) { 'true' } else { 'false' }
+            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + '}')
         }
         $parts.Add((JsEscape $k) + ':{"rows":[' + ($items -join ',') + ']}')
     }
