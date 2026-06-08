@@ -229,12 +229,17 @@ $payRanks = @{}
 foreach ($eid in $payByEid.Keys) {
     $rows = $payByEid[$eid]
     # Per latest user spec: EXCLUDE sent/draft entirely from the source
-    # before ranking. Then dense-rank the remaining (paid / overdue) rows
-    # by (Service_period_Start_date, Service_period_End_date) DESC. Take
-    # ranks 1 / 2 / 3 → T-1 / T-2 / T-3. This guarantees the rendered
-    # T-1/T-2/T-3 cells never carry sent or draft, AND enterprises with
-    # only 1-2 closed periods still surface their status (instead of
-    # going blank because rank 2/3/4 doesn't exist).
+    # first, then dense-rank by (Service_period_Start_date,
+    # Service_period_End_date) DESC per enterprise. Each unique (start,end)
+    # tuple is one rank. SKIP rank 1 (the most-recent / in-flight closed
+    # period the user wants ignored); take rank 2 → T-1, rank 3 → T-2,
+    # rank 4 → T-3.
+    #
+    # Sparse cases render naturally:
+    #   - 1 rank only      → t1/t2/t3 all blank → all NIR
+    #   - 2 ranks (skip 1) → t1 = rank 2 status; t2/t3 blank → NIR
+    #   - 3 ranks (skip 1) → t1 = rank 2, t2 = rank 3; t3 blank → NIR
+    #   - 4+ ranks (skip 1)→ t1 = rank 2, t2 = rank 3, t3 = rank 4
     $closed = @($rows | Where-Object {
         $s = [string]$_.status
         $s -and $s -ne 'sent' -and $s -ne 'draft'
@@ -246,17 +251,17 @@ foreach ($eid in $payByEid.Keys) {
     foreach ($pr in $sorted) {
         $key = "$($pr.start)|$($pr.end)"
         if ($key -ne $prevKey) { $rank++; $prevKey = $key }
-        if ($rank -gt 3) { break }
+        if ($rank -gt 4) { break }   # ranks 1-4 cover skip-1 + T-1/T-2/T-3
         if (-not $byRank.ContainsKey($rank)) {
             $byRank[$rank] = New-Object System.Collections.Generic.List[string]
         }
         $byRank[$rank].Add([string]$pr.status)
     }
     $payRanks[$eid] = @{
-        # rank 1 (most recent CLOSED period) → T-1, rank 2 → T-2, rank 3 → T-3
-        t1 = if ($byRank.ContainsKey(1)) { Get-CanonicalPayStatus $byRank[1] } else { '' }
-        t2 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
-        t3 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+        # SKIP rank 1 (most recent / in-flight). T-1 = rank 2 onwards.
+        t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+        t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+        t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
     }
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
@@ -588,14 +593,19 @@ if ($csatBroken) {
 #   res = avg resolution  (col G in hrs) over resolved/closed tickets
 $tCols = $tixTab.cols
 $ti = @{
-    status  = Find-Col $tCols @('Status')
-    created = Find-Col $tCols @('Created time','Created')
-    resolved= Find-Col $tCols @('Resolved time','Resolved')
-    closed  = Find-Col $tCols @('Closed time','Closed')
-    resHrs  = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
-    prod    = Find-Col $tCols @('Product (Studio/Vini)','Product')
-    eid     = Find-Col $tCols @('Enterprise ID')
-    enName  = Find-Col $tCols @('Enterprise Name','Enterrpise Name','Account Name','Account')
+    status   = Find-Col $tCols @('Status')
+    created  = Find-Col $tCols @('Created time','Created')
+    resolved = Find-Col $tCols @('Resolved time','Resolved')
+    closed   = Find-Col $tCols @('Closed time','Closed')
+    resHrs   = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
+    # Col I "Resolution status" — values 'Within SLA' / 'SLA Violated' / null.
+    # User spec: count "SLA Violated" per enterprise and use it in the
+    # ticket RAG. Surfaced on each per-ticket row as `s = $true` so the
+    # dashboard can aggregate by date range at render time.
+    resoStat = Find-Col $tCols @('Resolution status')
+    prod     = Find-Col $tCols @('Product (Studio/Vini)','Product')
+    eid      = Find-Col $tCols @('Enterprise ID')
+    enName   = Find-Col $tCols @('Enterprise Name','Enterrpise Name','Account Name','Account')
 }
 
 # Build the "live enterprise" set from the payment master. An enterprise is
@@ -743,7 +753,17 @@ foreach ($row in $tixTab.rows) {
     $createdIso = $created.ToString('yyyy-MM-dd')
 
     $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
-    $isOpen = ($status -ne 'closed' -and $status -ne 'resolved')
+    # User-spec "#Open" excludes BOTH the terminal states (Closed, Resolved)
+    # AND the raw "Open" status — leaving the actively-in-flight tickets
+    # (Pending / Waiting / On Hold) as the bucket. This is what we ship as
+    # the per-row `o` flag; the dashboard aggregates it into the #Open count.
+    $isOpen = ($status -ne 'closed' -and $status -ne 'resolved' -and $status -ne 'open')
+
+    # SLA Violated flag (col I "Resolution status" = 'SLA Violated').
+    $resoStatVal = if ($ti.resoStat -ge 0) {
+        ([string](Gviz-Val $c[$ti.resoStat])).Trim().ToLower()
+    } else { '' }
+    $isSlaViolated = ($resoStatVal -eq 'sla violated')
 
     $resHrs = 0.0; $ageHrs = 0.0
     if ($isOpen) {
@@ -757,7 +777,7 @@ foreach ($row in $tixTab.rows) {
     if (-not $targetDict.ContainsKey($resolvedEid)) {
         $targetDict[$resolvedEid] = New-Object System.Collections.Generic.List[hashtable]
     }
-    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs })
+    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated })
     if ($prod -eq 'Vini') { $kept.vini++ } else { $kept.studio++ }
 }
 Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets kept, $($skipped.vini) skipped"
