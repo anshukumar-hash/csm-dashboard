@@ -325,6 +325,17 @@
   .acct-pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;
     font-weight:600;letter-spacing:0.02em;line-height:1.2;text-align:center;
     background:#E8EDFB;color:#2C3E83;border:1px solid #C9D4F6;white-space:nowrap}
+  /* # Interaction count pill — visual signal of engagement level in the
+     current period. Tiered: lo (1), md (2-4), hi (5+). 0 renders as a
+     muted em-dash so the cell still reads as "no data" rather than a
+     loud red zero. */
+  .int-count{display:inline-block;min-width:22px;padding:2px 7px;border-radius:10px;
+    font-size:11px;font-weight:600;line-height:1.25;text-align:center;
+    font-variant-numeric:tabular-nums;border:1px solid transparent}
+  .int-count.int-lo{background:#FEF3C7;color:#92400E;border-color:#FDE68A}
+  .int-count.int-md{background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE}
+  .int-count.int-hi{background:#D1FAE5;color:#065F46;border-color:#A7F3D0}
+  .cell-comm{text-align:center}
   /* Enterprise List table layout — narrow # column, generous Enterprise +
      Account Type + MRR / ARR. Prevents the index column from eating space. */
   table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
@@ -675,6 +686,15 @@ function csatRagCountsFor(eid) {
 // Month vs custom-range show genuinely different numbers driven by the
 // date column in the CSAT source. Falls back to a name-based lookup if
 // the eid has nothing (legacy rows only carry the name).
+// Render a # Interaction count as a coloured pill — 0 → muted dash,
+// non-zero → a count chip whose colour escalates with the count. Same
+// shape for rooftop-level cells and Total / aggregate rows.
+function intCountCell(n) {
+  const num = Number(n) || 0;
+  if (num === 0) return '<span style="color:var(--text-4)">—</span>';
+  const cls = num >= 5 ? 'int-hi' : num >= 2 ? 'int-md' : 'int-lo';
+  return `<span class="int-count ${cls}" title="${num} interaction${num === 1 ? '' : 's'} in current period">${num}</span>`;
+}
 function commInteractionCount(eid, en) {
   const range = periodRange();
   const filterByDate = arr =>
@@ -2056,7 +2076,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtHrs(ota)}</td>
     <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op:unr, sla }))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
-    <td class="cell-comm">${fmtNum(sumBy(allByEn, r => commInteractionCount(r[S_COL.eid], r[S_COL.en])))}</td>
+    <td class="cell-comm">${intCountCell(sumBy(allByEn, r => commInteractionCount(r[S_COL.eid], r[S_COL.en])))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td>
   </tr>`;
@@ -2259,7 +2279,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtHrs(ota)}</td>
     <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op, sla: tixAgg.sla }))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
-    <td class="cell-comm">${fmtNum(sumBy(allByEid, r => commInteractionCount(r.eid, r.en)))}</td>
+    <td class="cell-comm">${intCountCell(sumBy(allByEid, r => commInteractionCount(r.eid, r.en)))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
   </tr>`;
@@ -2715,7 +2735,7 @@ function renderEnterpriseList() {
       <td class="cell-tickets">${fmtHrs(e._tix.ota)}</td>
       <td class="cell-tickets">${ragSingle(e._tixRag)}</td>
       <td class="cell-comm">${e._commScoreNum == null ? '—' : ragStack(e._commCounts)}</td>
-      <td class="cell-comm">${fmtNum(e._intCount)}</td>
+      <td class="cell-comm">${intCountCell(e._intCount)}</td>
       <td class="cell-comm">${ragSingle(e._commRag)}</td>
     </tr>`;
   });
@@ -2890,7 +2910,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:rowTix.cr, op:rowTix.op, sla:rowTix.sla }))}</td>
-        <td class="cell-comm">${fmtNum(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
+        <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
@@ -2942,7 +2962,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
       <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:totalStudioTix.cr, op:totalStudioTix.op, sla:totalStudioTix.sla }))}</td>
-      <td class="cell-comm">${fmtNum(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
+      <td class="cell-comm">${intCountCell(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
     </tr>`;
@@ -3098,7 +3118,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtHrs(r.otaMax)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:r.cr, op:r.op, sla:r.sla }))}</td>
         <td class="cell-comm">${commScoreCell}</td>
-        <td class="cell-comm">${fmtNum(commInteractionCount(r.eid, r.en))}</td>
+        <td class="cell-comm">${intCountCell(commInteractionCount(r.eid, r.en))}</td>
         <td class="cell-comm">${ragSingle(commFinalRag)}</td>
         <td class="cell-leader">${r.mbr?ragSingle(r.mbr):'—'}</td>
         <td class="cell-leader">${r.cf||'—'}</td>
@@ -3147,7 +3167,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtHrs(totalOta)}</td>
       <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:tCr, op:tOp, sla:rows.reduce((s,r)=>s+(Number(r.sla)||0),0) }))}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
-      <td class="cell-comm">${fmtNum(rows.reduce((s, r) => s + commInteractionCount(r.eid, r.en), 0))}</td>
+      <td class="cell-comm">${intCountCell(rows.reduce((s, r) => s + commInteractionCount(r.eid, r.en), 0))}</td>
       <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
       <td class="cell-leader">${ragStack(tMbr)}</td>
       <td class="cell-leader">—</td>
