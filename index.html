@@ -385,35 +385,51 @@
   </div>
 
   <div class="filter-bar">
-    <div class="filter-multi" data-fkey="region">
-      <span class="filter-label">Region</span>
-      <button type="button" class="ms-toggle" data-default="All Regions">All Regions</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group"><span class="filter-label">Region</span>
+      <select class="filter-select" id="f-region" data-fkey="region">
+        <option value="">All Regions</option>
+        <option value="AMER">AMER</option>
+        <option value="APAC">APAC</option>
+        <option value="EMEA">EMEA</option>
+      </select>
     </div>
-    <div class="filter-multi" data-fkey="segment">
-      <span class="filter-label">Customer Segment</span>
-      <button type="button" class="ms-toggle" data-default="All Segments">All Segments</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group"><span class="filter-label">Customer Segment</span>
+      <select class="filter-select" id="f-segment" data-fkey="segment">
+        <option value="">All Segments</option>
+        <option value="Ent">Ent</option>
+        <option value="Mid">Mid</option>
+        <option value="SMB">SMB</option>
+        <option value="Resellers">Resellers</option>
+      </select>
     </div>
-    <div class="filter-multi" data-fkey="manager">
-      <span class="filter-label">CSM Manager</span>
-      <button type="button" class="ms-toggle" data-default="All Managers">All Managers</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group"><span class="filter-label">CSM Manager</span>
+      <select class="filter-select" id="f-manager" data-fkey="manager">
+        <option value="">All Managers</option>
+        <option value="Rupesh Rawat">Rupesh Rawat</option>
+        <option value="Madhav Uppal">Madhav Uppal</option>
+        <option value="Jatin Makkar">Jatin Makkar</option>
+      </select>
     </div>
-    <div class="filter-multi" data-fkey="csm" id="g-csm">
-      <span class="filter-label">CSM</span>
-      <button type="button" class="ms-toggle" data-default="All CSMs">All CSMs</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group" id="g-csm"><span class="filter-label">CSM</span>
+      <select class="filter-select" id="f-csm" data-fkey="csm">
+        <option value="">All CSMs</option>
+      </select>
     </div>
-    <div class="filter-multi" data-fkey="acct">
-      <span class="filter-label">Account Type</span>
-      <button type="button" class="ms-toggle" data-default="All Types">All Types</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group"><span class="filter-label">Account Type</span>
+      <select class="filter-select" id="f-acct" data-fkey="acct">
+        <option value="">All Types</option>
+        <option value="FGD">FGD</option>
+        <option value="FSD">FSD</option>
+        <option value="ISD">ISD</option>
+        <option value="IGD">IGD</option>
+        <option value="Others">Others</option>
+        <option value="Partner">Partner</option>
+      </select>
     </div>
-    <div class="filter-multi" data-fkey="agent" id="g-agent">
-      <span class="filter-label">Agent</span>
-      <button type="button" class="ms-toggle" data-default="All Agents">All Agents</button>
-      <div class="ms-panel" hidden></div>
+    <div class="filter-group" id="g-agent"><span class="filter-label">Agent</span>
+      <select class="filter-select" id="f-agent" data-fkey="agent">
+        <option value="">All Agents</option>
+      </select>
     </div>
     <button class="filter-reset" id="f-reset">Reset filters</button>
   </div>
@@ -3153,8 +3169,7 @@ function attachDrills() {
       // Sync drill targets into the new multi-select filter state (arrays).
       if (kind === 'csm')     { state.filters.csm     = [value]; }
       if (kind === 'segment') { state.filters.segment = [value]; }
-      const drillGroup = document.querySelector('.filter-multi[data-fkey="' + kind + '"]');
-      if (drillGroup) updateMsLabel(drillGroup);
+      syncFilterSelect(kind);
       state.view = 'rooftop';
       renderAll();
     });
@@ -3179,8 +3194,6 @@ function populateCsmDropdown() {
   // "Unassigned CSM" so the filter always returns matches.
   const filtered = [...csms].filter(c => c.includes('@') || c === 'Unassigned CSM').sort();
   setFilterOptions('csm', filtered);
-  const group = document.querySelector('.filter-multi[data-fkey="csm"]');
-  if (group) updateMsLabel(group);
 }
 
 // Resolve a column name against the synonym table (case-insensitive).
@@ -3587,8 +3600,7 @@ document.querySelectorAll('.top-tab').forEach(t => {
     // (Multi-select aware: must be an array, not an empty string.)
     state.filters.csm = [];
     populateCsmDropdown();  // Refresh dropdown roster for the new tab
-    const csmGroup = document.querySelector('.filter-multi[data-fkey="csm"]');
-    if (csmGroup) updateMsLabel(csmGroup);
+    syncFilterSelect('csm');
     renderAll();
   });
 });
@@ -3696,135 +3708,71 @@ document.addEventListener('click', e => {
   downloadBlob(csv, name);
 });
 // ============================================================
-// MULTI-SELECT FILTER WIRING
+// FILTER WIRING (single-select <select> dropdowns)
 // ============================================================
-// Static option lists per filter key — used when the filter doesn't get its
-// options from dynamic data. CSM + Agent options come from the snapshots
-// (populated separately in populateAgentFilter / populateCsmFilter).
-const FILTER_STATIC_OPTIONS = {
-  region:  ['AMER', 'APAC', 'EMEA'],
-  segment: ['Ent', 'Mid', 'SMB', 'Reseller', 'Resellers'],
-  manager: ['Rupesh Rawat', 'Madhav Uppal', 'Jatin Makkar'],
-  acct:    ['FGD', 'FSD', 'ISD', 'IGD', 'Others', 'Partner']
-};
+// State is still stored as arrays (length 0 or 1) so getStudio() /
+// getVini() / csmMatches() can keep their multi-select-aware checks.
+// This is a deliberate revert from the multi-select popover UI — it was
+// too fragile across browser quirks. Plain native <select> works.
 const FILTER_KEYS = ['region','segment','manager','csm','acct','agent'];
 
-// Render checkbox options inside an .ms-panel for a given filter key.
-function renderMsOptions(group) {
-  const key   = group.dataset.fkey;
-  const panel = group.querySelector('.ms-panel');
-  const opts  = panel.dataset.options ? JSON.parse(panel.dataset.options)
-              : (FILTER_STATIC_OPTIONS[key] || []);
-  const selected = state.filters[key] || [];
-  const searchHtml = opts.length > 8
-    ? '<div class="ms-srch"><input type="text" placeholder="Search…" data-ms-search/></div>'
-    : '';
-  const items = opts.map(v => {
-    const safe = String(v).replace(/"/g, '&quot;');
-    const checked = selected.includes(v) ? ' checked' : '';
-    return `<label><input type="checkbox" value="${safe}"${checked}>${safe}</label>`;
-  }).join('');
-  panel.innerHTML = searchHtml + items + `
-    <div class="ms-clear">
-      <button type="button" data-ms-clear>Clear</button>
-      <span>${selected.length || 'no'} selected</span>
-    </div>`;
+// Update a single <select>'s `value` to reflect the current state. Used
+// after a programmatic state change (drill-down chips, reset, tab switch)
+// so the visible selection matches the filter.
+function syncFilterSelect(key) {
+  const el = document.getElementById('f-' + key);
+  if (!el) return;
+  const arr = state.filters[key] || [];
+  el.value = arr.length ? String(arr[0]) : '';
 }
+function syncAllFilterSelects() { FILTER_KEYS.forEach(syncFilterSelect); }
 
-// Update the toggle button's label to reflect current selection (count or first
-// item, depending on how many are picked).
-function updateMsLabel(group) {
-  const key = group.dataset.fkey;
-  const btn = group.querySelector('.ms-toggle');
-  const sel = state.filters[key] || [];
-  const def = btn.dataset.default || 'All';
-  if (!sel.length)        btn.textContent = def;
-  else if (sel.length === 1) btn.textContent = sel[0];
-  else                       btn.textContent = sel.length + ' selected';
-}
-
-// Close any open .ms-panel.
-function closeAllMsPanels() {
-  document.querySelectorAll('.ms-panel').forEach(p => p.hidden = true);
-}
-
-// Wire up all .filter-multi groups: toggle, change, clear, search.
-function wireFilterMultis() {
-  document.querySelectorAll('.filter-multi').forEach(group => {
-    const key   = group.dataset.fkey;
-    const btn   = group.querySelector('.ms-toggle');
-    const panel = group.querySelector('.ms-panel');
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const wasOpen = !panel.hidden;
-      closeAllMsPanels();
-      if (!wasOpen) {
-        renderMsOptions(group);   // re-render in case options changed
-        panel.hidden = false;
-      }
-    });
-    panel.addEventListener('click', e => e.stopPropagation());
-    panel.addEventListener('change', e => {
-      if (e.target.tagName !== 'INPUT' || e.target.type !== 'checkbox') return;
-      const checked = Array.from(panel.querySelectorAll('input[type=checkbox]:checked'))
-        .map(i => i.value);
-      state.filters[key] = checked;
-      updateMsLabel(group);
-      renderAll();
-    });
-    panel.addEventListener('input', e => {
-      if (!e.target.matches('[data-ms-search]')) return;
-      const q = e.target.value.toLowerCase();
-      panel.querySelectorAll('label').forEach(l => {
-        l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
-      });
-    });
-    panel.addEventListener('click', e => {
-      if (!e.target.matches('[data-ms-clear]')) return;
-      state.filters[key] = [];
-      panel.querySelectorAll('input[type=checkbox]').forEach(i => i.checked = false);
-      updateMsLabel(group);
-      renderAll();
-    });
-    updateMsLabel(group);
-  });
-}
-
-// Click outside to close.
-document.addEventListener('click', closeAllMsPanels);
-
-// Replace the old per-select populators: write into panel.dataset.options so
-// next time the panel opens, renderMsOptions sees the fresh list.
+// Populate a <select> with dynamic options (CSM / Agent). Preserves the
+// user's selection if it's still present after the refresh.
 function setFilterOptions(key, values) {
-  const group = document.querySelector('.filter-multi[data-fkey="'+key+'"]');
-  if (!group) return;
-  const panel = group.querySelector('.ms-panel');
-  panel.dataset.options = JSON.stringify(values);
+  const el = document.getElementById('f-' + key);
+  if (!el) return;
+  const cur = el.value;
+  const defaultLabel = key === 'csm'   ? 'All CSMs'
+                     : key === 'agent' ? 'All Agents'
+                     : 'All';
+  el.innerHTML = '<option value="">' + defaultLabel + '</option>' +
+    (values || []).map(v => {
+      const safe = String(v).replace(/"/g, '&quot;');
+      return '<option value="' + safe + '">' + safe + '</option>';
+    }).join('');
+  if (cur && values && values.includes(cur)) el.value = cur;
+  else { el.value = ''; state.filters[key] = []; }
 }
 
-// Wire everything once the DOM is ready.
-wireFilterMultis();
+// Wire every <select.filter-select> with a single change handler that
+// writes back into state.filters as a length-0 or length-1 array.
+FILTER_KEYS.forEach(key => {
+  const el = document.getElementById('f-' + key);
+  if (!el) return;
+  el.addEventListener('change', e => {
+    const v = e.target.value;
+    state.filters[key] = v ? [v] : [];
+    renderAll();
+  });
+});
 
-// Defensive: ensure every filter is an array (a stray string assignment
-// — e.g. legacy code or a hot-reload race — would otherwise make
-// state.filters[key].length / .includes() behave wrong against checkbox
-// values). Normalises once at startup; the multi-select wiring above
-// then keeps them as arrays.
+document.getElementById('f-reset').addEventListener('click', () => {
+  state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
+  state.sort = { studioRooftop: null, viniRooftop: null, entList: null };
+  state.rooftopContext = { kind:'all', value:null };
+  syncAllFilterSelects();
+  renderAll();
+});
+
+// Defensive: any stray non-array value coerced to array on load.
 (function normaliseFilters() {
-  const k = ['region','segment','manager','csm','acct','agent'];
-  k.forEach(key => {
+  FILTER_KEYS.forEach(key => {
     const v = state.filters[key];
     if (!Array.isArray(v)) state.filters[key] = v ? [String(v)] : [];
   });
 })();
-
-document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
-  state.sort = { studioRooftop: null, viniRooftop: null };
-  state.rooftopContext = { kind:'all', value:null };
-  document.querySelectorAll('.filter-multi').forEach(updateMsLabel);
-  renderAll();
-});
+syncAllFilterSelects();
 
 // rid → Set<agentType> built from the Vini daily tab (gid=1616842841 col B
 // "Agent Type"). This is the source of truth for the Agent filter per user
@@ -3859,8 +3807,7 @@ function populateAgentFilter() {
   setFilterOptions('agent', sorted);
   // Prune stale selections (an agent that no longer exists in the data).
   state.filters.agent = (state.filters.agent || []).filter(v => agents.has(v));
-  const group = document.querySelector('.filter-multi[data-fkey="agent"]');
-  if (group) updateMsLabel(group);
+  syncFilterSelect('agent');
 }
 // Show / hide the Agent filter based on the active product (Vini only —
 // Studio rows don't carry an agent dimension).
