@@ -3584,8 +3584,11 @@ document.querySelectorAll('.top-tab').forEach(t => {
     state.view = 'overview';
     // Reset CSM filter when crossing tabs — Studio's "Ankur Batra" and Vini's
     // "ankur.batra@spyne.ai" are different strings and shouldn't carry across.
-    state.filters.csm = '';
+    // (Multi-select aware: must be an array, not an empty string.)
+    state.filters.csm = [];
     populateCsmDropdown();  // Refresh dropdown roster for the new tab
+    const csmGroup = document.querySelector('.filter-multi[data-fkey="csm"]');
+    if (csmGroup) updateMsLabel(csmGroup);
     renderAll();
   });
 });
@@ -3801,6 +3804,19 @@ function setFilterOptions(key, values) {
 
 // Wire everything once the DOM is ready.
 wireFilterMultis();
+
+// Defensive: ensure every filter is an array (a stray string assignment
+// — e.g. legacy code or a hot-reload race — would otherwise make
+// state.filters[key].length / .includes() behave wrong against checkbox
+// values). Normalises once at startup; the multi-select wiring above
+// then keeps them as arrays.
+(function normaliseFilters() {
+  const k = ['region','segment','manager','csm','acct','agent'];
+  k.forEach(key => {
+    const v = state.filters[key];
+    if (!Array.isArray(v)) state.filters[key] = v ? [String(v)] : [];
+  });
+})();
 
 document.getElementById('f-reset').addEventListener('click', () => {
   state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
