@@ -1063,7 +1063,7 @@ function sortViniRows(rows, sortState) {
       getter = r => acctTypeOf(r.ct, r.cst);
       break;
     case 'tixRag':
-      getter = r => ragSortKey(computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+      getter = r => ragSortKey(computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
       break;
     case 'commScore':
       getter = r => scoreValue(csatRagCountsForInRange(r.eid, r.en), COMM_WEIGHTS);
@@ -1076,7 +1076,7 @@ function sortViniRows(rows, sortState) {
         const counts = csatRagCountsForInRange(r.eid, r.en);
         const overall = computeOverallRAG([
           r.ps,
-          computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }),
+          computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }),
           scoreRag(counts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS)
         ]);
         return ragSortKey(overall);
@@ -1571,14 +1571,83 @@ function inventoryRag(v) {
 //
 // For Studio, the same formula is reused with Studio-native pillars:
 // Payment RAG + Ticket RAG + Communication RAG (Studio has no per-row RoI).
-function computeOverallRAG(rags) {
-  const w = { Green: 100, Amber: 60, Red: 20 };
-  const valid = rags.filter(r => r && r !== 'NA' && w[r] != null);
-  if (!valid.length) return 'NA';
-  const score = valid.reduce((s, r) => s + w[r], 0) / valid.length;
+// Map a Usage Factor (0..1+) → G/A/R bucket so it can feed into the SaaS
+// Overall RAG. Mirrors ufColorClass thresholds.
+function ufColorClassToRag(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0) return 'NA';
+  if (n >= 0.70) return 'Green';
+  if (n >= 0.40) return 'Amber';
+  return 'Red';
+}
+// Overall RAG — Spyne SaaS spec. Weighted-score blend of four health buckets:
+//   Usage Factor (#Actual / #Contracted)         weight 2
+//   Payment   (T-1/T-2/T-3 worst-wins)           weight 3   ← highest
+//   Tickets   (SLA Violated / actively-open)     weight 2
+//   Comm Final RAG (CSAT-derived)                weight 1
+//
+// Rationale for a SaaS company like Spyne:
+//   - Payment is the single biggest churn signal (a Red here means money
+//     is at risk RIGHT NOW), so it carries the most weight.
+//   - Usage answers "are they getting value?" — the second-biggest
+//     leading indicator of churn.
+//   - Tickets answer "are they having a bad experience?" — same weight
+//     as Usage because friction drives churn just as quickly.
+//   - Communication (CSAT) is a softer signal of relationship health
+//     and gets the smallest weight.
+//
+// Scoring: Green=100, Amber=60, Red=20. NA buckets are excluded from
+// both numerator and denominator (so an account with no CSAT readings
+// isn't penalised). Composite cutoffs: >=80 Green, >=60 Amber, else Red.
+// NA only when EVERY bucket is NA.
+//
+// Backwards compatible: existing callers pass an array of RAGs (in any
+// order). New callers should pass {usage, payment, ticket, comm} to get
+// the weighted version below.
+const OVERALL_RAG_WEIGHTS = { usage: 2, payment: 3, ticket: 2, comm: 1 };
+const OVERALL_RAG_VALUE   = { Green: 100, Amber: 60, Red: 20 };
+function _ragValue(r) {
+  if (r && OVERALL_RAG_VALUE[r] != null) return OVERALL_RAG_VALUE[r];
+  return null;
+}
+function computeOverallRagSaas(parts) {
+  let sum = 0, weightUsed = 0;
+  for (const k of Object.keys(OVERALL_RAG_WEIGHTS)) {
+    const v = _ragValue(parts[k]);
+    if (v == null) continue;
+    sum += v * OVERALL_RAG_WEIGHTS[k];
+    weightUsed += OVERALL_RAG_WEIGHTS[k];
+  }
+  if (!weightUsed) return 'NA';
+  const score = sum / weightUsed;
   if (score >= 80) return 'Green';
   if (score >= 60) return 'Amber';
   return 'Red';
+}
+function computeOverallRAG(rags) {
+  // Legacy array signature → route to the SaaS weighted blend. The convention
+  // across the codebase has been [payment, ticket, comm] (3 inputs) or
+  // [roiMtdRag, payment, comm] (3 inputs). Map by position to the same
+  // weighted buckets so the new spec applies everywhere without rewriting
+  // every call-site.
+  if (Array.isArray(rags)) {
+    // Positions assumed: [payment, ticket, comm] OR [usage, payment, ticket, comm]
+    if (rags.length === 4) {
+      return computeOverallRagSaas({ usage: rags[0], payment: rags[1], ticket: rags[2], comm: rags[3] });
+    }
+    if (rags.length === 3) {
+      return computeOverallRagSaas({ payment: rags[0], ticket: rags[1], comm: rags[2] });
+    }
+    // Unknown shape — fall back to old equal-weight average.
+    const valid = rags.filter(r => r && r !== 'NA' && OVERALL_RAG_VALUE[r] != null);
+    if (!valid.length) return 'NA';
+    const score = valid.reduce((s, r) => s + OVERALL_RAG_VALUE[r], 0) / valid.length;
+    if (score >= 80) return 'Green';
+    if (score >= 60) return 'Amber';
+    return 'Red';
+  }
+  // Object signature (new) → direct call into the SaaS blend.
+  return computeOverallRagSaas(rags);
 }
 
 // Convert an MTD RoI Factor (Appt Value / MRR) into a G/A/R/NA bucket so it
@@ -1851,7 +1920,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
       if (!eid || seenEidT.has(eid)) continue;
       seenEidT.add(eid);
       const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-      const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+      const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
       counts[rag] = (counts[rag] || 0) + 1;
     }
     return counts;
@@ -2062,7 +2131,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const tixAgg = aggregateTicketsForEids(allByEid.map(r => r.eid));
   const ota = tixAgg.ota;
   const res = tixAgg.res;
-  const trag = countBy(allByEid, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+  const trag = countBy(allByEid, r => computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
   // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
   //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
   const ticketRag = scoreRag(trag, 85, 65);
@@ -2195,7 +2264,7 @@ function renderKpiStudio(rows, targetId) {
       if (!eid || seenT.has(eid)) continue;
       seenT.add(eid);
       const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-      const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+      const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
       counts[rag] = (counts[rag] || 0) + 1;
     }
     return counts;
@@ -2293,7 +2362,7 @@ function renderKpiVini(rows, targetId) {
   // Ticket RAG (filter-level) — per-enterprise computeTicketRAG distribution
   // weighted with the default Payment/Ticket weights (G:100, A:50, R:0) and
   // the 85/65 thresholds used in the per-row Account Level RAG.
-  const trag = countBy(dedupedActiveByEid, r => computeTicketRAG({ op: r.op, ota: r.otaMax, res: r.avgRes, cr: r.cr }));
+  const trag = countBy(dedupedActiveByEid, r => computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
   const ticketRagOverall = scoreRag(trag, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
@@ -2673,7 +2742,7 @@ function renderRooftop() {
       // cached ticket cols. Computed via aggregateTicketsForEids([eid], STUDIO_TIX).
       const rEidT = r[S_COL.eid] || r[S_COL.en];
       const rTixEnt = aggregateTicketsForEids([rEidT], STUDIO_TIX);
-      const rTrag = computeTicketRAG({ op:rTixEnt.op, ota:rTixEnt.ota, res:rTixEnt.res, cr:rTixEnt.cr });
+      const rTrag = computeTicketRAG({ cr:rTixEnt.cr, op:rTixEnt.op, sla:rTixEnt.sla });
       const rComm = csatRagInRange(r[S_COL.eid], r[S_COL.en]);
       inc(sComm, rComm);
       inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
@@ -2704,11 +2773,13 @@ function renderRooftop() {
         <td class="frozen frozen-4 cell-acct">${acctTypePill(r[S_COL.ct], r[S_COL.cst])}</td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-final">${ragSingle(computeOverallRAG([
-          r[S_COL.prag],
-          computeTicketRAG({ op:r[S_COL.unr], ota:r[S_COL.ota], res:r[S_COL.res], cr:r[S_COL.cr] }),
-          csatRagInRange(r[S_COL.eid], r[S_COL.en])
-        ]))}</td>
+        <td class="cell-final">${ragSingle(computeOverallRAG({
+          usage:   ufColorClassToRag(r[S_COL.uf]),
+          payment: r[S_COL.prag],
+          ticket:  (() => { const _t = aggregateTicketsForEids([r[S_COL.eid]], STUDIO_TIX);
+                            return computeTicketRAG({ cr:_t.cr, op:_t.op, sla:_t.sla }); })(),
+          comm:    csatRagInRange(r[S_COL.eid], r[S_COL.en])
+        }))}</td>
         <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
@@ -2748,7 +2819,7 @@ function renderRooftop() {
         if (seenT.has(eid)) continue;
         seenT.add(eid);
         const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-        const rag = computeTicketRAG({ op: ent.op, ota: ent.ota, res: ent.res, cr: ent.cr });
+        const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
         counts[rag] = (counts[rag] || 0) + 1;
       }
       return counts;
@@ -2951,7 +3022,7 @@ function renderRooftop() {
     const totalTixAgg = aggregateTicketsForEids(rows.map(r => r.eid));
     const totalOta = totalTixAgg.ota;
     const totalRes = totalTixAgg.res;
-    const totalTrag = computeTicketRAG({ op:tOp, ota:totalOta, res:totalRes, cr:tCr });
+    const totalTrag = computeTicketRAG({ cr:tCr, op:tOp, sla:totalTixAgg.sla });
     const totalFinalComm = scoreRag(tCommScore, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
     const totalCommScoreNum = scoreValue(tCommScore, COMM_WEIGHTS);
     html += `<tr class="total-row">
