@@ -786,6 +786,14 @@ VINI_STAGE.forEach(s => {
   if (s.ps)     a.ps     = s.ps;
 });
 
+// Cache for the Vini rid→Set<AgentType> map, populated lazily inside
+// getVini() and invalidated each renderAll(). Hoisted up here (and using
+// `var` rather than `let`) so any early call into getVini() or renderAll()
+// — e.g. via refreshAllSheets fired on window.load — can read/assign it
+// without hitting the temporal-dead-zone error we used to throw when the
+// declaration sat further down the file.
+var __viniAgentTypesByRid = null;
+
 let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
@@ -3767,9 +3775,10 @@ document.getElementById('f-reset').addEventListener('click', () => {
 // "Agent Type"). This is the source of truth for the Agent filter per user
 // spec — VINI_STAGE's "Agent Opted" value diverged in some rows. Rebuilt on
 // demand so refreshes pick up newly-synced rows automatically.
-// Cache populated lazily inside getVini() and invalidated each renderAll so
-// the rid→AgentType lookup is built once per render instead of once per row.
-let __viniAgentTypesByRid = null;
+// (Declaration moved up — see top of script. Kept here as a comment for
+// breadcrumbs.) Cache populated lazily inside getVini() and invalidated
+// each renderAll so the rid→AgentType lookup is built once per render
+// instead of once per row.
 function agentTypesByRid() {
   const map = new Map();
   if (!viniRows || !viniRows.length || V_COL.agent == null || V_COL.rid == null) return map;
