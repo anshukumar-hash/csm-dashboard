@@ -48,6 +48,41 @@
 
   .filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
   .filter-group{display:flex;flex-direction:column;gap:4px;min-width:160px}
+  /* Multi-select custom dropdown — looks like the existing filter-select but
+     opens a checkbox list so multiple values can be picked. Empty selection
+     means "All". */
+  .filter-multi{position:relative;display:flex;flex-direction:column;gap:4px;min-width:160px}
+  .ms-toggle{padding:6px 28px 6px 10px;font-size:12.5px;border:1px solid var(--border-strong);
+    border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;
+    outline:none;min-height:30px;text-align:left;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;position:relative}
+  .ms-toggle:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+  .ms-toggle::after{content:'▾';position:absolute;right:8px;top:50%;transform:translateY(-50%);
+    font-size:11px;color:var(--text-3);pointer-events:none}
+  .ms-panel{position:absolute;top:calc(100% + 4px);left:0;min-width:100%;max-width:280px;
+    background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;
+    box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:280px;overflow-y:auto;z-index:25;padding:0}
+  .ms-panel[hidden]{display:none}
+  .ms-panel .ms-srch{padding:6px;border-bottom:1px solid var(--border)}
+  .ms-panel .ms-srch input{width:100%;padding:4px 8px;font-size:12px;border:1px solid var(--border);
+    border-radius:4px;outline:none}
+  .ms-panel label{display:flex;gap:6px;padding:5px 10px;font-size:12.5px;cursor:pointer;
+    align-items:center;line-height:1.3}
+  .ms-panel label:hover{background:rgba(79,70,229,.06)}
+  .ms-panel label input{margin:0;cursor:pointer}
+  .ms-panel .ms-clear{display:flex;justify-content:space-between;padding:6px 10px;
+    border-top:1px solid var(--border);font-size:11px;background:#FAFBFC;position:sticky;bottom:0}
+  .ms-panel .ms-clear button{padding:3px 8px;font-size:11px;border:1px solid var(--border-strong);
+    background:transparent;border-radius:4px;cursor:pointer;color:var(--text-2)}
+  .ms-panel .ms-clear button:hover{background:rgba(79,70,229,.06);color:var(--blue)}
+  /* Search bar shown above tables (Rooftop List + Enterprise List). */
+  .ent-search{display:flex;gap:8px;align-items:center;padding:8px 16px;
+    border-bottom:1px solid var(--border);background:#FAFBFC}
+  .ent-search label{font-size:11.5px;color:var(--text-3);font-weight:500;flex-shrink:0}
+  .ent-search input{flex:1;padding:5px 10px;font-size:12.5px;border:1px solid var(--border-strong);
+    border-radius:6px;outline:none;background:var(--surface)}
+  .ent-search input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+  .ent-search .hint{font-size:10.5px;color:var(--text-3);font-style:italic;flex-shrink:0}
   .filter-label{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
   .filter-select{padding:6px 10px;font-size:12.5px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;outline:none;min-height:30px}
   .filter-select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
@@ -350,43 +385,35 @@
   </div>
 
   <div class="filter-bar">
-    <div class="filter-group"><span class="filter-label">Region</span>
-      <select class="filter-select" id="f-region">
-        <option value="" selected>All</option>
-        <option value="AMER">AMER</option>
-        <option value="APAC">APAC</option>
-        <option value="EMEA">EMEA</option>
-      </select>
+    <div class="filter-multi" data-fkey="region">
+      <span class="filter-label">Region</span>
+      <button type="button" class="ms-toggle" data-default="All Regions">All Regions</button>
+      <div class="ms-panel" hidden></div>
     </div>
-    <div class="filter-group"><span class="filter-label">Customer Segment</span>
-      <select class="filter-select" id="f-segment">
-        <option value="">All</option><option value="Ent">Ent</option><option value="Mid">Mid</option><option value="SMB">SMB</option><option value="Reseller">Reseller</option>
-      </select>
+    <div class="filter-multi" data-fkey="segment">
+      <span class="filter-label">Customer Segment</span>
+      <button type="button" class="ms-toggle" data-default="All Segments">All Segments</button>
+      <div class="ms-panel" hidden></div>
     </div>
-    <div class="filter-group"><span class="filter-label">CSM Manager</span>
-      <select class="filter-select" id="f-manager">
-        <option value="">All Managers</option>
-        <option value="Rupesh Rawat">Rupesh Rawat</option>
-        <option value="Madhav Uppal">Madhav Uppal</option>
-        <option value="Jatin Makkar">Jatin Makkar</option>
-      </select>
+    <div class="filter-multi" data-fkey="manager">
+      <span class="filter-label">CSM Manager</span>
+      <button type="button" class="ms-toggle" data-default="All Managers">All Managers</button>
+      <div class="ms-panel" hidden></div>
     </div>
-    <div class="filter-group" id="g-csm"><span class="filter-label">CSM</span>
-      <select class="filter-select" id="f-csm"><option value="">All CSMs</option></select>
+    <div class="filter-multi" data-fkey="csm" id="g-csm">
+      <span class="filter-label">CSM</span>
+      <button type="button" class="ms-toggle" data-default="All CSMs">All CSMs</button>
+      <div class="ms-panel" hidden></div>
     </div>
-    <div class="filter-group"><span class="filter-label">Account Type</span>
-      <select class="filter-select" id="f-acct">
-        <option value="">All</option>
-        <option value="FGD">FGD</option>
-        <option value="FSD">FSD</option>
-        <option value="ISD">ISD</option>
-        <option value="IGD">IGD</option>
-        <option value="Others">Others</option>
-        <option value="Partner">Partner</option>
-      </select>
+    <div class="filter-multi" data-fkey="acct">
+      <span class="filter-label">Account Type</span>
+      <button type="button" class="ms-toggle" data-default="All Types">All Types</button>
+      <div class="ms-panel" hidden></div>
     </div>
-    <div class="filter-group" id="g-agent"><span class="filter-label">Agent</span>
-      <select class="filter-select" id="f-agent"><option value="">All Agents</option></select>
+    <div class="filter-multi" data-fkey="agent" id="g-agent">
+      <span class="filter-label">Agent</span>
+      <button type="button" class="ms-toggle" data-default="All Agents">All Agents</button>
+      <div class="ms-panel" hidden></div>
     </div>
     <button class="filter-reset" id="f-reset">Reset filters</button>
   </div>
@@ -448,6 +475,11 @@
           <span style="font-size:11.5px;color:var(--text-3)" id="enterprise-list-count"></span>
           <button class="csv-btn">↓ Download CSV</button>
         </div>
+      </div>
+      <div class="ent-search">
+        <label for="ent-search-input">🔍 Search:</label>
+        <input id="ent-search-input" type="text" placeholder="Filter by enterprise name or ID…" autocomplete="off"/>
+        <span class="hint">case-insensitive, matches name or eid</span>
       </div>
       <div class="table-wrap" id="enterprise-list-wrap"></div>
     </div>
@@ -757,7 +789,10 @@ VINI_STAGE.forEach(s => {
 let state = {
   product:'studio', view:'overview', period:'MTD',
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
-  filters: { region:'', segment:'', manager:'', csm:'', acct:'', agent:'' },
+  // Filters are now ARRAYS so every dropdown supports multi-select. Empty
+  // array = "no filter applied" (i.e. show all). Filter checks below use
+  // .length and .includes() instead of strict equality.
+  filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
   sort: { studioRooftop: null, viniRooftop: null },
   rooftopContext: { kind:'all', value:null },
@@ -1139,69 +1174,55 @@ function acctTypePill(ct, cst) {
   return `<span class="acct-pill">${code}</span>`;
 }
 function csmMatches(csm) {
-  if (state.filters.csm && csm !== state.filters.csm) return false;
-  if (state.filters.manager) {
+  // Multi-select aware: empty array = "no filter, allow everyone".
+  if (state.filters.csm && state.filters.csm.length && !state.filters.csm.includes(csm)) return false;
+  if (state.filters.manager && state.filters.manager.length) {
     const mgr = getManager(csm);
-    if (mgr !== state.filters.manager) return false;
+    if (!state.filters.manager.includes(mgr)) return false;
   }
   return true;
 }
 function getStudio() {
   return D.s_rows.filter(r => {
-    if (state.filters.segment && r[S_COL.seg] !== state.filters.segment) return false;
+    const f = state.filters;
+    if (f.segment.length && !f.segment.includes(r[S_COL.seg])) return false;
     if (!csmMatches(r[S_COL.csm])) return false;
-    // Region filter (per user spec): read from S_COL.region (gid=603796861 col I)
-    // and match against the picked region. Empty/blank region defaults to AMER
-    // so legacy rows that haven't been region-tagged still show under AMER.
-    if (state.filters.region) {
+    if (f.region.length) {
       const rowRegion = String(r[S_COL.region] || 'AMER').toUpperCase();
-      if (rowRegion !== state.filters.region.toUpperCase()) return false;
+      if (!f.region.map(x => x.toUpperCase()).includes(rowRegion)) return false;
     }
-    if (state.filters.acct) {
-      if (acctTypeOf(r[S_COL.ct], r[S_COL.cst]) !== state.filters.acct) return false;
+    if (f.acct.length) {
+      if (!f.acct.includes(acctTypeOf(r[S_COL.ct], r[S_COL.cst]))) return false;
     }
     return true;
   });
 }
 function getVini() {
   return viniAggregateRooftops().filter(r => {
-    // Spec: include only rows where MRR or ARR is mentioned (any positive value).
-    // ParseNum at bundle time already coerced "#N/A" and blanks to 0.
+    const f = state.filters;
     const hasMoney = (Number(r.mrr) > 0) || (Number(r.arr) > 0);
     if (!hasMoney) return false;
-    if (state.filters.segment && r.seg !== state.filters.segment) return false;
-    // Region filter: read region from the row data (sheet column K). Blank
-    // region defaults to AMER for now; change to '' once data is fully populated.
+    if (f.segment.length && !f.segment.includes(r.seg)) return false;
     const rowRegion = (r.region || 'AMER').toUpperCase();
-    if (state.filters.region && rowRegion !== state.filters.region.toUpperCase()) return false;
-    // CSM / Manager filter: 'Unassigned CSM' rooftops appear under default
-    // ("All CSMs" + "All Managers") but are excluded when an explicit pick is made.
-    if (state.filters.csm || state.filters.manager) {
+    if (f.region.length && !f.region.map(x => x.toUpperCase()).includes(rowRegion)) return false;
+    if (f.csm.length || f.manager.length) {
       if (r.csm === 'Unassigned CSM') return false;
       if (!csmMatches(r.csm)) return false;
     }
-    if (state.filters.acct) {
-      if (acctTypeOf(r.ct, r.cst) !== state.filters.acct) return false;
-    }
-    if (state.filters.agent) {
-      // Vini-only filter: match against ALL Agent Type values seen for the
-      // rooftop in viniRows (gid=1616842841 col B), case- and whitespace-
-      // insensitive. Studio rows ignore this filter since getStudio() doesn't
-      // check it. The earlier implementation compared against r.agent which
-      // came from VINI_STAGE's "Agent Opted" (gid=674556270 col E) — that
-      // diverged from the daily-tab Agent Type for some contracts, breaking
-      // the filter for those rooftops.
-      const wantAg = String(state.filters.agent || '').trim().toLowerCase();
+    if (f.acct.length && !f.acct.includes(acctTypeOf(r.ct, r.cst))) return false;
+    if (f.agent.length) {
+      // Match against ALL Agent Type values seen for the rooftop in viniRows
+      // (gid=1616842841 col B). Picks any one of the selected agents = keep.
+      // Case + whitespace insensitive. Fallback to contract-level r.agent for
+      // rooftops with no daily history yet.
       if (!__viniAgentTypesByRid) __viniAgentTypesByRid = agentTypesByRid();
       const set = __viniAgentTypesByRid.get(r.rid);
+      const wants = f.agent.map(x => String(x || '').trim().toLowerCase());
       let hit = false;
       if (set) for (const a of set) {
-        if (a.trim().toLowerCase() === wantAg) { hit = true; break; }
+        if (wants.includes(a.trim().toLowerCase())) { hit = true; break; }
       }
-      // Fallback: contract-level "Agent Opted" (still works for normalized
-      // rows) so the filter degrades gracefully if a rooftop has no daily
-      // history yet.
-      if (!hit && String(r.agent || '').trim().toLowerCase() === wantAg) hit = true;
+      if (!hit && wants.includes(String(r.agent || '').trim().toLowerCase())) hit = true;
       if (!hit) return false;
     }
     return true;
@@ -2563,9 +2584,17 @@ function renderEnterpriseList() {
     });
   }
   // Default order: ARR DESC (biggest accounts first).
-  const sorted = [...ents.values()].sort((a, b) => (b.arr || 0) - (a.arr || 0));
+  let sorted = [...ents.values()].sort((a, b) => (b.arr || 0) - (a.arr || 0));
+  // Search filter — name / eid case-insensitive substring.
+  const q = (state.entListSearch || '').trim().toLowerCase();
+  if (q) {
+    sorted = sorted.filter(e =>
+      (e.en || '').toLowerCase().indexOf(q) >= 0 ||
+      (e.eid || '').toLowerCase().indexOf(q) >= 0
+    );
+  }
   document.getElementById('enterprise-list-count').textContent =
-    `· ${sorted.length} enterprise${sorted.length === 1 ? '' : 's'}`;
+    `· ${sorted.length} enterprise${sorted.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}`;
   const TIX = isStudio ? STUDIO_TIX : VINI_TIX;
   let html = '<table class="data ent-list"><thead>' +
     '<tr class="group">' +
@@ -3075,8 +3104,11 @@ function attachDrills() {
       // Sync to filters so when user navigates back to Overview the chip stays selected.
       // Drill kinds that map to a filter dropdown: csm, segment.
       // Other drill kinds (agent, stage) don't have a top filter — they only narrow the rooftop view.
-      if (kind === 'csm')     { state.filters.csm     = value; document.getElementById('f-csm').value     = value; }
-      if (kind === 'segment') { state.filters.segment = value; document.getElementById('f-segment').value = value; }
+      // Sync drill targets into the new multi-select filter state (arrays).
+      if (kind === 'csm')     { state.filters.csm     = [value]; }
+      if (kind === 'segment') { state.filters.segment = [value]; }
+      const drillGroup = document.querySelector('.filter-multi[data-fkey="' + kind + '"]');
+      if (drillGroup) updateMsLabel(drillGroup);
       state.view = 'rooftop';
       renderAll();
     });
@@ -3088,7 +3120,6 @@ function attachDrills() {
 // in the other product simply returns no rows when you switch tabs — which is
 // the correct behavior since the two products are independent.
 function populateCsmDropdown() {
-  const sel = document.getElementById('f-csm');
   const csms = new Set();
   if (state.product === 'studio') {
     Object.keys(MANAGER_MAP).forEach(k => csms.add(k));
@@ -3097,13 +3128,13 @@ function populateCsmDropdown() {
     Object.values(VINI_RID_TO_CSM).forEach(v => { if (v) csms.add(v); });
   }
   // Keep only entries that actually match data rows. The CSM column on
-  // s_rows / vini_stage stores email IDs (e.g. "aman.seth@spyne.ai"), but
-  // MANAGER_MAP keys are display names ("Aman Seth"). Show only emails +
-  // the sentinel "Unassigned CSM" so the filter always returns matches.
-  const filtered = [...csms].filter(c => c.includes('@') || c === 'Unassigned CSM');
-  sel.innerHTML = '<option value="">All CSMs</option>'
-    + filtered.sort().map(c => `<option value="${c}">${c}</option>`).join('');
-  sel.value = state.filters.csm;
+  // s_rows / vini_stage stores email IDs (e.g. "aman.seth@spyne.ai"); the
+  // MANAGER_MAP keys are display names. Show only emails + the sentinel
+  // "Unassigned CSM" so the filter always returns matches.
+  const filtered = [...csms].filter(c => c.includes('@') || c === 'Unassigned CSM').sort();
+  setFilterOptions('csm', filtered);
+  const group = document.querySelector('.filter-multi[data-fkey="csm"]');
+  if (group) updateMsLabel(group);
 }
 
 // Resolve a column name against the synonym table (case-insensitive).
@@ -3614,14 +3645,121 @@ document.addEventListener('click', e => {
   const name = `${product}-${view}-${slugifyForFilename(title)}-${stamp}.csv`;
   downloadBlob(csv, name);
 });
+// ============================================================
+// MULTI-SELECT FILTER WIRING
+// ============================================================
+// Static option lists per filter key — used when the filter doesn't get its
+// options from dynamic data. CSM + Agent options come from the snapshots
+// (populated separately in populateAgentFilter / populateCsmFilter).
+const FILTER_STATIC_OPTIONS = {
+  region:  ['AMER', 'APAC', 'EMEA'],
+  segment: ['Ent', 'Mid', 'SMB', 'Reseller', 'Resellers'],
+  manager: ['Rupesh Rawat', 'Madhav Uppal', 'Jatin Makkar'],
+  acct:    ['FGD', 'FSD', 'ISD', 'IGD', 'Others', 'Partner']
+};
+const FILTER_KEYS = ['region','segment','manager','csm','acct','agent'];
+
+// Render checkbox options inside an .ms-panel for a given filter key.
+function renderMsOptions(group) {
+  const key   = group.dataset.fkey;
+  const panel = group.querySelector('.ms-panel');
+  const opts  = panel.dataset.options ? JSON.parse(panel.dataset.options)
+              : (FILTER_STATIC_OPTIONS[key] || []);
+  const selected = state.filters[key] || [];
+  const searchHtml = opts.length > 8
+    ? '<div class="ms-srch"><input type="text" placeholder="Search…" data-ms-search/></div>'
+    : '';
+  const items = opts.map(v => {
+    const safe = String(v).replace(/"/g, '&quot;');
+    const checked = selected.includes(v) ? ' checked' : '';
+    return `<label><input type="checkbox" value="${safe}"${checked}>${safe}</label>`;
+  }).join('');
+  panel.innerHTML = searchHtml + items + `
+    <div class="ms-clear">
+      <button type="button" data-ms-clear>Clear</button>
+      <span>${selected.length || 'no'} selected</span>
+    </div>`;
+}
+
+// Update the toggle button's label to reflect current selection (count or first
+// item, depending on how many are picked).
+function updateMsLabel(group) {
+  const key = group.dataset.fkey;
+  const btn = group.querySelector('.ms-toggle');
+  const sel = state.filters[key] || [];
+  const def = btn.dataset.default || 'All';
+  if (!sel.length)        btn.textContent = def;
+  else if (sel.length === 1) btn.textContent = sel[0];
+  else                       btn.textContent = sel.length + ' selected';
+}
+
+// Close any open .ms-panel.
+function closeAllMsPanels() {
+  document.querySelectorAll('.ms-panel').forEach(p => p.hidden = true);
+}
+
+// Wire up all .filter-multi groups: toggle, change, clear, search.
+function wireFilterMultis() {
+  document.querySelectorAll('.filter-multi').forEach(group => {
+    const key   = group.dataset.fkey;
+    const btn   = group.querySelector('.ms-toggle');
+    const panel = group.querySelector('.ms-panel');
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const wasOpen = !panel.hidden;
+      closeAllMsPanels();
+      if (!wasOpen) {
+        renderMsOptions(group);   // re-render in case options changed
+        panel.hidden = false;
+      }
+    });
+    panel.addEventListener('click', e => e.stopPropagation());
+    panel.addEventListener('change', e => {
+      if (e.target.tagName !== 'INPUT' || e.target.type !== 'checkbox') return;
+      const checked = Array.from(panel.querySelectorAll('input[type=checkbox]:checked'))
+        .map(i => i.value);
+      state.filters[key] = checked;
+      updateMsLabel(group);
+      renderAll();
+    });
+    panel.addEventListener('input', e => {
+      if (!e.target.matches('[data-ms-search]')) return;
+      const q = e.target.value.toLowerCase();
+      panel.querySelectorAll('label').forEach(l => {
+        l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+    panel.addEventListener('click', e => {
+      if (!e.target.matches('[data-ms-clear]')) return;
+      state.filters[key] = [];
+      panel.querySelectorAll('input[type=checkbox]').forEach(i => i.checked = false);
+      updateMsLabel(group);
+      renderAll();
+    });
+    updateMsLabel(group);
+  });
+}
+
+// Click outside to close.
+document.addEventListener('click', closeAllMsPanels);
+
+// Replace the old per-select populators: write into panel.dataset.options so
+// next time the panel opens, renderMsOptions sees the fresh list.
+function setFilterOptions(key, values) {
+  const group = document.querySelector('.filter-multi[data-fkey="'+key+'"]');
+  if (!group) return;
+  const panel = group.querySelector('.ms-panel');
+  panel.dataset.options = JSON.stringify(values);
+}
+
+// Wire everything once the DOM is ready.
+wireFilterMultis();
+
 document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:'', segment:'', manager:'', csm:'', acct:'', agent:'' };
+  state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
   state.sort = { studioRooftop: null, viniRooftop: null };
-  // Also clear any drill-down context (CSM:foo, Segment:bar, Agent:baz) — otherwise
-  // the Rooftop View stays filtered to the drill target even after reset.
   state.rooftopContext = { kind:'all', value:null };
-  document.getElementById('f-region').value = '';
-  ['segment','manager','csm','acct','agent'].forEach(k => document.getElementById('f-'+k).value = '');
+  document.querySelectorAll('.filter-multi').forEach(updateMsLabel);
   renderAll();
 });
 
@@ -3649,18 +3787,16 @@ function agentTypesByRid() {
 // from viniRows (gid=1616842841 col B). Re-runs on each render so newly-
 // added agents show up automatically; preserves the user's selection.
 function populateAgentFilter() {
-  const sel = document.getElementById('f-agent');
-  if (!sel) return;
-  const cur = sel.value;
   const agents = new Set();
   for (const s of agentTypesByRid().values()) {
     for (const a of s) agents.add(a);
   }
   const sorted = [...agents].sort((a,b) => a.localeCompare(b));
-  sel.innerHTML = '<option value="">All Agents</option>' +
-    sorted.map(a => `<option value="${a.replace(/"/g,'&quot;')}">${a}</option>`).join('');
-  if (cur && agents.has(cur)) sel.value = cur;
-  else { sel.value = ''; state.filters.agent = ''; }
+  setFilterOptions('agent', sorted);
+  // Prune stale selections (an agent that no longer exists in the data).
+  state.filters.agent = (state.filters.agent || []).filter(v => agents.has(v));
+  const group = document.querySelector('.filter-multi[data-fkey="agent"]');
+  if (group) updateMsLabel(group);
 }
 // Show / hide the Agent filter based on the active product (Vini only —
 // Studio rows don't carry an agent dimension).
@@ -3715,6 +3851,18 @@ if (_rooftopSearchInput) {
     _rooftopSearchTimer = setTimeout(() => {
       state.rooftopSearch = e.target.value || '';
       if (state.view === 'rooftop') renderRooftop();
+    }, 150);
+  });
+}
+// Enterprise List search — same pattern, only re-renders the Enterprise List.
+let _entListSearchTimer = null;
+const _entListSearchInput = document.getElementById('ent-search-input');
+if (_entListSearchInput) {
+  _entListSearchInput.addEventListener('input', e => {
+    clearTimeout(_entListSearchTimer);
+    _entListSearchTimer = setTimeout(() => {
+      state.entListSearch = e.target.value || '';
+      if (state.view === 'rooftop') renderEnterpriseList();
     }, 150);
   });
 }
