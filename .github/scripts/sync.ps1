@@ -668,14 +668,17 @@ if ($csatBroken) {
 $tCols = $tixTab.cols
 $ti = @{
     status   = Find-Col $tCols @('Status')
+    # Priority (col C) — Urgent / High / Medium / Low. Drives the per-priority
+    # SLA-threshold Ticket RAG on the dashboard (user spec, SLA matrix from
+    # image2). Shipped per-row so the dashboard can grade each open ticket
+    # client-side and roll up to worst-of per enterprise.
+    priority = Find-Col $tCols @('Priority')
     created  = Find-Col $tCols @('Created time','Created')
     resolved = Find-Col $tCols @('Resolved time','Resolved')
     closed   = Find-Col $tCols @('Closed time','Closed')
     resHrs   = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
-    # Col I "Resolution status" — values 'Within SLA' / 'SLA Violated' / null.
-    # User spec: count "SLA Violated" per enterprise and use it in the
-    # ticket RAG. Surfaced on each per-ticket row as `s = $true` so the
-    # dashboard can aggregate by date range at render time.
+    # Col I "Resolution status" — kept for legacy callers; the new RAG no
+    # longer depends on it.
     resoStat = Find-Col $tCols @('Resolution status')
     prod     = Find-Col $tCols @('Product (Studio/Vini)','Product')
     eid      = Find-Col $tCols @('Enterprise ID')
@@ -827,17 +830,25 @@ foreach ($row in $tixTab.rows) {
     $createdIso = $created.ToString('yyyy-MM-dd')
 
     $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
-    # User-spec "#Open" excludes BOTH the terminal states (Closed, Resolved)
-    # AND the raw "Open" status — leaving the actively-in-flight tickets
-    # (Pending / Waiting / On Hold) as the bucket. This is what we ship as
-    # the per-row `o` flag; the dashboard aggregates it into the #Open count.
-    $isOpen = ($status -ne 'closed' -and $status -ne 'resolved' -and $status -ne 'open')
+    # Updated user spec: "#Unresolved" = NOT IN ('closed','resolved'). So
+    # raw 'Open' AND any in-flight state (Pending / Waiting / On Hold) all
+    # count as unresolved. The previous version excluded raw 'Open' too —
+    # that filter was removed.
+    $isOpen = ($status -ne 'closed' -and $status -ne 'resolved')
 
-    # SLA Violated flag (col I "Resolution status" = 'SLA Violated').
+    # SLA Violated flag (col I "Resolution status" = 'SLA Violated'). Kept
+    # for backwards compatibility — the new Ticket RAG is priority-based
+    # and no longer depends on this flag, but legacy snapshots still read it.
     $resoStatVal = if ($ti.resoStat -ge 0) {
         ([string](Gviz-Val $c[$ti.resoStat])).Trim().ToLower()
     } else { '' }
     $isSlaViolated = ($resoStatVal -eq 'sla violated')
+
+    # Priority (col C). Lower-cased for stable client-side matching.
+    $priority = ''
+    if ($ti.priority -ge 0) {
+        $priority = ([string](Gviz-Val $c[$ti.priority])).Trim().ToLower()
+    }
 
     $resHrs = 0.0; $ageHrs = 0.0
     if ($isOpen) {
@@ -851,7 +862,7 @@ foreach ($row in $tixTab.rows) {
     if (-not $targetDict.ContainsKey($resolvedEid)) {
         $targetDict[$resolvedEid] = New-Object System.Collections.Generic.List[hashtable]
     }
-    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated })
+    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated; p = $priority })
     if ($prod -eq 'Vini') { $kept.vini++ } else { $kept.studio++ }
 }
 Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets kept, $($skipped.vini) skipped"
@@ -1138,9 +1149,11 @@ function ViniTixToJson($dict) {
         foreach ($r in $dict[$k]) {
             $oBool = if ($r.o) { 'true' } else { 'false' }
             # s = SLA Violated flag (col I 'Resolution status' = 'SLA Violated').
-            # Per-row so the dashboard can date-range aggregate at render time.
             $sBool = if ($r.s) { 'true' } else { 'false' }
-            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + '}')
+            # p = priority (lowercased) — drives the per-priority Ticket RAG
+            # client-side (urgent/high/medium/low → distinct SLA thresholds).
+            $pStr = if ($null -eq $r.p) { '""' } else { JsEscape $r.p }
+            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + ',"p":' + $pStr + '}')
         }
         $parts.Add((JsEscape $k) + ':{"rows":[' + ($items -join ',') + ']}')
     }

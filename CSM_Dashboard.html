@@ -13,6 +13,11 @@
     --text:#111827; --text-2:#374151; --text-3:#6B7280; --text-4:#9CA3AF;
     --green:#15803D; --green-bg:#DCFCE7;
     --amber:#B45309; --amber-bg:#FEF3C7;
+    /* Orange = "approaching SLA breach" tier between Amber and Red. Added
+       for the per-priority Ticket RAG (G/A/O/R) per the SLA matrix. Same
+       hue family as amber but more saturated to read as "worse than amber,
+       not yet red". */
+    --orange:#C2410C; --orange-bg:#FFEDD5;
     --red:#B91C1C; --red-bg:#FEE2E2;
     --blue:#4F46E5; --link:#4F46E5;
     /* Column-group header palette. Picked so adjacent buckets always
@@ -244,25 +249,53 @@
   table.data thead tr.group th.g-quality{background:var(--grp-quality)}
   table.data thead tr.cols th{padding:6px 3px;font-size:10px;font-weight:600;color:var(--text-2);text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
   table.data thead tr.cols th.left{text-align:left}
-  table.data thead tr.cols th.cell-final{background:#FFFBEB}
-  table.data thead tr.cols th.cell-usage{background:#EFF6FF}
-  table.data thead tr.cols th.cell-roi{background:#F0FDF4}
+  /* Column-row + body tints — each bucket gets a 3-stop ramp that aligns
+     with --grp-* in the group header, so the bucket reads as one
+     continuous coloured stripe from group→col→body. Previously these
+     drifted out of sync with the group palette (e.g. cell-comm body was
+     still peach while the group header had moved to teal), which is
+     what made MBR look like it was under Communication — the leader
+     column tint was nearly white, so the visual bucket boundary was
+     invisible past the RAG column. */
+  table.data thead tr.cols th.cell-final  {background:#FEF7DD}
+  table.data thead tr.cols th.cell-roi    {background:#ECFDF3}
+  table.data thead tr.cols th.cell-usage  {background:#EFF6FF}
+  table.data thead tr.cols th.cell-quality{background:#EFF8FF}
   table.data thead tr.cols th.cell-payment{background:#FDF2F8}
   table.data thead tr.cols th.cell-tickets{background:#EEF2FF}
-  table.data thead tr.cols th.cell-comm{background:#FFF7ED}
-  table.data thead tr.cols th.cell-leader{background:#FAF5FF}
-  table.data thead tr.cols th.cell-quality{background:#FDF4FF}
+  table.data thead tr.cols th.cell-comm   {background:#DDFAFE}
+  table.data thead tr.cols th.cell-leader {background:#F4F1FE}
   table.data tbody td{padding:6px 3px;text-align:right;border-bottom:1px solid #F3F4F6;white-space:nowrap;font-size:11px}
   table.data tbody td.left{text-align:left}
   table.data tbody tr:hover{background:#FAFAFA}
-  table.data tbody td.cell-final{background:#FFFEF7}
-  table.data tbody td.cell-usage{background:#FBFDFF}
-  table.data tbody td.cell-roi{background:#FBFEFB}
+  table.data tbody td.cell-final  {background:#FFFEF7}
+  table.data tbody td.cell-roi    {background:#FBFEFB}
+  table.data tbody td.cell-usage  {background:#FBFDFF}
+  table.data tbody td.cell-quality{background:#FAFDFF}
   table.data tbody td.cell-payment{background:#FFFAFD}
   table.data tbody td.cell-tickets{background:#FAFBFF}
-  table.data tbody td.cell-comm{background:#FFFBF6}
-  table.data tbody td.cell-leader{background:#FCFAFF}
-  table.data tbody td.cell-quality{background:#FEFCFF}
+  table.data tbody td.cell-comm   {background:#F0FEFF}
+  table.data tbody td.cell-leader {background:#FAF9FF}
+  /* Bucket dividers — a clear left border on EVERY group-header chip
+     gives the eye a visible bucket boundary at the top of the table.
+     Combined with the bucket-aligned col-row + body tints below, the
+     COMMUNICATION / LEADERSHIP split is unambiguous even when bucket
+     hues neighbour each other. */
+  table.data thead tr.group th.g-final,
+  table.data thead tr.group th.g-roi,
+  table.data thead tr.group th.g-usage,
+  table.data thead tr.group th.g-quality,
+  table.data thead tr.group th.g-payment,
+  table.data thead tr.group th.g-tickets,
+  table.data thead tr.group th.g-comm,
+  table.data thead tr.group th.g-leader {border-left:1px solid #CBD5E1}
+  /* Column-width floors so the bucket columns don't get crushed below
+     readability when there's no horizontal scroll. Tickets and Comm
+     each need ~70-90px so the chip + label both fit; MBR needs ~56px
+     so the column is visually distinct from its neighbours. */
+  table.data .cell-tickets {min-width:72px}
+  table.data .cell-comm    {min-width:74px}
+  table.data .cell-leader  {min-width:60px}
   /* Clickable Website Score link on Studio Rooftop View — inherits color but
      adds underline-on-hover so the user knows it opens the dealer site. */
   a.ws-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--text-3)}
@@ -327,6 +360,7 @@
   .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:18px;padding:0 6px;border-radius:999px;font-size:10px;font-weight:600;margin:0 1px}
   .badge.g{background:var(--green-bg);color:var(--green)}
   .badge.a{background:var(--amber-bg);color:var(--amber)}
+  .badge.o{background:var(--orange-bg);color:var(--orange)}
   .badge.r{background:var(--red-bg);color:var(--red)}
   .badge.n{background:#F3F4F6;color:var(--text-3)}
   .pay-stack{display:inline-flex;gap:1px;align-items:center}
@@ -1074,12 +1108,28 @@ function viniAggregateRooftops() {
       a.cr = tixInRange.length;
       const openRows = tixInRange.filter(t => t.o);
       a.op = openRows.length;
-      // SLA Violated count for the new Ticket RAG logic (col I = 'SLA Violated')
+      // SLA Violated count for the legacy Ticket RAG path (col I = 'SLA Violated')
       a.sla = tixInRange.filter(t => t.s).length;
       const ageVals = openRows.map(t => Number(t.a)).filter(v => v > 0);
       a.otaMax = ageVals.length ? ageVals.reduce((s,v)=>s+v,0) / ageVals.length : 0;
       const resVals = tixInRange.filter(t => !t.o).map(t => Number(t.r)).filter(v => v > 0);
       a.avgRes = resVals.length ? resVals.reduce((s,v)=>s+v,0) / resVals.length : 0;
+      // Per-priority Ticket RAG (image2 SLA matrix). Worst grade across this
+      // enterprise's open tickets becomes its enterprise-level Ticket RAG.
+      // Falls back to legacy SLA-violated heuristic when the snapshot pre-
+      // dates the per-ticket `p` field.
+      let worstSev = 0, worstRag = null, anyP = false;
+      for (const t of openRows) {
+        if (!t.p) continue;
+        anyP = true;
+        const tr = ticketAgeRag(t.p, Number(t.a) || 0);
+        const sev = ragSeverity(tr);
+        if (sev > worstSev) { worstSev = sev; worstRag = tr; }
+      }
+      if (a.cr === 0) a.tixRag = 'NA';
+      else if (a.op === 0) a.tixRag = 'Green';
+      else if (anyP) a.tixRag = worstRag || 'Green';
+      else a.tixRag = a.sla > 0 ? 'Red' : 'Amber';
     }
   });
   return Object.values(byKey);
@@ -1112,10 +1162,11 @@ function makeCmp(getter, dir) {
 // surfaces problem accounts at the top.
 function ragSortKey(v) {
   const s = (v || '').toString().trim().toLowerCase();
-  if (s === 'green' || s === 'g') return 1;
-  if (s === 'amber' || s === 'a' || s === 'yellow') return 2;
-  if (s === 'red'   || s === 'r') return 3;
-  return 4;
+  if (s === 'green'  || s === 'g') return 1;
+  if (s === 'amber'  || s === 'a' || s === 'yellow') return 2;
+  if (s === 'orange' || s === 'o') return 3;
+  if (s === 'red'    || s === 'r') return 4;
+  return 5;
 }
 // Studio Rooftop View sorter — sort key is the S_COL field name, dir asc/desc.
 // `acct` derives via acctTypeOf; RAG-string columns (trag, red, mbr) use
@@ -1174,7 +1225,7 @@ function sortViniRows(rows, sortState) {
       getter = r => acctTypeOf(r.ct, r.cst);
       break;
     case 'tixRag':
-      getter = r => ragSortKey(computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
+      getter = r => ragSortKey(computeTicketRAG(r));
       break;
     case 'commScore':
       getter = r => scoreValue(csatRagCountsForInRange(r.eid, r.en), COMM_WEIGHTS);
@@ -1187,7 +1238,7 @@ function sortViniRows(rows, sortState) {
         const counts = csatRagCountsForInRange(r.eid, r.en);
         const overall = computeOverallRAG([
           r.ps,
-          computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }),
+          computeTicketRAG(r),
           scoreRag(counts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS)
         ]);
         return ragSortKey(overall);
@@ -1368,8 +1419,8 @@ const TIPS = {
   ticketAcct:  'Per-enterprise: from the slower of Open Ticket Ageing and Avg Resolution. <8h Green, <24h Amber, else Red. Counts based on tickets created in the selected period.',
   ticketRagCol:'Score-based RAG for the group: weighted avg of per-enterprise Ticket RAGs (G=100, A=50, R=0). ≥85 Green, ≥65 Amber, <65 Red.',
   // New SLA-driven Ticket RAG (per user spec, replaces the slower-of-ageing-and-res logic)
-  ticketRagSla:'Ticket RAG (gid=832733618). Red = at least one ticket whose col I "Resolution status" = "SLA Violated" in the selected period. Amber = no SLA violations but at least one ticket still actively open (Status NOT IN Open / Closed / Resolved). Green = no SLA violations AND nothing actively open. NA = no tickets at all in scope. Studio / Vini split by col L.',
-  unresolvedCnt:'Count of actively-open tickets — Status NOT IN ("Open", "Closed", "Resolved") so Pending / Waiting / On Hold all count. Source: Ticket_Dump (gid=832733618), filtered to the period and matched to Enterprise ID (col M).',
+  ticketRagSla:'Ticket RAG (gid=832733618). Per OPEN ticket (Status NOT IN Closed / Resolved), age = now − Created. Grade against the priority-specific SLA matrix: Urgent G≤6h A≤48h O≤72h R>72h; High G<24h A≤72h O≤120h R>120h; Medium G<120h A≤168h O≤240h R>240h; Low G<360h A≤480h O≤720h R>720h. Enterprise RAG = WORST grade across its open tickets. No open tickets → Green. No tickets at all → NA. Studio / Vini split by col L.',
+  unresolvedCnt:'Count of unresolved tickets — Status NOT IN ("Closed", "Resolved"). Includes raw "Open" plus all in-flight states (Pending / Waiting / On Hold). Source: Ticket_Dump (gid=832733618), filtered to the period and matched to Enterprise ID (col M).',
   commScore:   'Count of CSAT readings in the selected date range, by RAG. CSAT avg ≥4 = Green, 2.5–4 = Amber, <2.5 = Red. Source: Metabase CSAT export.',
   commInteractions: 'Total number of CSAT interactions captured for the enterprise(s) in this row. Source: gid=701797891 (CSAT_ALL_BY_EID array length). Group rows sum across all enterprises in the group.',
   commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
@@ -1377,7 +1428,7 @@ const TIPS = {
   churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
   openAgeing:  'Hours since each open ticket was created. Cross-enterprise avg here is ticket-weighted (sum of hours ÷ open-ticket count).',
   avgResCol:   'Avg resolution time (hours) across tickets created in the selected period and now Resolved/Closed. Ticket-weighted.',
-  createdCnt:  'Count of tickets created in the selected period (Source: Ticket_Dump gid=832733618).',
+  createdCnt:  'Count of ALL tickets created in the selected period — every priority, every status. Source: Ticket_Dump (gid=832733618) col A. Matched to enterprise via col M (Enterprise ID), product-split by col L (Studio / Vini).',
   openCnt:     'Tickets created in the period whose Status is not Closed/Resolved.',
   reportSent:  'Whether a usage report was sent. (Metric not currently tracked — values blanked.)',
   // Studio-specific
@@ -1557,22 +1608,24 @@ function fmtHrs(h) {
 function ragStack(c) {
   if (!c || Object.keys(c).length === 0) return '<span style="color:var(--text-4)">—</span>';
   const parts = [];
-  if (c.Green) parts.push(`<span class="badge g">${c.Green}</span>`);
-  if (c.Amber) parts.push(`<span class="badge a">${c.Amber}</span>`);
-  if (c.Red) parts.push(`<span class="badge r">${c.Red}</span>`);
-  if (c.NA) parts.push(`<span class="badge n">${c.NA}</span>`);
+  if (c.Green)  parts.push(`<span class="badge g">${c.Green}</span>`);
+  if (c.Amber)  parts.push(`<span class="badge a">${c.Amber}</span>`);
+  if (c.Orange) parts.push(`<span class="badge o">${c.Orange}</span>`);
+  if (c.Red)    parts.push(`<span class="badge r">${c.Red}</span>`);
+  if (c.NA)     parts.push(`<span class="badge n">${c.NA}</span>`);
   Object.keys(c).forEach(k => {
-    if (!['Green','Amber','Red','NA'].includes(k))
+    if (!['Green','Amber','Orange','Red','NA'].includes(k))
       parts.push(`<span class="badge n" title="${k}">${c[k]}</span>`);
   });
   return parts.length ? `<span class="pay-stack">${parts.join('')}</span>` : '<span style="color:var(--text-4)">—</span>';
 }
 function ragSingle(v) {
   if (!v) return '<span style="color:var(--text-4)">—</span>';
-  if (v === 'Green') return '<span class="badge g">G</span>';
-  if (v === 'Amber') return '<span class="badge a">A</span>';
-  if (v === 'Red') return '<span class="badge r">R</span>';
-  if (v === 'NA') return '<span class="badge n">NA</span>';
+  if (v === 'Green')  return '<span class="badge g">G</span>';
+  if (v === 'Amber')  return '<span class="badge a">A</span>';
+  if (v === 'Orange') return '<span class="badge o">O</span>';
+  if (v === 'Red')    return '<span class="badge r">R</span>';
+  if (v === 'NA')     return '<span class="badge n">NA</span>';
   return `<span class="badge n">${v}</span>`;
 }
 
@@ -1805,9 +1858,18 @@ function roiMtdRag(roiMtd) {
 function aggregateTicketsForEids(eids, tixDict) {
   // tixDict defaults to VINI_TIX for backwards-compat. Pass STUDIO_TIX when
   // aggregating Studio enterprise tickets.
+  //
+  // Per user spec (image2: SLA THRESHOLDS REFERENCE):
+  //   #Created    = ALL tickets in the date window (no priority/status filter)
+  //   #Unresolved = tickets with Status NOT IN ('closed','resolved')
+  //   Ticket RAG  = worst-of per-priority age-vs-SLA across open tickets
+  // For the RAG roll-up: max(ragSeverity(ticketAgeRag(p, age))) across open
+  // tickets. If 0 open and ≥1 created → Green; if 0 created → NA.
   tixDict = tixDict || VINI_TIX;
   const range = periodRange();
   let cr = 0, op = 0, sla = 0, resSum = 0, resCount = 0, ageSum = 0, ageCount = 0;
+  const openByRag = { Green: 0, Amber: 0, Orange: 0, Red: 0 };
+  let worstSev = 0, worstRag = null, anyPriority = false;
   const seen = new Set();
   for (const eid of eids) {
     if (!eid || seen.has(eid)) continue;
@@ -1817,19 +1879,43 @@ function aggregateTicketsForEids(eids, tixDict) {
     for (const t of tx.rows) {
       if (!t.c || t.c < range.from || t.c > range.to) continue;
       cr++;
-      if (t.s) sla++;   // Resolution status = 'SLA Violated' per user spec
+      if (t.s) sla++;
       if (t.o) {
         op++;
-        if (Number(t.a) > 0) { ageSum += Number(t.a); ageCount++; }
+        const age = Number(t.a) || 0;
+        if (age > 0) { ageSum += age; ageCount++; }
+        // Grade this open ticket against its priority's SLA threshold.
+        // `t.p` is shipped by post-2026-06-09 sync. Older snapshots have
+        // no priority — track whether ANY ticket carries one so we can
+        // fall back cleanly if the whole snapshot pre-dates the field.
+        if (t.p) {
+          anyPriority = true;
+          const ticketRag = ticketAgeRag(t.p, age);
+          openByRag[ticketRag] = (openByRag[ticketRag] || 0) + 1;
+          const sev = ragSeverity(ticketRag);
+          if (sev > worstSev) { worstSev = sev; worstRag = ticketRag; }
+        }
       } else {
         if (Number(t.r) > 0) { resSum += Number(t.r); resCount++; }
       }
     }
   }
+  // Enterprise Ticket RAG rollup:
+  //   no tickets in window     → NA
+  //   tickets but none open    → Green (all cleared inside SLA)
+  //   priorities available     → worst-of-open (G/A/O/R per SLA matrix)
+  //   no priorities (legacy)   → fall back to SLA-violated heuristic
+  let tixRag;
+  if (cr === 0)       tixRag = 'NA';
+  else if (op === 0)  tixRag = 'Green';
+  else if (anyPriority) tixRag = worstRag || 'Green';
+  else                tixRag = sla > 0 ? 'Red' : 'Amber';   // legacy snapshot fallback
   return {
     cr, op, sla,
     ota: ageCount ? ageSum / ageCount : 0,
-    res: resCount ? resSum / resCount : 0
+    res: resCount ? resSum / resCount : 0,
+    tixRag,
+    openByRag
   };
 }
 
@@ -1861,7 +1947,56 @@ function fmtAgentAge(goLiveIso) {
 //   Amber : no SLA violations but tickets are still actively open
 //   Green : no SLA violations AND nothing actively open
 //   NA    : no tickets at all in the active period
+// ───────────────────────────────────────────────────────────────────────
+// Ticket RAG — per user spec (image2: SLA THRESHOLDS REFERENCE).
+//
+// Each unresolved ticket is graded by its OPEN AGEING in hours against a
+// priority-specific threshold table:
+//
+//   Priority  | Green   | Amber       | Orange       | Red
+//   --------- | ------- | ----------- | ------------ | --------
+//   Urgent    | ≤ 6 hrs | 6 – 48 hrs  | 48 – 72 hrs  | > 72 hrs
+//   High      | < 1 day | 1 – 3 days  | 3 – 5 days   | > 5 days
+//   Medium    | < 5 day | 5 – 7 days  | 7 – 10 days  | > 10 days
+//   Low       | <15 day | 15 – 20 day | 20 – 30 day  | > 30 days
+//
+// Enterprise-level Ticket RAG = WORST per-ticket grade across all of the
+// enterprise's currently-open tickets. If there are no open tickets and at
+// least one created ticket → Green (everything cleared in SLA). If the
+// enterprise has no tickets at all → NA.
+// Severity order Red > Orange > Amber > Green so a single Red ticket sets
+// the whole enterprise to Red.
+const SLA_THRESHOLDS_HRS = {
+  urgent: { green: 6,     amber: 48,    orange: 72   },     // (≤G) (≤A) (≤O) (>O→Red)
+  high:   { green: 24,    amber: 72,    orange: 120  },
+  medium: { green: 120,   amber: 168,   orange: 240  },
+  low:    { green: 360,   amber: 480,   orange: 720  }
+};
+// Grade a single open ticket. Falls back to 'medium' tier when the priority
+// label doesn't match the four known levels (rare 'Low Priority' etc.).
+function ticketAgeRag(priority, ageHrs) {
+  const p = String(priority || '').trim().toLowerCase();
+  const key = ['urgent','high','medium','low'].includes(p)
+    ? p : (p.startsWith('urg') ? 'urgent' : p.startsWith('high') ? 'high' :
+           p.startsWith('low') ? 'low' : 'medium');
+  const th = SLA_THRESHOLDS_HRS[key];
+  const a = Number(ageHrs) || 0;
+  if (a <= th.green)  return 'Green';
+  if (a <= th.amber)  return 'Amber';
+  if (a <= th.orange) return 'Orange';
+  return 'Red';
+}
+// Numeric severity used to find the WORST grade across an enterprise's open
+// tickets. Higher = worse.
+function ragSeverity(rag) {
+  return rag === 'Red' ? 4 : rag === 'Orange' ? 3 : rag === 'Amber' ? 2 : rag === 'Green' ? 1 : 0;
+}
+// Roll up per-ticket grades to enterprise level. Accepts the aggregate from
+// aggregateTicketsForEids — uses tixRag (already worst-of) when present, else
+// falls back to old SLA-based heuristic for backwards compatibility with
+// snapshots that don't yet ship per-ticket priority.
 function computeTicketRAG(t) {
+  if (t && t.tixRag) return t.tixRag;
   const op      = Number(t.op)  || 0;
   const sla     = Number(t.sla) || 0;
   const created = Number(t.cr)  || 0;
@@ -2055,7 +2190,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
       if (!eid || seenEidT.has(eid)) continue;
       seenEidT.add(eid);
       const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-      const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
+      const rag = computeTicketRAG(ent);
       counts[rag] = (counts[rag] || 0) + 1;
     }
     return counts;
@@ -2106,7 +2241,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtNum(cr)}</td>
     <td class="cell-tickets">${fmtNum(unr)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td>
-    <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op:unr, sla }))}</td>
+    <td class="cell-tickets">${ragSingle(computeTicketRAG(studioTixAgg))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intCountCell(sumBy(allByEn, r => commInteractionCount(r[S_COL.eid], r[S_COL.en])))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -2266,7 +2401,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const tixAgg = aggregateTicketsForEids(allByEid.map(r => r.eid));
   const ota = tixAgg.ota;
   const res = tixAgg.res;
-  const trag = countBy(allByEid, r => computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
+  const trag = countBy(allByEid, r => computeTicketRAG(r));
   // Score-based Ticket RAG: weighted avg of per-enterprise Ticket RAGs
   //   Weights G:100 A:50 R:0 (NA excluded); thresholds: >=85 G, >=65 A, else R
   const ticketRag = scoreRag(trag, 85, 65);
@@ -2309,7 +2444,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtNum(cr)}</td>
     <td class="cell-tickets">${fmtNum(op)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td>
-    <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr, op, sla: tixAgg.sla }))}</td>
+    <td class="cell-tickets">${ragSingle(computeTicketRAG(tixAgg))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intCountCell(sumBy(allByEid, r => commInteractionCount(r.eid, r.en)))}</td>
     <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -2399,7 +2534,7 @@ function renderKpiStudio(rows, targetId) {
       if (!eid || seenT.has(eid)) continue;
       seenT.add(eid);
       const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-      const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
+      const rag = computeTicketRAG(ent);
       counts[rag] = (counts[rag] || 0) + 1;
     }
     return counts;
@@ -2497,7 +2632,7 @@ function renderKpiVini(rows, targetId) {
   // Ticket RAG (filter-level) — per-enterprise computeTicketRAG distribution
   // weighted with the default Payment/Ticket weights (G:100, A:50, R:0) and
   // the 85/65 thresholds used in the per-row Account Level RAG.
-  const trag = countBy(dedupedActiveByEid, r => computeTicketRAG({ cr: r.cr, op: r.op, sla: r.sla }));
+  const trag = countBy(dedupedActiveByEid, r => computeTicketRAG(r));
   const ticketRagOverall = scoreRag(trag, 85, 65);
 
   const el = document.getElementById(targetId || 'kpi-strip');
@@ -2715,7 +2850,7 @@ function renderEnterpriseList() {
   // apply the click-to-sort selection.
   sorted.forEach(e => {
     e._tix         = aggregateTicketsForEids([e.eid].filter(Boolean), TIX);
-    e._tixRag      = computeTicketRAG({ cr: e._tix.cr, op: e._tix.op, sla: e._tix.sla });
+    e._tixRag      = computeTicketRAG(e._tix);
     e._commCounts  = csatRagCountsForInRange(e.eid, e.en);
     e._commScoreNum= scoreValue(e._commCounts, COMM_WEIGHTS);
     e._commRag     = scoreRag(e._commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
@@ -2895,7 +3030,7 @@ function renderRooftop() {
       // cached ticket cols. Computed via aggregateTicketsForEids([eid], STUDIO_TIX).
       const rEidT = r[S_COL.eid] || r[S_COL.en];
       const rTixEnt = aggregateTicketsForEids([rEidT], STUDIO_TIX);
-      const rTrag = computeTicketRAG({ cr:rTixEnt.cr, op:rTixEnt.op, sla:rTixEnt.sla });
+      const rTrag = computeTicketRAG(rTixEnt);
       const rComm = csatRagInRange(r[S_COL.eid], r[S_COL.en]);
       inc(sComm, rComm);
       // Communication Score distribution — sum per-enterprise CSAT history
@@ -2938,7 +3073,7 @@ function renderRooftop() {
           usage:   ufColorClassToRag(r[S_COL.uf]),
           payment: r[S_COL.prag],
           ticket:  (() => { const _t = aggregateTicketsForEids([r[S_COL.eid]], STUDIO_TIX);
-                            return computeTicketRAG({ cr:_t.cr, op:_t.op, sla:_t.sla }); })(),
+                            return computeTicketRAG(_t); })(),
           comm:    csatRagInRange(r[S_COL.eid], r[S_COL.en])
         }))}</td>
         <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
@@ -2955,7 +3090,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(rowTix.cr)}</td>
         <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
-        <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:rowTix.cr, op:rowTix.op, sla:rowTix.sla }))}</td>
+        <td class="cell-tickets">${ragSingle(computeTicketRAG(rowTix))}</td>
         <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">—</span>' : ragStack(cc); })()}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
@@ -2981,7 +3116,7 @@ function renderRooftop() {
         if (seenT.has(eid)) continue;
         seenT.add(eid);
         const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
-        const rag = computeTicketRAG({ cr: ent.cr, op: ent.op, sla: ent.sla });
+        const rag = computeTicketRAG(ent);
         counts[rag] = (counts[rag] || 0) + 1;
       }
       return counts;
@@ -3008,7 +3143,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(totalStudioTix.cr)}</td>
       <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
-      <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:totalStudioTix.cr, op:totalStudioTix.op, sla:totalStudioTix.sla }))}</td>
+      <td class="cell-tickets">${ragSingle(computeTicketRAG(totalStudioTix))}</td>
       <td class="cell-comm">${Object.keys(sCommScore).length ? ragStack(sCommScore) : '<span style="color:var(--text-4)">—</span>'}</td>
       <td class="cell-comm">${intCountCell(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
@@ -3125,7 +3260,7 @@ function renderRooftop() {
         seenEidTix.add(r.eid);
         tCr += Number(r.cr) || 0;
         tOp += Number(r.op) || 0;
-        incCount(tTrag, computeTicketRAG({ cr:r.cr, op:r.op, sla:r.sla }));
+        incCount(tTrag, computeTicketRAG(r));
       }
       if (r.eid && !seenEidComm.has(r.eid)) {
         seenEidComm.add(r.eid);
@@ -3164,7 +3299,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(r.cr)}</td>
         <td class="cell-tickets">${fmtNum(r.op)}</td>
         <td class="cell-tickets">${fmtHrs(r.otaMax)}</td>
-        <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:r.cr, op:r.op, sla:r.sla }))}</td>
+        <td class="cell-tickets">${ragSingle(computeTicketRAG(r))}</td>
         <td class="cell-comm">${commScoreCell}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r.eid, r.en))}</td>
         <td class="cell-comm">${ragSingle(commFinalRag)}</td>
@@ -3185,7 +3320,7 @@ function renderRooftop() {
     const totalTixAgg = aggregateTicketsForEids(rows.map(r => r.eid));
     const totalOta = totalTixAgg.ota;
     const totalRes = totalTixAgg.res;
-    const totalTrag = computeTicketRAG({ cr:tCr, op:tOp, sla:totalTixAgg.sla });
+    const totalTrag = computeTicketRAG(totalTixAgg);
     const totalFinalComm = scoreRag(tCommScore, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
     const totalCommScoreNum = scoreValue(tCommScore, COMM_WEIGHTS);
     html += `<tr class="total-row">
@@ -3213,7 +3348,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(tCr)}</td>
       <td class="cell-tickets">${fmtNum(tOp)}</td>
       <td class="cell-tickets">${fmtHrs(totalOta)}</td>
-      <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:tCr, op:tOp, sla:rows.reduce((s,r)=>s+(Number(r.sla)||0),0) }))}</td>
+      <td class="cell-tickets">${ragSingle(totalTrag)}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
       <td class="cell-comm">${intCountCell(rows.reduce((s, r) => s + commInteractionCount(r.eid, r.en), 0))}</td>
       <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
