@@ -802,7 +802,7 @@ let state = {
   // .length and .includes() instead of strict equality.
   filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
-  sort: { studioRooftop: null, viniRooftop: null },
+  sort: { studioRooftop: null, viniRooftop: null, entList: null },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -1130,6 +1130,40 @@ function sortViniRows(rows, sortState) {
       else                   getter = r => r[key];
   }
   return s.sort(makeCmp(getter, dir));
+}
+
+// Enterprise List sort — single-row-per-enterprise. Keys: en, acct, mrr,
+// arr, t1, t2, t3, prag (Pay RAG), op (# Unresolved), cr (# Created),
+// ota (Open Ageing), tixRag, commScore, intCount, commRag.
+function sortEntListRows(rows, sortState) {
+  const s = rows.slice();
+  if (!sortState || !sortState.key) {
+    return s.sort((a, b) => (b.arr || 0) - (a.arr || 0));
+  }
+  const { key, dir } = sortState;
+  const RAG_KEYS = new Set(['prag', 'tixRag', 'commRag']);
+  let getter;
+  switch (key) {
+    case 'acct':       getter = r => r.acct || ''; break;
+    case 'tixRag':     getter = r => ragSortKey(r._tixRag);   break;
+    case 'commScore':  getter = r => Number(r._commScoreNum) || 0; break;
+    case 'commRag':    getter = r => ragSortKey(r._commRag);  break;
+    case 'op':         getter = r => Number(r._tix?.op) || 0; break;
+    case 'cr':         getter = r => Number(r._tix?.cr) || 0; break;
+    case 'ota':        getter = r => Number(r._tix?.ota) || 0; break;
+    case 'intCount':   getter = r => Number(r._intCount) || 0; break;
+    default:
+      if (RAG_KEYS.has(key)) getter = r => ragSortKey(r[key]);
+      else                   getter = r => r[key];
+  }
+  return s.sort(makeCmp(getter, dir));
+}
+function toggleEntListSort(key) {
+  const cur = state.sort.entList;
+  if (!cur || cur.key !== key) state.sort.entList = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')  state.sort.entList = { key, dir: 'desc' };
+  else                         state.sort.entList = null;
+  if (state.view === 'rooftop') renderEnterpriseList();
 }
 function toggleViniSort(key) {
   const cur = state.sort.viniRooftop;
@@ -2604,6 +2638,18 @@ function renderEnterpriseList() {
   document.getElementById('enterprise-list-count').textContent =
     `· ${sorted.length} enterprise${sorted.length === 1 ? '' : 's'}${q ? ' (filtered)' : ''}`;
   const TIX = isStudio ? STUDIO_TIX : VINI_TIX;
+  // Pre-compute derived values per enterprise (tickets / comm) and attach
+  // to the row so the sorter can read them without re-aggregating. Then
+  // apply the click-to-sort selection.
+  sorted.forEach(e => {
+    e._tix         = aggregateTicketsForEids([e.eid].filter(Boolean), TIX);
+    e._tixRag      = computeTicketRAG({ cr: e._tix.cr, op: e._tix.op, sla: e._tix.sla });
+    e._commCounts  = csatRagCountsForInRange(e.eid, e.en);
+    e._commScoreNum= scoreValue(e._commCounts, COMM_WEIGHTS);
+    e._commRag     = scoreRag(e._commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+    e._intCount    = commInteractionCount(e.eid, e.en);
+  });
+  sorted = sortEntListRows(sorted, state.sort.entList);
   let html = '<table class="data ent-list"><thead>' +
     '<tr class="group">' +
       // 5 identity cells (#, Enterprise, Account Type, MRR, ARR)
@@ -2614,31 +2660,23 @@ function renderEnterpriseList() {
     '</tr>' +
     '<tr class="cols">' +
       '<th class="left ent-idx">#</th>' +
-      '<th class="left ent-name">Enterprise</th>' +
-      '<th class="ent-acct">Account Type</th>' +
-      '<th class="ent-money">MRR</th>' +
-      '<th class="ent-money">ARR</th>' +
-      '<th class="cell-payment">T-1</th>' +
-      '<th class="cell-payment">T-2</th>' +
-      '<th class="cell-payment">T-3</th>' +
-      '<th class="cell-payment">Pay RAG</th>' +
-      '<th class="cell-tickets"># Created</th>' +
-      '<th class="cell-tickets"># Unresolved</th>' +
-      '<th class="cell-tickets">Open Ageing (Hrs)</th>' +
-      '<th class="cell-tickets">Ticket RAG</th>' +
-      '<th class="cell-comm">Score</th>' +
-      '<th class="cell-comm"># Interaction</th>' +
-      '<th class="cell-comm">Final RAG</th>' +
+      sortTh('Enterprise',   'en',   'entList', 'left ent-name') +
+      sortTh('Account Type', 'acct', 'entList', 'ent-acct') +
+      sortTh('MRR',          'mrr',  'entList', 'ent-money') +
+      sortTh('ARR',          'arr',  'entList', 'ent-money') +
+      sortTh('T-1', 't1', 'entList', 'cell-payment') +
+      sortTh('T-2', 't2', 'entList', 'cell-payment') +
+      sortTh('T-3', 't3', 'entList', 'cell-payment') +
+      sortTh('Pay RAG',      'prag',     'entList', 'cell-payment') +
+      sortTh('# Created',    'cr',       'entList', 'cell-tickets') +
+      sortTh('# Unresolved', 'op',       'entList', 'cell-tickets') +
+      sortTh('Open Ageing (Hrs)', 'ota', 'entList', 'cell-tickets') +
+      sortTh('Ticket RAG',   'tixRag',   'entList', 'cell-tickets') +
+      sortTh('Score',        'commScore','entList', 'cell-comm') +
+      sortTh('# Interaction','intCount', 'entList', 'cell-comm') +
+      sortTh('Final RAG',    'commRag',  'entList', 'cell-comm') +
     '</tr></thead><tbody>';
   sorted.forEach((e, i) => {
-    // Ticket aggregate for this single enterprise
-    const tix = aggregateTicketsForEids([e.eid].filter(Boolean), TIX);
-    const tixRag = computeTicketRAG({ cr: tix.cr, op: tix.op, sla: tix.sla });
-    // Communication via existing date-aware helpers
-    const commCounts = csatRagCountsForInRange(e.eid, e.en);
-    const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
-    const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
-    const interactions = commInteractionCount(e.eid, e.en);
     const acctPill = e.acct
       ? `<span class="acct-pill">${e.acct}</span>`
       : '<span style="color:var(--text-4)">—</span>';
@@ -2652,13 +2690,13 @@ function renderEnterpriseList() {
       <td class="cell-payment">${payTile(e.t2)}</td>
       <td class="cell-payment">${payTile(e.t3)}</td>
       <td class="cell-payment">${ragSingle(e.prag)}</td>
-      <td class="cell-tickets">${fmtNum(tix.cr)}</td>
-      <td class="cell-tickets">${fmtNum(tix.op)}</td>
-      <td class="cell-tickets">${fmtHrs(tix.ota)}</td>
-      <td class="cell-tickets">${ragSingle(tixRag)}</td>
-      <td class="cell-comm">${commScoreNum == null ? '—' : ragStack(commCounts)}</td>
-      <td class="cell-comm">${fmtNum(interactions)}</td>
-      <td class="cell-comm">${ragSingle(commFinalRag)}</td>
+      <td class="cell-tickets">${fmtNum(e._tix.cr)}</td>
+      <td class="cell-tickets">${fmtNum(e._tix.op)}</td>
+      <td class="cell-tickets">${fmtHrs(e._tix.ota)}</td>
+      <td class="cell-tickets">${ragSingle(e._tixRag)}</td>
+      <td class="cell-comm">${e._commScoreNum == null ? '—' : ragStack(e._commCounts)}</td>
+      <td class="cell-comm">${fmtNum(e._intCount)}</td>
+      <td class="cell-comm">${ragSingle(e._commRag)}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -3571,6 +3609,7 @@ document.addEventListener('click', e => {
   if (!key || !table) return;
   if (table === 'studioRooftop') toggleStudioSort(key);
   else if (table === 'viniRooftop') toggleViniSort(key);
+  else if (table === 'entList')     toggleEntListSort(key);
 });
 
 // ============================================================

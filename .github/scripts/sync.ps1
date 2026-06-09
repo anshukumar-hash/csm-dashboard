@@ -197,12 +197,18 @@ function Get-CanonicalPayStatus($list) {
     return [string]$list[0]
 }
 function Compute-PaymentRag($t1, $t2, $t3) {
-    # After the sent/draft filter, T-1/2/3 are paid or overdue (or blank).
-    # Worst-wins: any overdue → Red, all paid → Green, nothing → blank.
+    # Per user spec: count 'overdue' across T-1/T-2/T-3:
+    #   0 overdue + at least one paid → Green
+    #   1 overdue                      → Amber
+    #   2+ overdue                     → Red
+    #   nothing scorable at all        → blank
     $list = @($t1, $t2, $t3) | Where-Object { $_ -and $_ -ne '' } | ForEach-Object { ([string]$_).ToLower() }
     if (-not $list -or $list.Count -eq 0) { return '' }
-    if ($list -contains 'overdue') { return 'Red' }
-    if (($list -contains 'sent') -or ($list -contains 'draft')) { return 'Amber' }
+    $overdueCount = @($list | Where-Object { $_ -eq 'overdue' }).Count
+    if ($overdueCount -ge 2) { return 'Red' }
+    if ($overdueCount -eq 1) { return 'Amber' }
+    # 0 overdue: Green if there's at least one paid; otherwise blank
+    # (sent/draft are pre-filtered, so this normally just falls through to paid).
     if ($list -contains 'paid') { return 'Green' }
     return ''
 }
