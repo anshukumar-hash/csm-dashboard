@@ -42,34 +42,48 @@ $urls = @{
 function Parse-Json($s) { return $s | ConvertFrom-Json -AsHashtable -Depth 100 }
 
 function Fetch-Gviz($url, $expectedMinRows = 0) {
-    # Retry on partial responses. gviz occasionally returns a tiny
-    # subset of rows (seen 22 instead of 6497 on the payment-periods tab)
-    # — caller can pass $expectedMinRows; if the response has fewer rows
-    # than that, sleep + retry up to 3 times before giving up.
-    $maxAttempts = 3
+    # Retry on partial responses. gviz occasionally returns a tiny subset
+    # of rows for the same URL on consecutive fetches (seen 9 / 22 / 6497
+    # for payment-periods). Two defenses:
+    #   1) Append a unique cache-bust token on every retry so any proxy /
+    #      gviz internal cache can't keep handing back the same short body.
+    #   2) Exponential-ish backoff (4s, 6s, 10s, 15s, 22s) so a transient
+    #      partial gradually clears out.
+    # If after $maxAttempts the response is still short, surface a clear
+    # WARN and proceed (better to update CSAT / tickets / vini with a stale
+    # payperiods than abort the whole snapshot).
+    $maxAttempts = 6
+    $sleeps = @(4, 6, 10, 15, 22)
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-        if ($attempt -eq 1) { Write-Host "  fetch: $url" }
-        else { Write-Host "  retry $attempt`: $url" }
+        $u = $url
+        if ($attempt -gt 1) {
+            $sep = if ($url.Contains('?')) { '&' } else { '?' }
+            $u   = "$url$sep`_cb=" + [Guid]::NewGuid().ToString('N')
+            Write-Host "  retry $attempt`: $u"
+        } else {
+            Write-Host "  fetch: $url"
+        }
         try {
-            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
-            if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $url" }
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 90
+            if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $u" }
             $txt = $resp.Content
             $s = $txt.IndexOf('{'); $e = $txt.LastIndexOf('}')
             $p = Parse-Json $txt.Substring($s, $e - $s + 1)
-            if ($p.status -ne 'ok') { throw "gviz status=$($p.status) for $url" }
+            if ($p.status -ne 'ok') { throw "gviz status=$($p.status) for $u" }
             $rowCount = $p.table.rows.Count
             if ($expectedMinRows -gt 0 -and $rowCount -lt $expectedMinRows) {
                 Write-Host ("    WARN got $rowCount rows; expected >= $expectedMinRows; retrying...")
-                if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds 4; continue }
-                # On final attempt with low row count, surface a clear warning
-                # but proceed so the rest of the snapshot still updates.
-                Write-Host ("    WARN final attempt still short ($rowCount rows). Proceeding anyway.")
+                if ($attempt -lt $maxAttempts) {
+                    Start-Sleep -Seconds $sleeps[[Math]::Min($attempt - 1, $sleeps.Count - 1)]
+                    continue
+                }
+                Write-Host ("    WARN exhausted retries; final attempt still short ($rowCount rows). Proceeding anyway.")
             }
             return $p.table
         } catch {
             Write-Host ("    WARN attempt $attempt failed: $_")
             if ($attempt -eq $maxAttempts) { throw }
-            Start-Sleep -Seconds 4
+            Start-Sleep -Seconds 5
         }
     }
 }
