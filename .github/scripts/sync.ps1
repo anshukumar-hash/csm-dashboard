@@ -64,7 +64,16 @@ function Fetch-Gviz($url, $expectedMinRows = 0) {
             Write-Host "  fetch: $url"
         }
         try {
-            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 90
+            # Google's gviz endpoint quietly returns a truncated response to
+            # non-browser User-Agents from some IPs (we see 9 rows back from
+            # GitHub Actions runners while a browser sees 6497 from the same
+            # URL). Pretend to be a recent Chrome so the full body comes back.
+            $headers = @{
+                'User-Agent'      = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+                'Accept'          = 'text/javascript, application/json, text/plain, */*'
+                'Accept-Language' = 'en-US,en;q=0.9'
+            }
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 90 -Headers $headers
             if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $u" }
             $txt = $resp.Content
             $s = $txt.IndexOf('{'); $e = $txt.LastIndexOf('}')
