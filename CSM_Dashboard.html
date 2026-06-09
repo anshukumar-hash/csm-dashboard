@@ -1264,7 +1264,11 @@ function getVini() {
     const rowRegion = (r.region || 'AMER').toUpperCase();
     if (f.region.length && !f.region.map(x => x.toUpperCase()).includes(rowRegion)) return false;
     if (f.csm.length || f.manager.length) {
-      if (r.csm === 'Unassigned CSM') return false;
+      // Per user spec: when a CSM filter is active, Unassigned rooftops are
+      // hidden unless 'Unassigned CSM' is itself among the picked values.
+      // Drilling down on the "Unassigned" chip from the overview lands here
+      // with f.csm = ['Unassigned CSM'] — we want those rows to stay visible.
+      if (r.csm === 'Unassigned CSM' && !f.csm.includes('Unassigned CSM')) return false;
       if (!csmMatches(r.csm)) return false;
     }
     if (f.acct.length && !f.acct.includes(acctTypeOf(r.ct, r.cst))) return false;
@@ -3187,6 +3191,10 @@ function populateCsmDropdown() {
     D.s_rows.forEach(r => { if (r[S_COL.csm]) csms.add(r[S_COL.csm]); });
   } else {
     Object.values(VINI_RID_TO_CSM).forEach(v => { if (v) csms.add(v); });
+    // Also pull CSMs straight off the Vini stage so 'Unassigned CSM' (and
+    // any other sentinels) make it into the dropdown — VINI_RID_TO_CSM is
+    // a rid-keyed view that drops rooftops without an assigned CSM.
+    (VINI_STAGE || []).forEach(s => { if (s.csm) csms.add(s.csm); });
   }
   // Keep only entries that actually match data rows. The CSM column on
   // s_rows / vini_stage stores email IDs (e.g. "aman.seth@spyne.ai"); the
