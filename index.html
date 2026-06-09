@@ -1403,6 +1403,12 @@ function getVini() {
 // Plain-English explanations of internal calculation logic, shown on hover
 // of the ⓘ icon next to a KPI label or column header. Non-tech audience.
 const TIPS = {
+  // Identity columns (used by the Enterprise List header — same icons /
+  // tooltip behaviour as the Rooftop view).
+  entName:     'Enterprise name as it appears in the source sheet. Click to sort A-Z / Z-A.',
+  acctType:    'Account classification derived from customer_type + customer_subtype: FGD (Franchise Group Dealer), FSD (Franchise Single Dealer), IGD (Independent Group Dealer), ISD (Independent Single Dealer), Partner, Others.',
+  mrr:         'Monthly Recurring Revenue. Live ARR ÷ 12 for active accounts; 0 for churned.',
+  arr:         'Annual Recurring Revenue. Sum of live agent contracts for this enterprise — churned contracts excluded.',
   // KPI tile labels
   convRoi:     'Conv Rate = Appointments ÷ Qualified leads. RoI Factor = Appt Value ÷ MRR; ≥4x Green, ≥2x Amber, <2x Red.',
   paymentScore:'Aggregate Payment health across all enterprises in scope. Each enterprise contributes one G/A/R rating (from the sheet). Score = avg(G=100, A=50, R=0). ≥80 Green, ≥60 Amber, <60 Red.',
@@ -2867,21 +2873,21 @@ function renderEnterpriseList() {
     '</tr>' +
     '<tr class="cols">' +
       '<th class="left ent-idx">#</th>' +
-      sortTh('Enterprise',   'en',   'entList', 'left ent-name') +
-      sortTh('Account Type', 'acct', 'entList', 'ent-acct') +
-      sortTh('MRR',          'mrr',  'entList', 'ent-money') +
-      sortTh('ARR',          'arr',  'entList', 'ent-money') +
-      sortTh('T-1', 't1', 'entList', 'cell-payment') +
-      sortTh('T-2', 't2', 'entList', 'cell-payment') +
-      sortTh('T-3', 't3', 'entList', 'cell-payment') +
-      sortTh('Pay RAG',      'prag',     'entList', 'cell-payment') +
-      sortTh('# Created',    'cr',       'entList', 'cell-tickets') +
-      sortTh('# Unresolved', 'op',       'entList', 'cell-tickets') +
-      sortTh('Open Ageing (Hrs)', 'ota', 'entList', 'cell-tickets') +
-      sortTh('Ticket RAG',   'tixRag',   'entList', 'cell-tickets') +
-      sortTh('Score',        'commScore','entList', 'cell-comm') +
-      sortTh('# Interaction','intCount', 'entList', 'cell-comm') +
-      sortTh('Final RAG',    'commRag',  'entList', 'cell-comm') +
+      sortTh('Enterprise' + tip('entName'),       'en',   'entList', 'left ent-name') +
+      sortTh('Account Type' + tip('acctType'),    'acct', 'entList', 'ent-acct') +
+      sortTh('MRR' + tip('mrr'),                  'mrr',  'entList', 'ent-money') +
+      sortTh('ARR' + tip('arr'),                  'arr',  'entList', 'ent-money') +
+      sortTh('T-1' + tip('paymentT1'),            't1',   'entList', 'cell-payment') +
+      sortTh('T-2' + tip('paymentT2'),            't2',   'entList', 'cell-payment') +
+      sortTh('T-3' + tip('paymentT3'),            't3',   'entList', 'cell-payment') +
+      sortTh('Pay RAG' + tip('paymentAcct'),      'prag', 'entList', 'cell-payment') +
+      sortTh('# Created' + tip('createdCnt'),     'cr',   'entList', 'cell-tickets') +
+      sortTh('# Unresolved' + tip('unresolvedCnt'),'op',  'entList', 'cell-tickets') +
+      sortTh('Open Ageing (Hrs)' + tip('openAgeing'),'ota','entList','cell-tickets') +
+      sortTh('Ticket RAG' + tip('ticketRagSla'),  'tixRag','entList','cell-tickets') +
+      sortTh('Score' + tip('commScore'),          'commScore','entList','cell-comm') +
+      sortTh('# Interaction' + tip('commInteractions'),'intCount','entList','cell-comm') +
+      sortTh('Final RAG' + tip('commFinalRag'),   'commRag','entList','cell-comm') +
     '</tr></thead><tbody>';
   sorted.forEach((e, i) => {
     const acctPill = e.acct
@@ -2942,7 +2948,7 @@ function renderRooftop() {
     renderKpiStudio(rows, 'rooftop-kpi-strip');
 
     // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
-    // 4 Usage / 3 Quality / 4 Payment / 5 Tickets / 1 Comm / 1 Leader = 26 cols
+    // 4 Usage / 2 Quality / 4 Payment / 4 Tickets / 3 Comm / 1 Leader = 26 cols
     let html = '<table class="data rooftop-layout rooftop-layout-6"><thead><tr class="group">' +
       // 6 frozen identity cells: # · Rooftop · Enterprise · Account Type · MRR · ARR
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
@@ -2951,8 +2957,8 @@ function renderRooftop() {
       '<th colspan="4" class="g-usage">Usage</th>' +
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
-      '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="3" class="g-comm">Communication</th>' +   // Score + # Interaction + RAG
+      '<th colspan="4" class="g-tickets">Tickets</th>' +       // # Created + # Unresolved + Open Ageing + Ticket RAG
+      '<th colspan="3" class="g-comm">Communication</th>' +    // Score + # Interaction + RAG
       '<th colspan="1" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
@@ -3097,7 +3103,7 @@ function renderRooftop() {
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="25" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
@@ -3187,8 +3193,8 @@ function renderRooftop() {
       '<th colspan="5" class="g-usage">Usage</th>' +
       '<th colspan="1" class="g-roi">RoI?</th>' +            // RoI Factor only (text colored G/A/R inline)
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
-      '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="3" class="g-comm">Communication</th>' +   // Score (numeric+counts) · # Interaction · Final RAG
+      '<th colspan="4" class="g-tickets">Tickets</th>' +       // # Created + # Unresolved + Open Ageing + Ticket RAG
+      '<th colspan="3" class="g-comm">Communication</th>' +    // Score (numeric+counts) · # Interaction · Final RAG
       '<th colspan="2" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
