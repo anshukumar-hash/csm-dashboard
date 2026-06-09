@@ -41,15 +41,37 @@ $urls = @{
 # we get $obj['key'] semantics like JavaScriptSerializer used to give us.
 function Parse-Json($s) { return $s | ConvertFrom-Json -AsHashtable -Depth 100 }
 
-function Fetch-Gviz($url) {
-    Write-Host "  fetch: $url"
-    $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
-    if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $url" }
-    $txt = $resp.Content
-    $s = $txt.IndexOf('{'); $e = $txt.LastIndexOf('}')
-    $p = Parse-Json $txt.Substring($s, $e - $s + 1)
-    if ($p.status -ne 'ok') { throw "gviz status=$($p.status) for $url" }
-    return $p.table
+function Fetch-Gviz($url, $expectedMinRows = 0) {
+    # Retry on partial responses. gviz occasionally returns a tiny
+    # subset of rows (seen 22 instead of 6497 on the payment-periods tab)
+    # — caller can pass $expectedMinRows; if the response has fewer rows
+    # than that, sleep + retry up to 3 times before giving up.
+    $maxAttempts = 3
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        if ($attempt -eq 1) { Write-Host "  fetch: $url" }
+        else { Write-Host "  retry $attempt`: $url" }
+        try {
+            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
+            if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $url" }
+            $txt = $resp.Content
+            $s = $txt.IndexOf('{'); $e = $txt.LastIndexOf('}')
+            $p = Parse-Json $txt.Substring($s, $e - $s + 1)
+            if ($p.status -ne 'ok') { throw "gviz status=$($p.status) for $url" }
+            $rowCount = $p.table.rows.Count
+            if ($expectedMinRows -gt 0 -and $rowCount -lt $expectedMinRows) {
+                Write-Host ("    WARN got $rowCount rows; expected >= $expectedMinRows; retrying...")
+                if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds 4; continue }
+                # On final attempt with low row count, surface a clear warning
+                # but proceed so the rest of the snapshot still updates.
+                Write-Host ("    WARN final attempt still short ($rowCount rows). Proceeding anyway.")
+            }
+            return $p.table
+        } catch {
+            Write-Host ("    WARN attempt $attempt failed: $_")
+            if ($attempt -eq $maxAttempts) { throw }
+            Start-Sleep -Seconds 4
+        }
+    }
 }
 
 function Norm-Lbl($s) { return ($s -replace '[^a-zA-Z0-9]+', '').ToLower() }
@@ -87,11 +109,14 @@ function Gviz-Val($cell) {
 }
 
 Write-Host "=== Fetching 6 data sources ==="
-$viniTab        = Fetch-Gviz $urls.vini
-$payTab         = Fetch-Gviz $urls.payment
-$tixTab         = Fetch-Gviz $urls.tickets
-$studioTab      = Fetch-Gviz $urls.studio
-$payPeriodsTab  = Fetch-Gviz $urls.payperiods
+# Expected minimum row counts — protect against gviz returning partial
+# responses (seen on the payment-periods tab). Numbers are well below the
+# typical fetch size so they only fire when something is clearly wrong.
+$viniTab        = Fetch-Gviz $urls.vini       2000   # daily, ~4700 typical
+$payTab         = Fetch-Gviz $urls.payment    100    # payment master ~140 typical
+$tixTab         = Fetch-Gviz $urls.tickets    500    # tickets ~1500 typical
+$studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
+$payPeriodsTab  = Fetch-Gviz $urls.payperiods 3000   # payment-periods ~6500 typical
 
 # CSAT comes back from gid=701797891 (gviz) now that the IMPORTRANGE works.
 # We still keep the "Loading..." sentinel detection from the original gviz
