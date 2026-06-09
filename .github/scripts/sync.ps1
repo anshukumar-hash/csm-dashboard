@@ -565,7 +565,8 @@ if ($csatBroken) {
             $arr = $D.csat_all_by_eid[$k]
             $list = New-Object System.Collections.Generic.List[hashtable]
             foreach ($r in $arr) {
-                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag })
+                $ic = if ($null -eq $r.intCount) { 0 } else { [int]$r.intCount }
+                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag; intCount=$ic })
             }
             $allByEid[$k] = $list
         }
@@ -575,7 +576,8 @@ if ($csatBroken) {
             $arr = $D.csat_all_by_name[$k]
             $list = New-Object System.Collections.Generic.List[hashtable]
             foreach ($r in $arr) {
-                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag })
+                $ic = if ($null -eq $r.intCount) { 0 } else { [int]$r.intCount }
+                $list.Add(@{ date_iso=[string]$r.date_iso; avg=$r.avg; rag=[string]$r.rag; intCount=$ic })
             }
             $allByName[$k] = $list
         }
@@ -583,12 +585,18 @@ if ($csatBroken) {
     Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid | $($allByName.Count) all_by_name"
 } else {
     $cCols = $csatTab.cols
+    # CSAT schema (gid=701797891, verified 2026-06-09):
+    #   A Date  |  B Enterprise_Name  |  C Enterprise_Id  |  D CSM_Name
+    #   E meeting_csat | F thread_csat | G ticket_csat | H call_csat
+    #   I average_csat_score   (numeric: Comm RAG source)
+    #   J interaction_count    (numeric: hash-Interaction column, SUMMED)
     $ci = @{
-        date = Find-Col $cCols @('Day','date','Date')
-        en   = Find-Col $cCols @('Enterprise Name','company_name')
-        eid  = Find-Col $cCols @('Enterprise ID','company_external_id')
-        csm  = Find-Col $cCols @('CSM Name','csm_name')
-        avg  = Find-Col $cCols @('Comm Avg.','Comm Avg','comm_avg')
+        date    = Find-Col $cCols @('Date','Day','date')
+        en      = Find-Col $cCols @('Enterprise_Name','Enterprise Name','company_name')
+        eid     = Find-Col $cCols @('Enterprise_Id','Enterprise ID','company_external_id')
+        csm     = Find-Col $cCols @('CSM_Name','CSM Name','csm_name')
+        avg     = Find-Col $cCols @('average_csat_score','Comm Avg.','Comm Avg','comm_avg')
+        intCnt  = Find-Col $cCols @('interaction_count','interactionCount','int_count')
     }
     # Normalize enterprise name for fuzzy match: lowercase + trim + strip
     # " - <eid>" suffix the CSAT dump sometimes appends.
@@ -610,15 +618,27 @@ if ($csatBroken) {
         if ($rawAvg -ne '' -and $null -ne $rawAvg) {
             try { $avg = [double]$rawAvg } catch { $avg = $null }
         }
+        # interaction_count (column J) — the actual number of interactions
+        # captured for this reading. SUMMED downstream (rather than counting
+        # CSAT rows) so the dashboard's "# Interaction" reflects engagement
+        # volume, not just survey frequency.
+        $intCount = 0
+        if ($ci.intCnt -ge 0) {
+            $rawInt = Gviz-Val $c[$ci.intCnt]
+            if ($rawInt -ne '' -and $null -ne $rawInt) {
+                try { $intCount = [int]([double]$rawInt) } catch { $intCount = 0 }
+            }
+        }
         $rag = 'NA'
         if ($null -ne $avg) {
             if ($avg -lt 2.5) { $rag = 'Red' } elseif ($avg -lt 4) { $rag = 'Amber' } else { $rag = 'Green' }
         }
-        $rec = @{ date_iso=$iso; avg=$avg; name=$name }
+        $rec = @{ date_iso=$iso; avg=$avg; name=$name; intCount=$intCount }
+        $allRec = @{ date_iso=$iso; avg=$avg; rag=$rag; intCount=$intCount }
         if ($eid) {
             if (-not $byEid.ContainsKey($eid) -or [string]$byEid[$eid].date_iso -lt $iso) { $byEid[$eid] = $rec }
             if (-not $allByEid.ContainsKey($eid)) { $allByEid[$eid] = New-Object System.Collections.Generic.List[hashtable] }
-            $allByEid[$eid].Add(@{ date_iso=$iso; avg=$avg; rag=$rag })
+            $allByEid[$eid].Add($allRec)
         }
         if ($name) {
             # by_name keyed UPPERCASE (latest-reading lookup, unchanged)
@@ -628,7 +648,7 @@ if ($csatBroken) {
             $kNorm = NormCsatName $name
             if ($kNorm) {
                 if (-not $allByName.ContainsKey($kNorm)) { $allByName[$kNorm] = New-Object System.Collections.Generic.List[hashtable] }
-                $allByName[$kNorm].Add(@{ date_iso=$iso; avg=$avg; rag=$rag })
+                $allByName[$kNorm].Add($allRec)
             }
         }
     }
@@ -1094,7 +1114,12 @@ function CsatAllToJson($dict) {
     $parts=New-Object System.Collections.Generic.List[string]
     foreach ($k in $dict.Keys) {
         $items=New-Object System.Collections.Generic.List[string]
-        foreach ($r in $dict[$k]) { $items.Add('{"date_iso":' + (JsEscape $r.date_iso) + ',"avg":' + (JsNum $r.avg) + ',"rag":' + (JsEscape $r.rag) + '}') }
+        foreach ($r in $dict[$k]) {
+            # intCount sourced from column J (interaction_count) — kept as
+            # int; absent on legacy snapshots so default to 0.
+            $ic = if ($null -eq $r.intCount) { 0 } else { [int]$r.intCount }
+            $items.Add('{"date_iso":' + (JsEscape $r.date_iso) + ',"avg":' + (JsNum $r.avg) + ',"rag":' + (JsEscape $r.rag) + ',"intCount":' + $ic + '}')
+        }
         $parts.Add((JsEscape $k) + ':[' + ($items -join ',') + ']')
     }
     return '{' + ($parts -join ',') + '}'

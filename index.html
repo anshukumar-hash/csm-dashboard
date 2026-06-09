@@ -15,9 +15,20 @@
     --amber:#B45309; --amber-bg:#FEF3C7;
     --red:#B91C1C; --red-bg:#FEE2E2;
     --blue:#4F46E5; --link:#4F46E5;
-    --grp-final:#FEF3C7; --grp-usage:#DBEAFE; --grp-roi:#DCFCE7;
-    --grp-payment:#FCE7F3; --grp-tickets:#E0E7FF; --grp-comm:#FFEDD5; --grp-leader:#F3E8FF;
-    --grp-quality:#FAE8FF;
+    /* Column-group header palette. Picked so adjacent buckets always
+       contrast and so no bucket hue collides with the chips rendered
+       inside its cells (e.g. the #Interaction amber pill was getting
+       lost in the old peach Communication header). Each tone uses a
+       low-saturation tint at ~88% lightness so the bucket dividers
+       read without overpowering the data. */
+    --grp-final:#FEF3C7;    /* warm amber  — Final Status     */
+    --grp-roi:#DCFCE7;      /* mint green  — RoI              */
+    --grp-usage:#DBEAFE;    /* sky blue    — Usage            */
+    --grp-quality:#E0F2FE;  /* light cyan  — Quality          */
+    --grp-payment:#FCE7F3;  /* pink        — Payment          */
+    --grp-tickets:#E0E7FF;  /* periwinkle  — Tickets          */
+    --grp-comm:#CFFAFE;     /* teal        — Communication    */
+    --grp-leader:#EDE9FE;   /* lavender    — Leadership       */
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -695,17 +706,31 @@ function intCountCell(n) {
   const cls = num >= 5 ? 'int-hi' : num >= 2 ? 'int-md' : 'int-lo';
   return `<span class="int-count ${cls}" title="${num} interaction${num === 1 ? '' : 's'} in current period">${num}</span>`;
 }
+// # Interaction = SUM of column J `interaction_count` across CSAT readings
+// whose Enterprise_Id (column C) matches the enterprise, restricted to the
+// active periodRange(). Falls back to a NAME-keyed lookup only when the eid
+// path yielded nothing (legacy rows that pre-date Enterprise_Id).
 function commInteractionCount(eid, en) {
   const range = periodRange();
-  const filterByDate = arr =>
-    Array.isArray(arr)
-      ? arr.filter(r => r.date_iso && r.date_iso >= range.from && r.date_iso <= range.to)
-      : [];
+  // Sum column-J `interaction_count` across in-period readings. Legacy
+  // snapshots (pre-2026-06-09) didn't carry intCount; for those we fall
+  // back to counting rows so the column doesn't read as a regression
+  // while waiting for the next sync to rebuild the snapshot.
+  const sumByDate = arr => {
+    if (!Array.isArray(arr)) return 0;
+    let s = 0, anyIntCount = false;
+    for (const r of arr) {
+      if (!r.date_iso || r.date_iso < range.from || r.date_iso > range.to) continue;
+      if (r.intCount != null) { anyIntCount = true; s += Number(r.intCount) || 0; }
+      else if (!anyIntCount) s += 1;   // legacy fallback: count of readings
+    }
+    return s;
+  };
   let n = 0;
-  if (eid) n += filterByDate(CSAT_ALL_BY_EID[eid]).length;
+  if (eid) n += sumByDate(CSAT_ALL_BY_EID[eid]);
   if (!n && en) {
     const k = typeof normCsatName === 'function' ? normCsatName(en) : String(en).toLowerCase().trim();
-    n += filterByDate(CSAT_ALL_BY_NAME[k]).length;
+    n += sumByDate(CSAT_ALL_BY_NAME[k]);
   }
   return n;
 }
@@ -1105,6 +1130,13 @@ function sortStudioRows(rows, sortState) {
   let getter;
   if (key === 'acct') {
     getter = r => acctTypeOf(r[S_COL.ct], r[S_COL.cst]);
+  } else if (key === 'commScore') {
+    // Sort by the numeric Communication Score (CSAT-history weighted blend).
+    // null / no readings sinks to the bottom of asc; rises in desc.
+    getter = r => {
+      const v = scoreValue(csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]), COMM_WEIGHTS);
+      return v == null ? -Infinity : v;
+    };
   } else if (RAG_KEYS.has(key)) {
     const idx = S_COL[key];
     if (idx == null) return s;
@@ -2785,7 +2817,7 @@ function renderRooftop() {
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="5" class="g-tickets">Tickets</th>' +
-      '<th colspan="2" class="g-comm">Communication</th>' +   // # Interaction + RAG
+      '<th colspan="3" class="g-comm">Communication</th>' +   // Score + # Interaction + RAG
       '<th colspan="1" class="g-leader">Leadership</th>' +
       '</tr><tr class="cols">' +
       '<th class="left frozen frozen-1">#</th>' +
@@ -2811,9 +2843,10 @@ function renderRooftop() {
       sortTh('#Unresolved' + tip('unresolvedCnt'), 'unr',  'studioRooftop', 'cell-tickets') +
       sortTh('Open Ageing (Hrs)' + tip('openAgeing'), 'ota', 'studioRooftop', 'cell-tickets') +
       sortTh('Ticket RAG' + tip('ticketRagSla'),   'trag', 'studioRooftop', 'cell-tickets') +
+      sortTh('Score' + tip('commScore'),         'commScore', 'studioRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractions') + '</th>' +
-      sortTh('RAG' + tip('commFinalRag'),      'red',  'studioRooftop', 'cell-comm') +
-      sortTh('MBR',                            'mbr',  'studioRooftop', 'cell-leader') +
+      sortTh('RAG' + tip('commFinalRag'),        'red',  'studioRooftop', 'cell-comm') +
+      sortTh('MBR',                              'mbr',  'studioRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
     let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0;
@@ -2821,7 +2854,12 @@ function renderRooftop() {
     // distribution (sIscRag below) matching the Website RAG pattern.
     // sTrag dropped — ticket RAG distribution now computed from STUDIO_TIX
     // in the Total row block below (see sTotalTrag).
-    const sT1={}, sT2={}, sT3={}, sPrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={}, sIscRag={};
+    const sT1={}, sT2={}, sT3={}, sPrag={}, sComm={}, sMbr={}, sOverall={}, sWsRag={}, sIscRag={}, sCommScore={};
+    // Track which enterprises have already contributed their CSAT-history
+    // distribution to sCommScore — Studio has multiple rooftops per enterprise
+    // and we want the "Score" total to reflect per-enterprise readings, not
+    // double/triple-count when an enterprise shows up under several rooftops.
+    const seenEidCommScore = new Set();
     // Payment counts dedup by enterprise (eid). Studio Rooftop View aggregates
     // across rows; same enterprise can have multiple rooftops.
     const seenEidPay = new Set();
@@ -2860,6 +2898,14 @@ function renderRooftop() {
       const rTrag = computeTicketRAG({ cr:rTixEnt.cr, op:rTixEnt.op, sla:rTixEnt.sla });
       const rComm = csatRagInRange(r[S_COL.eid], r[S_COL.en]);
       inc(sComm, rComm);
+      // Communication Score distribution — sum per-enterprise CSAT history
+      // exactly once across the rooftop list.
+      const sKey = r[S_COL.eid] || r[S_COL.en];
+      if (sKey && !seenEidCommScore.has(sKey)) {
+        seenEidCommScore.add(sKey);
+        const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]);
+        Object.entries(cc).forEach(([k,v]) => { sCommScore[k] = (sCommScore[k]||0) + v; });
+      }
       inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
       inc(sMbr, r[S_COL.mbr]);
       // Website RAG cell: single G/A/R chip from the numeric score; clickable
@@ -2910,6 +2956,7 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:rowTix.cr, op:rowTix.op, sla:rowTix.sla }))}</td>
+        <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">—</span>' : ragStack(cc); })()}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
@@ -2962,6 +3009,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
       <td class="cell-tickets">${ragSingle(computeTicketRAG({ cr:totalStudioTix.cr, op:totalStudioTix.op, sla:totalStudioTix.sla }))}</td>
+      <td class="cell-comm">${Object.keys(sCommScore).length ? ragStack(sCommScore) : '<span style="color:var(--text-4)">—</span>'}</td>
       <td class="cell-comm">${intCountCell(rows.slice(0, sliceN).reduce((s, r) => s + commInteractionCount(r[S_COL.eid], r[S_COL.en]), 0))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
@@ -3504,36 +3552,50 @@ function gvizToViniStage(table) {
   });
 }
 
-// Build CSAT_BY_EID / CSAT_BY_NAME / CSAT_ALL_BY_EID from gid=701797891
+// Build CSAT_BY_EID / CSAT_BY_NAME / CSAT_ALL_BY_EID from gid=701797891.
+// Sheet schema (verified against live source 2026-06-09):
+//   A Date  |  B Enterprise_Name  |  C Enterprise_Id  |  D CSM_Name
+//   E meeting_csat | F thread_csat | G ticket_csat | H call_csat
+//   I average_csat_score   (numeric avg → used for Comm RAG)
+//   J interaction_count    (numeric # interactions → used for "# Interaction"
+//                           column; SUMMED across in-period readings rather
+//                           than counting CSAT rows. Per user spec the match
+//                           key is Enterprise_Id in column C.)
 function gvizToCsat(table) {
   const cols = table.cols;
-  const iDate = colIdxByLabel(cols, 'date');
-  const iName = colIdxByLabel(cols, 'company_name');
-  const iEid  = colIdxByLabel(cols, 'company_external_id');
-  const iAvg  = colIdxByLabel(cols, 'Comm Avg.');
-  const byEid = {}, byName = {}, allByEid = {};
+  const iDate = colIdxByLabel(cols, ['Date','Day','date']);
+  const iName = colIdxByLabel(cols, ['Enterprise_Name','Enterprise Name','company_name']);
+  const iEid  = colIdxByLabel(cols, ['Enterprise_Id','Enterprise ID','company_external_id']);
+  const iAvg  = colIdxByLabel(cols, ['average_csat_score','Comm Avg.','Comm Avg','comm_avg']);
+  const iInt  = colIdxByLabel(cols, ['interaction_count','interactionCount','int_count']);
+  const byEid = {}, byName = {}, allByEid = {}, allByName = {};
   table.rows.forEach(row => {
     const c = row.c || [];
     const eid  = String(gvizVal(c[iEid])  || '').trim();
     const name = String(gvizVal(c[iName]) || '').trim();
     const iso  = gvizDate(c[iDate]);
-    const rawAvg = gvizVal(c[iAvg]);
+    const rawAvg = iAvg >= 0 ? gvizVal(c[iAvg]) : null;
     const avg = (rawAvg == null || rawAvg === '') ? null : Number(rawAvg);
+    const rawInt = iInt >= 0 ? gvizVal(c[iInt]) : null;
+    const intCount = (rawInt == null || rawInt === '') ? 0 : Number(rawInt) || 0;
     let rag = 'NA';
     if (avg != null && !isNaN(avg)) {
       rag = avg < 2.5 ? 'Red' : avg < 4 ? 'Amber' : 'Green';
     }
-    const rec = { date_iso: iso, avg, name };
+    const rec = { date_iso: iso, avg, name, intCount };
+    const allRec = { date_iso: iso, avg, rag, intCount };
     if (eid) {
       if (!byEid[eid] || (byEid[eid].date_iso || '') < iso) byEid[eid] = rec;
-      (allByEid[eid] = allByEid[eid] || []).push({ date_iso: iso, avg, rag });
+      (allByEid[eid] = allByEid[eid] || []).push(allRec);
     }
     if (name) {
-      const k = name.toUpperCase();
-      if (!byName[k] || (byName[k].date_iso || '') < iso) byName[k] = rec;
+      const kUp = name.toUpperCase();
+      if (!byName[kUp] || (byName[kUp].date_iso || '') < iso) byName[kUp] = rec;
+      const kNorm = normCsatName(name);
+      if (kNorm) (allByName[kNorm] = allByName[kNorm] || []).push(allRec);
     }
   });
-  return { byEid, byName, allByEid };
+  return { byEid, byName, allByEid, allByName };
 }
 
 // Run all 3 fetches concurrently, swap data in place, then re-render.
@@ -3564,6 +3626,12 @@ async function refreshAllSheets() {
     Object.assign(CSAT_BY_NAME, csat.byName);
     Object.keys(CSAT_ALL_BY_EID).forEach(k => delete CSAT_ALL_BY_EID[k]);
     Object.assign(CSAT_ALL_BY_EID, csat.allByEid);
+    // Rebuild name-keyed all-readings index so the name-fallback path
+    // (commInteractionCount / csatRagInRange) sees the freshest data too.
+    if (csat.allByName) {
+      Object.keys(CSAT_ALL_BY_NAME).forEach(k => delete CSAT_ALL_BY_NAME[k]);
+      Object.assign(CSAT_ALL_BY_NAME, csat.allByName);
+    }
 
     status.className = 'live-indicator';
     status.textContent = '● Live';
