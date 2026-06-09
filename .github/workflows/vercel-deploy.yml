@@ -1,0 +1,67 @@
+name: Deploy to Vercel (customer_success_operative_dashboard)
+
+# Fires on every push to main that touches a dashboard file. The sync workflow
+# (sync-dashboard.yml) already calls the deploy hook after a data sync — this
+# one covers code-only pushes (JS / CSS / sync.ps1 edits / vercel.json tweaks)
+# so the Vercel project at
+#   https://vercel.com/hey-s-projects4/customer_success_operative_dashboard
+# stays in lockstep with the repo regardless of what changed.
+#
+# Why a deploy hook instead of Vercel's GitHub integration:
+# the GitHub integration silently rejects commits whose author isn't a member
+# of the Vercel team — that's the bug we hit on 2026-06-09 where every push by
+# `Anshu-Kumar` failed with "Git author must have access to the project on
+# Vercel to create deployments." A deploy hook is just a URL, fires under the
+# team owner's credentials, no author check.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'CSM_Dashboard.html'
+      - 'vercel_deploy/**'
+      - '.github/scripts/sync.ps1'
+      - '.github/workflows/vercel-deploy.yml'
+  workflow_dispatch:    # manual trigger button in the Actions tab
+
+# Don't pile up rebuilds — if two pushes land back-to-back, only deploy the
+# latest. Vercel itself also debounces but we save a workflow run.
+concurrency:
+  group: vercel-deploy
+  cancel-in-progress: true
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets aren't directly available in `if:` conditions (they're masked),
+      # so we copy into env first and gate the step on env.HOOK being non-empty.
+      HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+    steps:
+      - name: Ping Vercel deploy hook
+        if: env.HOOK != ''
+        run: |
+          # Deploy hook setup (one-time, in Vercel dashboard):
+          #   Project: customer_success_operative_dashboard
+          #   Team:    hey-s-projects4
+          #   Settings → Git → Deploy Hooks → Create
+          #     Name:    github-main
+          #     Branch:  main
+          #   Copy the generated URL, then in this GitHub repo:
+          #   Settings → Secrets and variables → Actions → New repository secret
+          #     Name:  VERCEL_DEPLOY_HOOK
+          #     Value: <the URL>
+          echo "Triggering Vercel deploy on customer_success_operative_dashboard..."
+          resp=$(curl -sS -X POST "$HOOK")
+          echo "Vercel response: $resp"
+
+      - name: Warn if hook secret is missing
+        if: env.HOOK == ''
+        run: |
+          echo "::warning::VERCEL_DEPLOY_HOOK secret is not set — Vercel will NOT auto-deploy."
+          echo "Add it under Settings → Secrets and variables → Actions."
+          echo "See the inline comment in this workflow for the exact steps."
+          # Exit 0 so the workflow doesn't appear as a failure when the secret
+          # is missing — that's an expected pre-setup state.
+          exit 0

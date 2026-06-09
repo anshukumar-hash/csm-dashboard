@@ -21,6 +21,10 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      # Job-level so the `if: env.HOOK != ''` gate on the Vercel step can
+      # see it — step-level env isn't visible in step-level if conditions.
+      HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,15 +38,33 @@ jobs:
         run: |
           # Show what changed (for the workflow log)
           git status --short
-          if [[ -z "$(git status --porcelain index.html CSM_Dashboard.html)" ]]; then
+          # All three dashboard copies must move together: index.html is the
+          # source of truth, CSM_Dashboard.html is the historical email mirror,
+          # vercel_deploy/index.html is what Vercel actually serves. sync.ps1
+          # writes to all three; this step commits all three.
+          if [[ -z "$(git status --porcelain index.html CSM_Dashboard.html vercel_deploy/index.html)" ]]; then
             echo "No changes — sheets data is identical to repo. Skipping commit."
             exit 0
           fi
           # Configure the bot identity
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html CSM_Dashboard.html
+          git add index.html CSM_Dashboard.html vercel_deploy/index.html
           ts=$(date -u +'%Y-%m-%d %H:%M UTC')
           git commit -m "Auto-sync from Google Sheets ($ts) [skip ci]"
           git push
           echo "Pushed update to origin/main"
+
+      - name: Ping Vercel deploy hook
+        if: env.HOOK != ''
+        run: |
+          # Vercel deploy hook = a URL you generate in:
+          #   Vercel dashboard → Project Settings → Git → Deploy Hooks
+          # for the project `customer_success_operative_dashboard` under
+          # team `hey-s-projects4`. Paste it as the GitHub repo secret
+          # VERCEL_DEPLOY_HOOK and this step fires it on every sync that
+          # commits new data. Bypasses the GitHub-author permission check
+          # that was blocking auto-deploys.
+          echo "Triggering Vercel deploy on customer_success_operative_dashboard..."
+          resp=$(curl -sS -X POST "$HOOK")
+          echo "Vercel response: $resp"

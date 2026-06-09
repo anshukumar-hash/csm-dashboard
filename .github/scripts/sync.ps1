@@ -9,11 +9,17 @@ $repoRoot = Get-Location
 # All copies the sync needs to keep in lockstep:
 #   - index.html              GitHub repo + GitHub Pages (if enabled)
 #   - CSM_Dashboard.html      historical email-snapshot mirror
-#   - vercel_deploy/index.html Vercel production deployment (csm-dashboard-navy.vercel.app)
+#   - vercel_deploy/index.html Vercel production deployment
+#                              (Vercel project: customer_success_operative_dashboard,
+#                               team: hey-s-projects4)
 # Bug fixed 2026-06-09: vercel_deploy/ was being ignored by sync, so Vercel kept
 # serving a stale snapshot for ~2 weeks while index.html landed fresh data on
-# every sync. Any file in $dashFiles below gets the new window.__DASHBOARD_DATA__
-# block written to it.
+# every sync. Also the previous Vercel project (csm-dashboard-navy, owned by
+# "hey's projects" team) was silently rejecting our commits because the GitHub
+# author didn't have team access. New project + deploy-hook gates the rebuild
+# on a GitHub Actions secret VERCEL_DEPLOY_HOOK rather than commit-author ACL.
+# Any file in $dashFiles below gets the new window.__DASHBOARD_DATA__ block
+# written to it.
 $dashFiles = @(
     "$repoRoot/index.html",
     "$repoRoot/CSM_Dashboard.html",
