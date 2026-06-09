@@ -6,8 +6,20 @@
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Get-Location
-$dashFiles = @("$repoRoot/index.html", "$repoRoot/CSM_Dashboard.html")
-$primary = $dashFiles[0]
+# All copies the sync needs to keep in lockstep:
+#   - index.html              GitHub repo + GitHub Pages (if enabled)
+#   - CSM_Dashboard.html      historical email-snapshot mirror
+#   - vercel_deploy/index.html Vercel production deployment (csm-dashboard-navy.vercel.app)
+# Bug fixed 2026-06-09: vercel_deploy/ was being ignored by sync, so Vercel kept
+# serving a stale snapshot for ~2 weeks while index.html landed fresh data on
+# every sync. Any file in $dashFiles below gets the new window.__DASHBOARD_DATA__
+# block written to it.
+$dashFiles = @(
+    "$repoRoot/index.html",
+    "$repoRoot/CSM_Dashboard.html",
+    "$repoRoot/vercel_deploy/index.html"
+) | Where-Object { Test-Path $_ }
+$primary = "$repoRoot/index.html"
 if (-not (Test-Path $primary)) { throw "index.html not found at $primary" }
 
 $sheetId = '1kdGwx6rxBy8MWKq8WyR04xq4QgWSfnh1W4nHsOqj_HE'
