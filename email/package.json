@@ -1,0 +1,14 @@
+{
+  "name": "csm-daily-digest",
+  "version": "1.0.0",
+  "description": "Generates and sends the daily CSM digest email by scraping the live dashboard's computed tables.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node generate-digest.mjs",
+    "send": "node send-digest.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

@@ -1,0 +1,4 @@
+node_modules/
+daily-digest.html
+package-lock.json
+*.png
