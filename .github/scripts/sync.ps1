@@ -892,7 +892,7 @@ Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) ticke
 #   E account_type | F account_subtype | G Customer Segment | H CSM Name |
 #   I Region | J Quality Website Score | K Website Link | L Pendency (6 hrs) |
 #   M Inventory Score | N Active VINs | O #Last Month Actual VINs |
-#   P #Actual MTD VINs | Q #Contracted VINs | R Usage Factor |
+#   P #Actual MTD VINs | Q IMS Vins | R Usage Factor |
 #   S RoI Report Sent | T Payment T1 | U T2 | V T3 | W Payment RAG |
 #   X Tickets #Unresolved | Y #Created | Z Open Ageing | AA Avg Resolution |
 #   AB Ticket RAG | AC Comm RAG Status | AD MBR | AE Contact Freq
@@ -933,7 +933,7 @@ $si = @{
     av      = Find-Col $sCols @('Usage Active Vins','Active Vins','Active VINs')
     lm_acv  = Find-Col $sCols @('# Last month Actual Vins','Last month Actual Vins')
     acv     = Find-Col $sCols @('# Actual MTD VINs','Actual MTD VINs','# Actual')
-    cv      = Find-Col $sCols @('# Contracted VINs','Contracted VINs','# Contracted')
+    cv      = Find-Col $sCols @('IMS Vins','IMS VINs','# IMS Vins','# IMS VINs','IMS','# Contracted VINs','Contracted VINs','# Contracted')
     uf      = Find-Col $sCols @('# VIN Usage Factor','VIN Usage Factor','Usage Factor')
     arr     = Find-Col $sCols @('ARR')
     t1      = Find-Col $sCols @('Payment T1','T1')
@@ -993,12 +993,14 @@ foreach ($row in $studioTab.rows) {
     $avVal = Gviz-Val $c[$si.av]
     $r[$idx['av']]      = $avVal
     $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
-    # # Contracted VINs derived from Active VINs (per user spec: 2/3 of av,
-    # col N), NOT from sheet column Q and NOT from # Actual MTD VINs.
-    # Empty/zero av → cv stays 0.
-    $avNum = 0.0
-    try { $avNum = [double]$avVal } catch { $avNum = 0.0 }
-    $r[$idx['cv']]      = if ($avNum -gt 0) { [Math]::Round($avNum * 2.0 / 3.0) } else { 0 }
+    # IMS Vins — read directly from sheet column Q (gid=603796861), per user
+    # spec. Replaces the old derived "# Contracted" value (was 2/3 of Active
+    # VINs). Field key stays `cv` to avoid schema churn; the dashboard labels
+    # it "IMS Vins" and computes Usage Factor = #Actual / IMS Vins. Header-
+    # matched via $si.cv, with a positional fallback to column Q (0-based 16)
+    # in case the sheet header text differs.
+    $imsIdx = if ($si.cv -ge 0) { $si.cv } else { 16 }
+    $r[$idx['cv']]      = Gviz-Val $c[$imsIdx]
     $r[$idx['lm_acv']]  = if ($si.lm_acv -ge 0) { Gviz-Val $c[$si.lm_acv] } else { '' }
     $r[$idx['uf']]      = Gviz-Val $c[$si.uf]
     $r[$idx['pen']]     = Gviz-Val $c[$si.pen]

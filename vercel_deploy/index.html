@@ -1519,7 +1519,7 @@ const TIPS = {
   websiteScore:'RAG derived from Quality Website Score: score < 5 → Red, 5–7.99 → Amber, ≥8 → Green. Click the chip to open the dealer\'s site (from the Website Link column).',
   pendency:    'Number of VINs awaiting action for longer than 6 hours.',
   inventoryScore:'Inventory Score from the sheet (0–10). >8 Green, >5 Amber, <5 Red.',
-  usageFactor: 'Usage Factor = # Actual VINs ÷ # Contracted VINs (share of contracted VINs actually being used), shown as %. ≥70% Green, 40–70% Amber, <40% Red. Period-aware via #Actual.',
+  usageFactor: 'Usage Factor = # Actual VINs ÷ IMS Vins (share of IMS VINs actually being used), shown as %. # Actual swaps between MTD and Last Month on the period filter; IMS Vins is sheet column Q (gid=603796861). ≥70% Green, 40–70% Amber, <40% Red.',
   paymentT1:   'T-1 = customer_status of the most-recent CLOSED service period (paid/overdue only — sent/draft rows are skipped before ranking). Source: payment-periods tab, DENSE_RANK by (Service_period_Start_date, Service_period_End_date) DESC per enterprise. Group view counts enterprises per status; the "No Invoice Raised" badge accounts for enterprises with no closed invoice in this slot.',
   paymentT2:   'T-2 = customer_status of the 2nd most-recent CLOSED period. Same filter (sent/draft skipped) + DENSE_RANK per enterprise. Group view counts enterprises per status.',
   paymentT3:   'T-3 = customer_status of the 3rd most-recent CLOSED period. Same filter + DENSE_RANK per enterprise. Group view counts enterprises per status.',
@@ -1790,7 +1790,7 @@ function roiInlineClass(val) {
   return 'roi-text-r';
 }
 
-// Color class for the Studio Usage Factor (= # Actual ÷ # Contracted, ratio).
+// Color class for the Studio Usage Factor (= # Actual ÷ IMS Vins, ratio).
 // Per user spec:  >= 0.70  Green,  0.40–0.70  Amber,  < 0.40  Red.
 // Returns one of the globally-scoped .roi-text-* classes so the same color
 // palette is used as for the RoI factor.
@@ -1852,7 +1852,7 @@ function ufColorClassToRag(v) {
   return 'Red';
 }
 // Overall RAG — Spyne SaaS spec. Weighted-score blend of four health buckets:
-//   Usage Factor (#Actual / #Contracted)         weight 2
+//   Usage Factor (#Actual / IMS Vins)            weight 2
 //   Payment   (T-1/T-2/T-3 worst-wins)           weight 3   ← highest
 //   Tickets   (SLA Violated / actively-open)     weight 2
 //   Comm Final RAG (CSAT-derived)                weight 1
@@ -2196,7 +2196,7 @@ function uniqueSet(rows, getter) {
 
 // ============================================================
 // STUDIO TABLE
-// Columns from sheet: MRR, ARR, RAG, Churned | Active Vins, #Contracted, #Actual, VIN Usage Factor, Pendency 12h, Website Score, Inventory Score | Report Sent | T1, T2, T3, Payment RAG | #Unresolved, #Created, Open Ageing, Avg Res, Ticket RAG | Contact Freq | MBR
+// Columns from sheet: MRR, ARR, RAG, Churned | Active Vins, IMS Vins, #Actual, VIN Usage Factor, Pendency 12h, Website Score, Inventory Score | Report Sent | T1, T2, T3, Payment RAG | #Unresolved, #Created, Open Ageing, Avg Res, Ticket RAG | Contact Freq | MBR
 // ============================================================
 const S_GROUPS = [
   { l:'',             span:6, c:'' },              // # · NAME · Rooftops · Enterprises · MRR · ARR (frozen)
@@ -2220,8 +2220,8 @@ const S_COLS_SHARED = [
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
   // 1 RoI — Report Sent (7-day per-enterprise aggregate)
   {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
-  // 4 Usage (Usage Factor now = #Contracted / #Actual, recomputed in studioRow)
-  {l:'Active VINs', cc:'cell-usage'}, {l:'#Contracted', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
+  // 4 Usage (Usage Factor = #Actual / IMS Vins, recomputed in studioRow)
+  {l:'Active VINs', cc:'cell-usage'}, {l:'IMS Vins', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
   {l:'Usage Factor', cc:'cell-usage', tip:'usageFactor'},
   // 2 Quality (Inventory Score removed per user spec — kept the data path in
   // sync.ps1 so we can bring it back without a resync if needed).
@@ -2263,8 +2263,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // #Actual swaps to last-month source when state.period === 'LM'.
   const actualField = studioActualField();
   const acv = sumBy(active, r => r[S_COL[actualField]]);
-  // Usage Factor = # Actual ÷ # Contracted (per user spec — the share of
-  // contracted VINs that are actually being used). Period-aware via acv.
+  // Usage Factor = # Actual ÷ IMS Vins (per user spec — the share of
+  // IMS VINs that are actually being used). Period-aware via acv.
   const uf = cv > 0 ? acv / cv : 0;
   const pen = sumBy(active, r => r[S_COL.pen]);
   // Website RAG — count breakdown across rooftops in the group.
@@ -3088,7 +3088,7 @@ function renderRooftop() {
       sortTh('Overall RAG' + tip('overallRag'), 'rag', 'studioRooftop', 'cell-final') +
       '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
       sortTh('Active VINs', 'av',  'studioRooftop', 'cell-usage') +
-      sortTh('#Contracted', 'cv',  'studioRooftop', 'cell-usage') +
+      sortTh('IMS Vins', 'cv',  'studioRooftop', 'cell-usage') +
       sortTh('#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')', studioActualField(), 'studioRooftop', 'cell-usage') +
       sortTh('Usage Factor' + tip('usageFactor'), 'uf', 'studioRooftop', 'cell-usage') +
       sortTh('Pendency (6h)' + tip('pendency'),  'pen', 'studioRooftop', 'cell-quality') +
@@ -3175,7 +3175,7 @@ function renderRooftop() {
       const wsCell = (wsLink && wsRagVal)
         ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website (score: ${Number(wsRaw).toFixed(1)})">${wsChip}</a>`
         : wsChip;
-      // Usage Factor = # Actual ÷ # Contracted (per user spec). Period-aware
+      // Usage Factor = # Actual ÷ IMS Vins (per user spec). Period-aware
       // via #Actual which swaps between current-month (acv) and last-month
       // (lm_acv) based on the period selector.
       const rowCv = Number(r[S_COL.cv])||0;
@@ -3223,8 +3223,8 @@ function renderRooftop() {
     if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
-    // Usage Factor at the total level: same formula as per-row (sum cv / sum acv).
-    // Usage Factor at the Total row: # Actual ÷ # Contracted (matches per-row).
+    // Usage Factor at the total level: same formula as per-row (sum acv / sum IMS Vins).
+    // Usage Factor at the Total row: # Actual ÷ IMS Vins (matches per-row).
     const totalUf = sCv > 0 ? sAcv / sCv : 0;
     // Ticket totals — ticket-weighted across every enterprise in scope,
     // sourced from STUDIO_TIX (gid=832733618). Replaces the per-row sum/avg
