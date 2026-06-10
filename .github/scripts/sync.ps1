@@ -73,14 +73,15 @@ function Fetch-Gviz($url, $expectedMinRows = 0) {
     $maxAttempts = 6
     $sleeps = @(4, 6, 10, 15, 22)
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-        $u = $url
-        if ($attempt -gt 1) {
-            $sep = if ($url.Contains('?')) { '&' } else { '?' }
-            $u   = "$url$sep`_cb=" + [Guid]::NewGuid().ToString('N')
-            Write-Host "  retry $attempt`: $u"
-        } else {
-            Write-Host "  fetch: $url"
-        }
+        # Cache-bust on EVERY attempt (not just retries). gviz caches its
+        # response per-URL, so a bare URL can keep handing back a stale
+        # snapshot for minutes after the sheet is edited — which makes the
+        # dashboard lag the source (e.g. a corrected ARR not showing up).
+        # A fresh token per request forces gviz to return the current state.
+        $sep = if ($url.Contains('?')) { '&' } else { '?' }
+        $u   = "$url$sep`_cb=" + [Guid]::NewGuid().ToString('N')
+        if ($attempt -gt 1) { Write-Host "  retry $attempt`: $u" }
+        else                { Write-Host "  fetch: $u" }
         try {
             # Google's gviz endpoint quietly returns a truncated response to
             # non-browser User-Agents from some IPs (we see 9 rows back from
@@ -90,6 +91,8 @@ function Fetch-Gviz($url, $expectedMinRows = 0) {
                 'User-Agent'      = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
                 'Accept'          = 'text/javascript, application/json, text/plain, */*'
                 'Accept-Language' = 'en-US,en;q=0.9'
+                'Cache-Control'   = 'no-cache'
+                'Pragma'          = 'no-cache'
             }
             $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 90 -Headers $headers
             if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $u" }
