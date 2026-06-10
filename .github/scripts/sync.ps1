@@ -276,12 +276,15 @@ $ppI = @{
     cs    = Find-ColById $ppCols 'E'
     start = Find-Col $ppCols @('Service_period_Start_date','Service period Start date','Service Period Start Date')
     end   = Find-Col $ppCols @('Service_period_End_date','Service period End date','Service Period End Date')
+    # Billing Terms (col W) — drives the yearly-billing rank exception below.
+    bill  = Find-Col $ppCols @('Billing Terms','Billing Term','BillingTerms','Billing_Terms')
 }
 if ($ppI.eid   -lt 0) { $ppI.eid   = Find-ColById $ppCols 'V' }
 if ($ppI.cs    -lt 0) { $ppI.cs    = Find-Col $ppCols @('customer_status','Customer Status') }
 if ($ppI.start -lt 0) { $ppI.start = Find-ColById $ppCols 'Y' }
 if ($ppI.end   -lt 0) { $ppI.end   = Find-ColById $ppCols 'Z' }
-Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3} (rows={4})" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end, $payPeriodsTab.rows.Count)
+if ($ppI.bill  -lt 0) { $ppI.bill  = Find-ColById $ppCols 'W' }
+Write-Host ("  payperiods cols: eid={0} cs={1} start={2} end={3} bill={4} (rows={5})" -f $ppI.eid, $ppI.cs, $ppI.start, $ppI.end, $ppI.bill, $payPeriodsTab.rows.Count)
 if ($ppI.eid -lt 0 -or $ppI.cs -lt 0 -or $ppI.start -lt 0 -or $ppI.end -lt 0) {
     throw "Payment periods sheet (gid=1395015507) missing one of: EnterprisesID / customer_status / Service_period_Start_date / Service_period_End_date"
 }
@@ -295,10 +298,11 @@ foreach ($row in $payPeriodsTab.rows) {
     $en  = [string](Gviz-Date $c[$ppI.end])
     if ([string]::IsNullOrWhiteSpace($st)) { continue }
     $cs  = ([string](Gviz-Val $c[$ppI.cs])).ToLower().Trim()
+    $bil = if ($ppI.bill -ge 0) { ([string](Gviz-Val $c[$ppI.bill])).ToLower().Trim() } else { '' }
     if (-not $payByEid.ContainsKey($eid)) {
         $payByEid[$eid] = New-Object System.Collections.Generic.List[object]
     }
-    $payByEid[$eid].Add(@{ start=$st; end=$en; status=$cs })
+    $payByEid[$eid].Add(@{ start=$st; end=$en; status=$cs; bill=$bil })
 }
 $payRanks = @{}
 foreach ($eid in $payByEid.Keys) {
@@ -306,11 +310,18 @@ foreach ($eid in $payByEid.Keys) {
     # Per latest user spec: EXCLUDE sent/draft entirely from the source
     # first, then dense-rank by (Service_period_Start_date,
     # Service_period_End_date) DESC per enterprise. Each unique (start,end)
-    # tuple is one rank. SKIP rank 1 (the most-recent / in-flight closed
-    # period the user wants ignored); take rank 2 → T-1, rank 3 → T-2,
+    # tuple is one rank.
+    #
+    # DEFAULT (non-yearly billing): SKIP rank 1 (the most-recent / in-flight
+    # closed period the user wants ignored); take rank 2 → T-1, rank 3 → T-2,
     # rank 4 → T-3.
     #
-    # Sparse cases render naturally:
+    # YEARLY BILLING EXCEPTION (Billing Terms = 'Yearly', col W): with only one
+    # invoice per year there is no in-flight period to skip, so consider from
+    # rank 1: rank 1 → T-1, rank 2 → T-2, rank 3 → T-3. Everything else (the
+    # sent/draft filter, worst-wins canonicalisation, RAG scoring) is unchanged.
+    #
+    # Sparse cases (default skip-1) render naturally:
     #   - 1 rank only      → t1/t2/t3 all blank → all NIR
     #   - 2 ranks (skip 1) → t1 = rank 2 status; t2/t3 blank → NIR
     #   - 3 ranks (skip 1) → t1 = rank 2, t2 = rank 3; t3 blank → NIR
@@ -321,6 +332,7 @@ foreach ($eid in $payByEid.Keys) {
     })
     $sorted = @($closed | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
     $byRank = @{}
+    $billByRank = @{}
     $rank = 0
     $prevKey = $null
     foreach ($pr in $sorted) {
@@ -329,14 +341,32 @@ foreach ($eid in $payByEid.Keys) {
         if ($rank -gt 4) { break }   # ranks 1-4 cover skip-1 + T-1/T-2/T-3
         if (-not $byRank.ContainsKey($rank)) {
             $byRank[$rank] = New-Object System.Collections.Generic.List[string]
+            $billByRank[$rank] = New-Object System.Collections.Generic.List[string]
         }
         $byRank[$rank].Add([string]$pr.status)
+        $billByRank[$rank].Add([string]$pr.bill)
     }
-    $payRanks[$eid] = @{
-        # SKIP rank 1 (most recent / in-flight). T-1 = rank 2 onwards.
-        t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
-        t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
-        t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
+    # Classify the enterprise as yearly from its most-recent (rank 1) period's
+    # Billing Terms. Exact 'yearly' only — 'half yearly' / 'quarterly' / etc.
+    # keep the default skip-1 behaviour.
+    $isYearly = $false
+    if ($billByRank.ContainsKey(1)) {
+        $isYearly = @($billByRank[1] | Where-Object { $_ -eq 'yearly' }).Count -gt 0
+    }
+    if ($isYearly) {
+        # Yearly: consider from rank 1. T-1 = rank 1, T-2 = rank 2, T-3 = rank 3.
+        $payRanks[$eid] = @{
+            t1 = if ($byRank.ContainsKey(1)) { Get-CanonicalPayStatus $byRank[1] } else { '' }
+            t2 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+            t3 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+        }
+    } else {
+        $payRanks[$eid] = @{
+            # SKIP rank 1 (most recent / in-flight). T-1 = rank 2 onwards.
+            t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
+            t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+            t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
+        }
     }
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
