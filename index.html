@@ -745,28 +745,27 @@ function csatRagCountsFor(eid) {
 // total scope it's a genuine rate across the rooftops in view.
 function commInteractionPct(rooftops, dedupBy) {
   if (!Array.isArray(rooftops) || rooftops.length === 0) return null;
-  // Optional dedup. Vini data has one row per (rid × agent) so callers
-  // pass dedupBy='rid' to collapse to unique rooftops. Studio data is
-  // already 1 row per rooftop so most Studio callers leave it undefined.
-  // dedupBy may be a string property name or a function (r) => key.
-  let list = rooftops;
-  if (dedupBy) {
-    const seen = new Set();
-    list = [];
-    for (const r of rooftops) {
-      const k = typeof dedupBy === 'function' ? dedupBy(r) : (r && r[dedupBy]);
-      if (k == null || seen.has(k)) continue;
-      seen.add(k); list.push(r);
-    }
-  }
-  if (list.length === 0) return null;
-  let withInt = 0;
-  for (const r of list) {
-    const eid = r.eid != null ? r.eid : (Array.isArray(r) ? r[S_COL.eid] : null);
-    const en  = r.en  != null ? r.en  : (Array.isArray(r) ? r[S_COL.en]  : null);
+  // Interaction % = ENTERPRISE-level coverage: of the distinct enterprises in
+  // scope, what share had at least one CSAT interaction in the current period.
+  // CSAT/interaction data is keyed by enterprise (eid), so a rooftop-level
+  // count double-counts multi-rooftop enterprises and inflates the % (e.g. an
+  // enterprise with many rooftops but one interaction would read as ~100%).
+  // We always collapse to unique enterprise keys. `dedupBy` is retained for
+  // backwards-compat but no longer affects the result — enterprise dedup wins.
+  const seen = new Set();
+  let total = 0, withInt = 0;
+  for (const r of rooftops) {
+    const eid = (r && r.eid != null) ? r.eid : (Array.isArray(r) ? r[S_COL.eid] : null);
+    const en  = (r && r.en  != null) ? r.en  : (Array.isArray(r) ? r[S_COL.en]  : null);
+    const key = (eid != null && eid !== '') ? ('e:' + eid)
+              : (en  != null && en  !== '') ? ('n:' + en) : null;
+    if (key == null || seen.has(key)) continue;
+    seen.add(key);
+    total++;
     if (commInteractionCount(eid, en) > 0) withInt++;
   }
-  return (withInt / list.length) * 100;
+  if (total === 0) return null;
+  return (withInt / total) * 100;
 }
 // Render the % as a tier-coloured pill. 0% / null both render as a
 // muted em-dash so empty scopes don't compete visually with low scores.
@@ -775,9 +774,9 @@ function commInteractionPct(rooftops, dedupBy) {
 function intPctCell(pct) {
   if (pct == null) return '<span style="color:var(--text-4)">—</span>';
   const p = Math.round(pct);
-  if (p === 0) return '<span style="color:var(--text-4)" title="0% of rooftops in scope had a CSAT interaction in the current period">0%</span>';
+  if (p === 0) return '<span style="color:var(--text-4)" title="0% of enterprises in scope had a CSAT interaction in the current period">0%</span>';
   const cls = p >= 70 ? 'int-hi' : p >= 30 ? 'int-md' : 'int-lo';
-  return `<span class="int-count ${cls}" title="${p}% of rooftops in scope had at least one CSAT interaction in the current period">${p}%</span>`;
+  return `<span class="int-count ${cls}" title="${p}% of enterprises in scope had at least one CSAT interaction in the current period">${p}%</span>`;
 }
 // Legacy alias — some older callers may still pass a raw count. Keep
 // for backwards-compat; new code paths should call intPctCell instead.
@@ -1247,6 +1246,9 @@ function sortStudioRows(rows, sortState) {
   let getter;
   if (key === 'acct') {
     getter = r => acctTypeOf(r[S_COL.ct], r[S_COL.cst]);
+  } else if (key === 'commRagBin') {
+    // Binary Comm. RAG: Green (has interaction) sorts above Red.
+    getter = r => commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0 ? 1 : 0;
   } else if (key === 'commScore') {
     // Sort by the numeric Communication Score (CSAT-history weighted blend).
     // null / no readings sinks to the bottom of asc; rises in desc.
@@ -1297,7 +1299,8 @@ function sortViniRows(rows, sortState) {
       getter = r => scoreValue(csatRagCountsForInRange(r.eid, r.en), COMM_WEIGHTS);
       break;
     case 'commRag':
-      getter = r => ragSortKey(scoreRag(csatRagCountsForInRange(r.eid, r.en), COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS));
+      // Binary Comm. RAG: Green (has interaction) sorts above Red.
+      getter = r => commInteractionCount(r.eid, r.en) > 0 ? 1 : 0;
       break;
     case 'overall':
       getter = r => {
@@ -1332,7 +1335,7 @@ function sortEntListRows(rows, sortState) {
     case 'acct':       getter = r => r.acct || ''; break;
     case 'tixRag':     getter = r => ragSortKey(r._tixRag);   break;
     case 'commScore':  getter = r => Number(r._commScoreNum) || 0; break;
-    case 'commRag':    getter = r => ragSortKey(r._commRag);  break;
+    case 'commRag':    getter = r => (Number(r._intCount)||0) > 0 ? 1 : 0;  break;
     case 'op':         getter = r => Number(r._tix?.op) || 0; break;
     case 'cr':         getter = r => Number(r._tix?.cr) || 0; break;
     case 'ota':        getter = r => Number(r._tix?.ota) || 0; break;
@@ -1504,9 +1507,11 @@ const TIPS = {
   ticketRagSla:'Ticket RAG (gid=832733618). Per OPEN ticket (Status NOT IN Closed / Resolved), age = now − Created. Grade against the priority-specific SLA matrix: Urgent G≤6h A≤48h O≤72h R>72h; High G<24h A≤72h O≤120h R>120h; Medium G<120h A≤168h O≤240h R>240h; Low G<360h A≤480h O≤720h R>720h. Enterprise RAG = WORST grade across its open tickets. No open tickets → Green. No tickets at all → NA. Studio / Vini split by col L.',
   unresolvedCnt:'Count of unresolved tickets — Status NOT IN ("Closed", "Resolved"). Includes raw "Open" plus all in-flight states (Pending / Waiting / On Hold). Source: Ticket_Dump (gid=832733618), filtered to the period and matched to Enterprise ID (col M).',
   commScore:   'Count of CSAT readings in the selected date range, by RAG. CSAT avg ≥4 = Green, 2.5–4 = Amber, <2.5 = Red. Source: Metabase CSAT export.',
-  commInteractions: 'Interaction % = (rooftops in scope whose enterprise had ≥1 CSAT interaction in the current period) ÷ (total rooftops in scope) × 100. Example: a CSM with 100 rooftops where 25 belong to enterprises with CSAT readings → 25%. Source: CSAT readings keyed on Enterprise_Id (gid=701797891 col C). Shown on overview rows as the genuine engagement rate across the rooftops in view.',
+  commInteractions: 'Interaction % = (distinct enterprises in scope with ≥1 CSAT interaction in the current period) ÷ (total distinct enterprises in scope) × 100. Deduped by enterprise because CSAT/interaction data is enterprise-keyed — counting rooftops would over-count multi-rooftop enterprises and inflate the %. Example: 8 of 12 enterprises engaged → 67%. Source: CSAT readings keyed on Enterprise_Id (gid=701797891 col C).',
   commInteractionsNum: '# Interaction = SUM of CSAT interaction_count (gid=701797891 col J) for this account in the current period — the actual number of CSAT interactions logged against the enterprise. Per-account rows show that account\'s count; the TOTAL row sums across the unique accounts in view. (Overview rows instead show Interaction %, the share of rooftops with ≥1 interaction.)',
   commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
+  commRagBinary:'Binary engagement flag: Green if the enterprise logged ≥1 CSAT interaction in the current period, else Red. On overview / CSM rows the cell shows the Green/Red count across the unique enterprises in scope.',
+  usageTrend:  'Usage Trend over Jan→May (MTD excluded): least-squares slope of monthly VINs, normalized by the mean. Rising > +5%/mo, Declining < −5%/mo, otherwise Steady. Feeds the Usage signal of the Overall RAG (Rising→Green, Steady→Amber, Declining→Red).',
   overallRag:  'Account health rolled up from 3 signals: MTD RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
   churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
   openAgeing:  'Hours since each open ticket was created. Cross-enterprise avg here is ticket-weighted (sum of hours ÷ open-ticket count).',
@@ -1824,6 +1829,70 @@ function inventoryRag(v) {
   if (n > 8) return 'Green';
   if (n > 5) return 'Amber';
   return 'Red';
+}
+
+// =====================================================================
+// Usage Trend (replaces the old Usage Factor)
+// =====================================================================
+// Classify the Jan→May monthly VIN series as Rising / Declining / Steady
+// using a least-squares slope. The MTD (current partial month) is excluded
+// from the trend — it's not a full month and would bias the fit. The slope
+// is normalised by the series mean so the ±5%/month threshold is relative
+// (a dealer doing 10k VINs and one doing 100 are judged on the same scale).
+function usageTrend(series) {
+  const ys = (series || []).map(v => Number(v) || 0);
+  const n = ys.length;
+  if (n < 2) return 'Steady';
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  const mx = (n - 1) / 2;                       // mean of indices 0..n-1
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (i - mx) * (ys[i] - my); den += (i - mx) * (i - mx); }
+  if (den === 0) return 'Steady';
+  const slope = num / den;                       // VINs gained/lost per month
+  if (my <= 0) return ys.some(v => v > 0) ? 'Rising' : 'Steady';
+  const rel = slope / my;                         // relative slope per month
+  if (rel > 0.05) return 'Rising';
+  if (rel < -0.05) return 'Declining';
+  return 'Steady';
+}
+// Usage Trend → RAG bucket for the account-health Overall RAG.
+//   Rising → Green · Steady → Amber · Declining → Red
+function usageTrendRag(trend) {
+  if (trend === 'Rising') return 'Green';
+  if (trend === 'Declining') return 'Red';
+  if (trend === 'Steady') return 'Amber';
+  return 'NA';
+}
+// Render a Usage Trend label as a coloured pill with a direction arrow.
+function trendCell(trend) {
+  if (!trend) return '<span style="color:var(--text-4)">—</span>';
+  const map = {
+    Rising:    ['#065F46', '#D1FAE5', '▲'],
+    Declining: ['#991B1B', '#FEE2E2', '▼'],
+    Steady:    ['#92400E', '#FEF3C7', '▬'],
+  };
+  const [fg, bg, arrow] = map[trend] || ['#475569', '#F1F5F9', '▬'];
+  return `<span class="int-count" style="background:${bg};color:${fg}" title="Usage Trend (least-squares slope, Jan→May): ${trend}">${arrow} ${trend}</span>`;
+}
+// The 5 full-month usage series for a single Studio rooftop row (Jan→May).
+function rowUsageSeries(r) {
+  return [r[S_COL.u_jan], r[S_COL.u_feb], r[S_COL.u_mar], r[S_COL.u_apr], r[S_COL.u_may]];
+}
+// A single Studio rooftop's Overall (account-health) RAG. Shared by the
+// rooftop body rows, the rooftop TOTAL stack, and the overview/CSM Final
+// Status counts so every surface agrees on the same per-rooftop verdict.
+// Usage signal is now the Usage Trend (per user spec); comm stays CSAT-derived.
+function studioRooftopOverallRag(r, tixRagMemo) {
+  const usage  = usageTrendRag(usageTrend(rowUsageSeries(r)));
+  const ticket = tixRagMemo != null
+    ? tixRagMemo
+    : computeTicketRAG(aggregateTicketsForEids([r[S_COL.eid] || r[S_COL.en]], STUDIO_TIX));
+  return computeOverallRAG({
+    usage,
+    payment: r[S_COL.prag],
+    ticket,
+    comm:    csatRagInRange(r[S_COL.eid], r[S_COL.en]),
+  });
 }
 
 // =====================================================================
@@ -2204,11 +2273,11 @@ const S_GROUPS = [
   // health is visible at a glance, with the 7-day report trend right after).
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
-  { l:'Usage',        span:4, c:'g-usage' },       // ends at Usage Factor
+  { l:'Usage',        span:7, c:'g-usage' },       // Jan'26 … May'26 · MTD VINs · Usage Trend
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
   { l:'Tickets',      span:4, c:'g-tickets' },                // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
-  { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · Interaction % · Final RAG
+  { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · Interaction % · Comm. RAG
   { l:'Leadership',   span:1, c:'g-leader' },
 ];
 const S_COLS_SHARED = [
@@ -2220,9 +2289,10 @@ const S_COLS_SHARED = [
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
   // 1 RoI — Report Sent (7-day per-enterprise aggregate)
   {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
-  // 4 Usage (Usage Factor = #Actual / IMS Vins, recomputed in studioRow)
-  {l:'Active VINs', cc:'cell-usage'}, {l:'IMS Vins', cc:'cell-usage'}, {l:'#Actual', cc:'cell-usage'},
-  {l:'Usage Factor', cc:'cell-usage', tip:'usageFactor'},
+  // 7 Usage — monthly VINs (sheet cols M-R) + derived Usage Trend.
+  {l:"Jan'26", cc:'cell-usage'}, {l:"Feb'26", cc:'cell-usage'}, {l:"Mar'26", cc:'cell-usage'},
+  {l:"Apr'26", cc:'cell-usage'}, {l:"May'26", cc:'cell-usage'}, {l:'MTD VINs', cc:'cell-usage'},
+  {l:'Usage Trend', cc:'cell-usage', tip:'usageTrend'},
   // 2 Quality (Inventory Score removed per user spec — kept the data path in
   // sync.ps1 so we can bring it back without a resync if needed).
   {l:'Pendency (6h)', cc:'cell-quality', tip:'pendency'},
@@ -2237,10 +2307,10 @@ const S_COLS_SHARED = [
   {l:'#Unresolved', cc:'cell-tickets', tip:'unresolvedCnt'},
   {l:'Open Ageing (Hrs)', cc:'cell-tickets', tip:'openAgeing'},
   {l:'Ticket RAG', cc:'cell-tickets', tip:'ticketRagSla'},
-  // 3 Comm — Score (count stack) · Interaction % · Final RAG
+  // 3 Comm — Score (count stack) · Interaction % · Comm. RAG
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
-  {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
+  {l:'Comm. RAG', cc:'cell-comm', tip:'commRagBinary'},
   // 1 Leader
   {l:'MBR', cc:'cell-leader'},
 ];
@@ -2258,21 +2328,18 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // exclude churned rooftops per spec — churned accounts shouldn't pollute
   // active-team performance numbers.
   const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
-  const av = sumBy(active, r => r[S_COL.av]);
-  const cv = sumBy(active, r => r[S_COL.cv]);
-  // #Actual swaps to last-month source when state.period === 'LM'.
-  const actualField = studioActualField();
-  const acv = sumBy(active, r => r[S_COL[actualField]]);
-  // Usage Factor = # Actual ÷ IMS Vins (per user spec — the share of
-  // IMS VINs that are actually being used). Period-aware via acv.
-  const uf = cv > 0 ? acv / cv : 0;
+  // Usage block — sum each monthly VIN column across the group's active
+  // rooftops, then derive the Usage Trend from the 5 full months (Jan→May).
+  const uJan = sumBy(active, r => r[S_COL.u_jan]);
+  const uFeb = sumBy(active, r => r[S_COL.u_feb]);
+  const uMar = sumBy(active, r => r[S_COL.u_mar]);
+  const uApr = sumBy(active, r => r[S_COL.u_apr]);
+  const uMay = sumBy(active, r => r[S_COL.u_may]);
+  const uMtd = sumBy(active, r => r[S_COL.u_mtd]);
+  const uTrend = usageTrend([uJan, uFeb, uMar, uApr, uMay]);
   const pen = sumBy(active, r => r[S_COL.pen]);
   // Website RAG — count breakdown across rooftops in the group.
   const wsRagCounts = countBy(active, r => websiteRag(r[S_COL.ws]));
-  // Inventory Score → count distribution (Green/Amber/Red), same pattern
-  // Website RAG uses. The numeric avg is dropped at the group level — the
-  // RAG breakdown is more actionable than an average.
-  const iscRagCounts = countBy(active, r => inventoryRag(r[S_COL.isc]));
   // PAYMENT buckets count by ENTERPRISE not by rooftop (per user spec).
   // Studio rooftops carry an Enterprise ID (eid field — added to schema in
   // this PR); we dedup by eid so a multi-rooftop enterprise contributes one
@@ -2300,15 +2367,17 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const sla = studioTixAgg.sla;  // SLA Violated count (col I = 'SLA Violated')
   // Per-enterprise ticket RAG distribution — for each unique enterprise,
   // derive its own RAG from its own ticket aggregate and count.
+  // tixRagByEid memoises each enterprise's ticket RAG so the per-rooftop
+  // Overall RAG counts (Final Status) below don't re-aggregate tickets per row.
+  const tixRagByEid = {};
   const trag = (() => {
     const counts = {};
-    const seenEidT = new Set();
     for (const r of active) {
       const eid = r[S_COL.eid] || r[S_COL.en];
-      if (!eid || seenEidT.has(eid)) continue;
-      seenEidT.add(eid);
+      if (!eid || tixRagByEid[eid] != null) continue;
       const ent = aggregateTicketsForEids([eid], STUDIO_TIX);
       const rag = computeTicketRAG(ent);
+      tixRagByEid[eid] = rag;
       counts[rag] = (counts[rag] || 0) + 1;
     }
     return counts;
@@ -2347,10 +2416,20 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-4">${ents}</td>
     <td class="frozen frozen-5">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-6">${fmtMoney(arr)}</td>
-    <td class="cell-final">${ragSingle(computeOverallRAG([scoreRag(prag,80,60), scoreRag(trag,85,65), commFinalRag]))}</td>
+    <td class="cell-final">${ragStack((() => {
+      // Final Status = count of how many rooftops are Green / Amber / Red,
+      // each rooftop scored by its own Overall (account-health) RAG.
+      const o = {};
+      for (const r of active) {
+        const g = studioRooftopOverallRag(r, tixRagByEid[r[S_COL.eid] || r[S_COL.en]]);
+        if (g && g !== 'NA') o[g] = (o[g] || 0) + 1;
+      }
+      return o;
+    })())}</td>
     <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
-    <td class="cell-usage">${fmtNum(av)}</td><td class="cell-usage">${fmtNum(cv)}</td><td class="cell-usage">${fmtNum(acv)}</td>
-    <td class="cell-usage ${ufColorClass(uf)}">${uf?(uf*100).toFixed(0)+'%':'—'}</td>
+    <td class="cell-usage">${fmtNum(uJan)}</td><td class="cell-usage">${fmtNum(uFeb)}</td><td class="cell-usage">${fmtNum(uMar)}</td>
+    <td class="cell-usage">${fmtNum(uApr)}</td><td class="cell-usage">${fmtNum(uMay)}</td><td class="cell-usage">${fmtNum(uMtd)}</td>
+    <td class="cell-usage">${trendCell(uTrend)}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
     <td class="cell-payment">${payTileAgg(t1, enterprisesPayment.length)}</td><td class="cell-payment">${payTileAgg(t2, enterprisesPayment.length)}</td>
@@ -2362,7 +2441,18 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${ragSingle(computeTicketRAG(studioTixAgg))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active))}</td>
-    <td class="cell-comm">${ragSingle(commFinalRag)}</td>
+    <td class="cell-comm">${ragStack((() => {
+      // Comm. RAG = Green if the enterprise had ≥1 interaction this period,
+      // else Red. Deduped per enterprise (CSAT is enterprise-keyed).
+      const o = { Green: 0, Red: 0 }; const seen = new Set();
+      for (const r of active) {
+        const ek = r[S_COL.eid] || r[S_COL.en];
+        if (!ek || seen.has(ek)) continue;
+        seen.add(ek);
+        if (commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0) o.Green++; else o.Red++;
+      }
+      return o;
+    })())}</td>
     <td class="cell-leader">${ragStack(mbr)}</td>
   </tr>`;
 }
@@ -2439,7 +2529,7 @@ const V_COLS_SHARED = [
   {l:'Ticket RAG', cc:'cell-tickets', tip:'ticketRagSla'},
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
-  {l:'Final RAG', cc:'cell-comm', tip:'commFinalRag'},
+  {l:'Comm. RAG', cc:'cell-comm', tip:'commRagBinary'},
   {l:'MBR', cc:'cell-leader'}, {l:'Contact Freq', cc:'cell-leader'},
 ];
 
@@ -2534,6 +2624,45 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const cfTop = Object.entries(cf).sort((a,b)=>b[1]-a[1])[0];
   const mbr = countBy(active, r => r.mbr);
 
+  // Final Status = count of how many ROOFTOPS in this group are Green / Amber /
+  // Red, each rooftop scored by its own Overall (account-health) RAG. A rooftop
+  // may carry several agent contracts; we collapse to distinct rid first, then
+  // grade each rooftop with the same formula the rooftop view uses:
+  //   computeOverallRAG([ MTD-RoI RAG , enterprise Payment RAG , CSAT RAG ]).
+  const finalStatusCounts = (() => {
+    const o = {};
+    const byRid = new Map();
+    for (const r of rows) {
+      if (!r.rid) continue;
+      if (!byRid.has(r.rid)) byRid.set(r.rid, []);
+      byRid.get(r.rid).push(r);
+    }
+    for (const rrs of byRid.values()) {
+      const act = rrs.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+      const base = act.length ? act : rrs;
+      const amrr = sumBy(base, r => r.mrr);
+      const mtdMrr = amrr * (daysPassed / daysInMonth);
+      const apptMtd = sumBy(base, r => r.apptValue_mtd || 0);
+      const ridRoi = mtdMrr > 0 ? apptMtd / mtdMrr : null;
+      const eid = base[0].eid, en = base[0].en;
+      const g = computeOverallRAG([roiMtdRag(ridRoi), base[0].ps, csatRagInRange(eid, en)]);
+      if (g && g !== 'NA') o[g] = (o[g] || 0) + 1;
+    }
+    return o;
+  })();
+  // Comm. RAG = binary per enterprise: Green if ≥1 interaction this period else
+  // Red. Deduped by enterprise (CSAT/interaction data is enterprise-keyed).
+  const commBinaryCounts = (() => {
+    const o = { Green: 0, Red: 0 }; const seen = new Set();
+    for (const r of rows) {
+      const ek = r.eid || r.en;
+      if (!ek || seen.has(ek)) continue;
+      seen.add(ek);
+      if (commInteractionCount(r.eid, r.en) > 0) o.Green++; else o.Red++;
+    }
+    return o;
+  })();
+
   const lblCell = isTotal ? `<strong>${label}</strong>`
     : (drillKey ? `<a class="drill" data-drill="${drillKey}" data-value="${drillValue}">${label}</a>` : label);
   // "Rooftops" column shows distinct rooftop count, not contract count.
@@ -2552,7 +2681,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="frozen frozen-5">${ents}</td>
     <td class="frozen frozen-6">${fmtMoney(mrr)}</td>
     <td class="frozen frozen-7">${fmtMoney(arr)}</td>
-    <td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragSingle(computeOverallRAG([roiMtdRag(roiMTDNum), paymentRag, commFinalRag]))}</td>
+    <td class="cell-final">${churned>0?`<span class="drill-red">${churned}</span>`:'0'}</td><td class="cell-final">${ragStack(finalStatusCounts)}</td>
     <td class="cell-rs">—</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
@@ -2565,7 +2694,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${ragSingle(computeTicketRAG(tixAgg))}</td>
     <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active, 'rid'))}</td>
-    <td class="cell-comm">${ragSingle(commFinalRag)}</td>
+    <td class="cell-comm">${ragStack(commBinaryCounts)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
   </tr>`;
 }
@@ -2611,7 +2740,9 @@ function renderKpiStudio(rows, targetId) {
   // Operational metrics — active rooftops only (skip churned per spec)
   const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
   const activeN = active.length;
-  const av = sumBy(active, r => r[S_COL.av]);
+  // MTD VINs — current-month usage across active rooftops (replaces the
+  // removed "Active VINs" sheet field; new schema carries monthly VIN cols).
+  const mtdVins = sumBy(active, r => r[S_COL.u_mtd]);
   const pen = sumBy(active, r => r[S_COL.pen]);
   const prag = countBy(active, r => r[S_COL.prag]);
   // Tickets sourced from STUDIO_TIX (gid=832733618 ticket dump), NOT the
@@ -2679,7 +2810,7 @@ function renderKpiStudio(rows, targetId) {
   el.className = 'kpi-grid seven';
   el.innerHTML = `
     <div class="kpi"><div class="kpi-label">Total ARR</div><div class="kpi-value blue">${fmtMoney(arr)}</div><div class="kpi-sub">MRR · ${fmtMoney(mrr)}</div></div>
-    <div class="kpi"><div class="kpi-label">Active VINs</div><div class="kpi-value blue">${fmtNum(av)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
+    <div class="kpi"><div class="kpi-label">MTD VINs</div><div class="kpi-value blue">${fmtNum(mtdVins)}</div><div class="kpi-sub">across ${activeN} active rooftops</div></div>
     <div class="kpi"><div class="kpi-label">Pendency (6 Hrs)${tip('pendency')}</div><div class="kpi-value ${pen>100?'red-c':'amber-c'}">${fmtNum(pen)}</div><div class="kpi-sub">VINs awaiting</div></div>
     <div class="kpi"><div class="kpi-label">Reports Sent (7d)${tip('reportCoverage')}</div><div class="kpi-value ${coverageColor}">${coverageValue}</div><div class="kpi-sub">${coverageSub}</div></div>
     <div class="kpi"><div class="kpi-label">Payment RAG</div><div class="kpi-value">${ragSquareBox(paymentRagOverall)}</div><div class="kpi-sub">${ragCountsColored(prag)}</div></div>
@@ -3004,7 +3135,7 @@ function renderEnterpriseList() {
       sortTh('Ticket RAG' + tip('ticketRagSla'),  'tixRag','entList','cell-tickets') +
       sortTh('Score' + tip('commScore'),          'commScore','entList','cell-comm') +
       sortTh('# Interaction' + tip('commInteractionsNum'),'intCount','entList','cell-comm') +
-      sortTh('Final RAG' + tip('commFinalRag'),   'commRag','entList','cell-comm') +
+      sortTh('Comm. RAG' + tip('commRagBinary'),  'commRag','entList','cell-comm') +
     '</tr></thead><tbody>';
   sorted.forEach((e, i) => {
     const acctPill = e.acct
@@ -3026,7 +3157,7 @@ function renderEnterpriseList() {
       <td class="cell-tickets">${ragSingle(e._tixRag)}</td>
       <td class="cell-comm">${e._commScoreNum == null ? '—' : ragStack(e._commCounts)}</td>
       <td class="cell-comm">${intCountCell(e._intCount)}</td>
-      <td class="cell-comm">${ragSingle(e._commRag)}</td>
+      <td class="cell-comm">${ragSingle((e._intCount||0) > 0 ? 'Green' : 'Red')}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -3064,14 +3195,14 @@ function renderRooftop() {
     // Scorecards above the rooftop table — same 6 KPIs as Overview
     renderKpiStudio(rows, 'rooftop-kpi-strip');
 
-    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 RoI / 1 Final Status /
-    // 4 Usage / 2 Quality / 4 Payment / 4 Tickets / 3 Comm / 1 Leader = 26 cols
+    // Bucketing mirrors new S_GROUPS: 6 frozen / 1 Final Status / 1 RoI /
+    // 7 Usage / 2 Quality / 4 Payment / 4 Tickets / 3 Comm / 1 Leader = 29 cols
     let html = '<table class="data rooftop-layout rooftop-layout-6"><thead><tr class="group">' +
       // 6 frozen identity cells: # · Rooftop · Enterprise · Account Type · MRR · ARR
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
-      '<th colspan="4" class="g-usage">Usage</th>' +
+      '<th colspan="7" class="g-usage">Usage</th>' +
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="4" class="g-tickets">Tickets</th>' +       // # Created + # Unresolved + Open Ageing + Ticket RAG
@@ -3087,10 +3218,13 @@ function renderRooftop() {
       sortTh('ARR',          'arr',  'studioRooftop', 'frozen frozen-6') +
       sortTh('Overall RAG' + tip('overallRag'), 'rag', 'studioRooftop', 'cell-final') +
       '<th class="cell-roi">Report Sent' + tip('studioRoiPending') + '</th>' +
-      sortTh('Active VINs', 'av',  'studioRooftop', 'cell-usage') +
-      sortTh('IMS Vins', 'cv',  'studioRooftop', 'cell-usage') +
-      sortTh('#Actual (' + (state.period === 'LM' ? 'LM' : 'MTD') + ')', studioActualField(), 'studioRooftop', 'cell-usage') +
-      sortTh('Usage Factor' + tip('usageFactor'), 'uf', 'studioRooftop', 'cell-usage') +
+      sortTh("Jan'26", 'u_jan', 'studioRooftop', 'cell-usage') +
+      sortTh("Feb'26", 'u_feb', 'studioRooftop', 'cell-usage') +
+      sortTh("Mar'26", 'u_mar', 'studioRooftop', 'cell-usage') +
+      sortTh("Apr'26", 'u_apr', 'studioRooftop', 'cell-usage') +
+      sortTh("May'26", 'u_may', 'studioRooftop', 'cell-usage') +
+      sortTh('MTD VINs', 'u_mtd', 'studioRooftop', 'cell-usage') +
+      '<th class="cell-usage">Usage Trend' + tip('usageTrend') + '</th>' +
       sortTh('Pendency (6h)' + tip('pendency'),  'pen', 'studioRooftop', 'cell-quality') +
       sortTh('Website RAG' + tip('websiteScore'), 'ws',  'studioRooftop', 'cell-quality') +
       sortTh('T-1' + tip('paymentT1'), 't1',   'studioRooftop', 'cell-payment') +
@@ -3103,11 +3237,13 @@ function renderRooftop() {
       sortTh('Ticket RAG' + tip('ticketRagSla'),   'trag', 'studioRooftop', 'cell-tickets') +
       sortTh('Score' + tip('commScore'),         'commScore', 'studioRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractionsNum') + '</th>' +
-      sortTh('RAG' + tip('commFinalRag'),        'red',  'studioRooftop', 'cell-comm') +
+      sortTh('Comm. RAG' + tip('commRagBinary'), 'commRagBin',  'studioRooftop', 'cell-comm') +
       sortTh('MBR',                              'mbr',  'studioRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
-    let sMrr=0, sArr=0, sAv=0, sCv=0, sAcv=0, sPen=0;
+    let sMrr=0, sArr=0, sPen=0;
+    // Monthly usage VIN sums (Jan→May + MTD) for the TOTAL row + trend.
+    let sUJan=0, sUFeb=0, sUMar=0, sUApr=0, sUMay=0, sUMtd=0;
     // sIscVals no longer used — Inventory Score now renders as a RAG count
     // distribution (sIscRag below) matching the Website RAG pattern.
     // sTrag dropped — ticket RAG distribution now computed from STUDIO_TIX
@@ -3132,16 +3268,15 @@ function renderRooftop() {
     rows.slice(0, sliceN).forEach((r,i) => {
       // Accumulate
       sMrr += Number(r[S_COL.mrr])||0; sArr += Number(r[S_COL.arr])||0;
-      sAv += Number(r[S_COL.av])||0;   sCv += Number(r[S_COL.cv])||0;
-      // #Actual accumulator swaps source field when period === 'LM'.
-      sAcv += Number(r[S_COL[studioActualField()]])||0;
+      // Monthly usage VINs accumulate for the TOTAL row + its Usage Trend.
+      sUJan += Number(r[S_COL.u_jan])||0; sUFeb += Number(r[S_COL.u_feb])||0;
+      sUMar += Number(r[S_COL.u_mar])||0; sUApr += Number(r[S_COL.u_apr])||0;
+      sUMay += Number(r[S_COL.u_may])||0; sUMtd += Number(r[S_COL.u_mtd])||0;
       sPen += Number(r[S_COL.pen])||0;
       // Ticket accumulators (sUnr/sCr/sOtaVals/sResVals) are NO LONGER summed
       // per-row — they're now derived from STUDIO_TIX at the Total row below
       // (ticket-weighted across all enterprises in scope, deduped by eid).
       inc(sWsRag, websiteRag(r[S_COL.ws]));
-      // Inventory Score → RAG count distribution (same pattern as Website RAG).
-      inc(sIscRag, inventoryRag(r[S_COL.isc]));
       // Payment buckets only count ONCE per enterprise (per user spec).
       const payKey = r[S_COL.eid] || r[S_COL.en];
       if (payKey && !seenEidPay.has(payKey)) {
@@ -3155,7 +3290,9 @@ function renderRooftop() {
       const rTixEnt = aggregateTicketsForEids([rEidT], STUDIO_TIX);
       const rTrag = computeTicketRAG(rTixEnt);
       const rComm = csatRagInRange(r[S_COL.eid], r[S_COL.en]);
-      inc(sComm, rComm);
+      // Comm. RAG column is binary: Green if this rooftop's enterprise had ≥1
+      // interaction this period, else Red. TOTAL stack counts per rooftop.
+      inc(sComm, commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0 ? 'Green' : 'Red');
       // Communication Score distribution — sum per-enterprise CSAT history
       // exactly once across the rooftop list.
       const sKey = r[S_COL.eid] || r[S_COL.en];
@@ -3164,7 +3301,7 @@ function renderRooftop() {
         const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]);
         Object.entries(cc).forEach(([k,v]) => { sCommScore[k] = (sCommScore[k]||0) + v; });
       }
-      inc(sOverall, computeOverallRAG([r[S_COL.prag], rTrag, rComm]));
+      inc(sOverall, studioRooftopOverallRag(r, rTrag));
       inc(sMbr, r[S_COL.mbr]);
       // Website RAG cell: single G/A/R chip from the numeric score; clickable
       // when Website Link is present so the user can open the dealer's site.
@@ -3175,12 +3312,8 @@ function renderRooftop() {
       const wsCell = (wsLink && wsRagVal)
         ? `<a class="ws-link" href="${String(wsLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="Open dealer website (score: ${Number(wsRaw).toFixed(1)})">${wsChip}</a>`
         : wsChip;
-      // Usage Factor = # Actual ÷ IMS Vins (per user spec). Period-aware
-      // via #Actual which swaps between current-month (acv) and last-month
-      // (lm_acv) based on the period selector.
-      const rowCv = Number(r[S_COL.cv])||0;
-      const rowAcv = Number(r[S_COL[studioActualField()]])||0;
-      const rowUf = rowCv > 0 ? (rowAcv / rowCv) : 0;
+      // Usage Trend for this rooftop — least-squares slope of Jan→May VINs.
+      const rowUTrend = usageTrend(rowUsageSeries(r));
       // Per-row ticket aggregate from STUDIO_TIX (gid=832733618) filtered to
       // the current period. Matched by eid (with name fallback applied at sync).
       const rowEidT = r[S_COL.eid] || r[S_COL.en];
@@ -3192,18 +3325,15 @@ function renderRooftop() {
         <td class="frozen frozen-4 cell-acct">${acctTypePill(r[S_COL.ct], r[S_COL.cst])}</td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
         <td class="frozen frozen-6">${r[S_COL.arr]?fmtMoney(r[S_COL.arr]):'—'}</td>
-        <td class="cell-final">${ragSingle(computeOverallRAG({
-          usage:   ufColorClassToRag(r[S_COL.uf]),
-          payment: r[S_COL.prag],
-          ticket:  (() => { const _t = aggregateTicketsForEids([r[S_COL.eid]], STUDIO_TIX);
-                            return computeTicketRAG(_t); })(),
-          comm:    csatRagInRange(r[S_COL.eid], r[S_COL.en])
-        }))}</td>
+        <td class="cell-final">${ragSingle(studioRooftopOverallRag(r, rTrag))}</td>
         <td class="cell-roi">${perEidDotStrip(r[S_COL.eid])}</td>
-        <td class="cell-usage">${fmtNum(r[S_COL.av])}</td>
-        <td class="cell-usage">${fmtNum(r[S_COL.cv])}</td>
-        <td class="cell-usage">${fmtNum(r[S_COL[studioActualField()]])}</td>
-        <td class="cell-usage ${ufColorClass(rowUf)}">${rowUf?(rowUf*100).toFixed(0)+'%':'—'}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_jan])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_feb])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_mar])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_apr])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_may])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_mtd])}</td>
+        <td class="cell-usage">${trendCell(rowUTrend)}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
         <td class="cell-payment">${payTile(r[S_COL.t1])}</td>
@@ -3216,16 +3346,13 @@ function renderRooftop() {
         <td class="cell-tickets">${ragSingle(computeTicketRAG(rowTix))}</td>
         <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">—</span>' : ragStack(cc); })()}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
-        <td class="cell-comm">${ragSingle(csatRagInRange(r[S_COL.eid], r[S_COL.en]))}</td>
+        <td class="cell-comm">${ragSingle(commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0 ? 'Green' : 'Red')}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="26" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="29" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
-    // Usage Factor at the total level: same formula as per-row (sum acv / sum IMS Vins).
-    // Usage Factor at the Total row: # Actual ÷ IMS Vins (matches per-row).
-    const totalUf = sCv > 0 ? sAcv / sCv : 0;
     // Ticket totals — ticket-weighted across every enterprise in scope,
     // sourced from STUDIO_TIX (gid=832733618). Replaces the per-row sum/avg
     // approach which double-counted multi-rooftop enterprises.
@@ -3253,10 +3380,13 @@ function renderRooftop() {
       <td class="frozen frozen-6">${fmtMoney(sArr)}</td>
       <td class="cell-final">${ragStack(sOverall)}</td>
       <td class="cell-roi">${groupSentPercent(rows.slice(0, sliceN).map(r => r[S_COL.eid]))}</td>
-      <td class="cell-usage">${fmtNum(sAv)}</td>
-      <td class="cell-usage">${fmtNum(sCv)}</td>
-      <td class="cell-usage">${fmtNum(sAcv)}</td>
-      <td class="cell-usage ${ufColorClass(totalUf)}">${totalUf?(totalUf*100).toFixed(0)+'%':'—'}</td>
+      <td class="cell-usage">${fmtNum(sUJan)}</td>
+      <td class="cell-usage">${fmtNum(sUFeb)}</td>
+      <td class="cell-usage">${fmtNum(sUMar)}</td>
+      <td class="cell-usage">${fmtNum(sUApr)}</td>
+      <td class="cell-usage">${fmtNum(sUMay)}</td>
+      <td class="cell-usage">${fmtNum(sUMtd)}</td>
+      <td class="cell-usage">${trendCell(usageTrend([sUJan,sUFeb,sUMar,sUApr,sUMay]))}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
       <td class="cell-payment">${payTileAgg(sT1, seenEidPay.size)}</td>
@@ -3341,14 +3471,14 @@ function renderRooftop() {
       sortTh('Ticket RAG' + tip('ticketRagSla'),    'tixRag', 'viniRooftop', 'cell-tickets') +
       sortTh('Score'    + tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractionsNum') + '</th>' +
-      sortTh('Final RAG' + tip('commFinalRag'), 'commRag',   'viniRooftop', 'cell-comm') +
+      sortTh('Comm. RAG' + tip('commRagBinary'), 'commRag',   'viniRooftop', 'cell-comm') +
       sortTh('MBR',          'mbr', 'viniRooftop', 'cell-leader') +
       sortTh('Contact Freq', 'cf',  'viniRooftop', 'cell-leader') +
       '</tr></thead><tbody>';
     // Track aggregates for the Total row at the bottom.
     let tMrr=0, tLiveArr=0, tTouch=0, tQual=0, tAppts=0, tApptVal=0, tCr=0, tOp=0;
     const tOtaVals=[], tResVals=[], tConvVals=[], tRoiVals=[];
-    const tT1={}, tT2={}, tT3={}, tPs={}, tTrag={}, tCommScore={}, tFinalRag={}, tOverall={}, tMbr={}, tCf={};
+    const tT1={}, tT2={}, tT3={}, tPs={}, tTrag={}, tCommScore={}, tFinalRag={}, tCommBinary={}, tOverall={}, tMbr={}, tCf={};
     let tChurned=0, tRsNo=0;
     const incCount = (dict, key) => { if (!key) return; dict[key] = (dict[key]||0)+1; };
     const seenEidComm = new Set();   // ensure comm counts are per-enterprise
@@ -3389,6 +3519,8 @@ function renderRooftop() {
         seenEidComm.add(r.eid);
         Object.entries(commCounts).forEach(([k,v]) => { tCommScore[k] = (tCommScore[k]||0) + v; });
         incCount(tFinalRag, commFinalRag);
+        // Binary Comm. RAG total: Green if enterprise had ≥1 interaction else Red.
+        incCount(tCommBinary, commInteractionCount(r.eid, r.en) > 0 ? 'Green' : 'Red');
       }
       // Per-row Overall RAG (account health) — MTD RoI + Payment + Comm signals.
       // Per-row because r.roi_mtd differs per agent contract even within the same
@@ -3425,7 +3557,7 @@ function renderRooftop() {
         <td class="cell-tickets">${ragSingle(computeTicketRAG(r))}</td>
         <td class="cell-comm">${commScoreCell}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r.eid, r.en))}</td>
-        <td class="cell-comm">${ragSingle(commFinalRag)}</td>
+        <td class="cell-comm">${ragSingle(commInteractionCount(r.eid, r.en) > 0 ? 'Green' : 'Red')}</td>
         <td class="cell-leader">${r.mbr?ragSingle(r.mbr):'—'}</td>
         <td class="cell-leader">${r.cf||'—'}</td>
       </tr>`;
@@ -3474,7 +3606,7 @@ function renderRooftop() {
       <td class="cell-tickets">${ragSingle(totalTrag)}</td>
       <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
       <td class="cell-comm">${intCountCell(commInteractionCountSum(rows))}</td>
-      <td class="cell-comm">${ragSingle(totalFinalComm)}</td>
+      <td class="cell-comm">${ragStack(tCommBinary)}</td>
       <td class="cell-leader">${ragStack(tMbr)}</td>
       <td class="cell-leader">—</td>
     </tr>`;

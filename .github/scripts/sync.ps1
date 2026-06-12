@@ -920,13 +920,13 @@ Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets k
 Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) tickets kept, $($skipped.studio) skipped"
 
 # --- Build Studio s_rows from gid=603796861 ---
-# Schema columns in the new source (1 row per Studio rooftop):
+# Schema columns in the CURRENT source (1 row per Studio rooftop), after the
+# 2026-06 restructure:
 #   A Enterprise ID | B Enterprise Name | C Rooftop ID | D Rooftop Name |
 #   E account_type | F account_subtype | G Customer Segment | H CSM Name |
 #   I Region | J Quality Website Score | K Website Link | L Pendency (6 hrs) |
-#   M Inventory Score | N Active VINs | O #Last Month Actual VINs |
-#   P #Actual MTD VINs | Q IMS Vins | R Usage Factor |
-#   S RoI Report Sent | T Payment T1 | U T2 | V T3 | W Payment RAG |
+#   M Usage Jan'26 | N Feb'26 | O Mar'26 | P Apr'26 | Q May'26 | R mtd_vins |
+#   S ARR | T Payment T1 | U T2 | V T3 | W Payment RAG |
 #   X Tickets #Unresolved | Y #Created | Z Open Ageing | AA Avg Resolution |
 #   AB Ticket RAG | AC Comm RAG Status | AD MBR | AE Contact Freq
 #
@@ -937,11 +937,17 @@ Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) ticke
 # Also: the old "RoI Report Sent (D/W/M)?" column was removed from the sheet,
 # so the `rs` field is dropped from the schema. The dashboard's RoI bucket
 # will be sourced from a future last-7-days history when one is provided.
+# NEW (2026-06 sheet restructure): the Usage block is now 6 monthly VIN
+# columns M-R (Usage Jan'26 … May'26 + mtd_vins). The old Active VINs / IMS
+# Vins / #Actual / Last-month Actual / Usage Factor / Inventory Score columns
+# were all removed from the sheet, so those fields are dropped from the schema.
+# The dashboard derives "Usage Trend" (Rising/Declining/Steady) from the 5 full
+# months at render time — it is NOT stored here.
 $sStudioSchema = @(
     'rid','rn','en',
     'mrr','arr',
-    'av','cv','acv','lm_acv','uf',
-    'pen','ws','ws_link','isc',
+    'u_jan','u_feb','u_mar','u_apr','u_may','u_mtd',
+    'pen','ws','ws_link',
     't1','t2','t3','prag',
     'unr','cr','ota','res','trag',
     'red','mbr','cf','csm','ct','cst','seg','region','eid'
@@ -962,12 +968,14 @@ $si = @{
     ws      = Find-Col $sCols @('Quality Website Score','Website Score')
     ws_link = Find-Col $sCols @('Website Link')
     pen     = Find-Col $sCols @('Pendency (6 hrs)','Pendency')
-    isc     = Find-Col $sCols @('Inventory Score')
-    av      = Find-Col $sCols @('Usage Active Vins','Active Vins','Active VINs')
-    lm_acv  = Find-Col $sCols @('# Last month Actual Vins','Last month Actual Vins')
-    acv     = Find-Col $sCols @('# Actual MTD VINs','Actual MTD VINs','# Actual')
-    cv      = Find-Col $sCols @('IMS Vins','IMS VINs','# IMS Vins','# IMS VINs','IMS','# Contracted VINs','Contracted VINs','# Contracted')
-    uf      = Find-Col $sCols @('# VIN Usage Factor','VIN Usage Factor','Usage Factor')
+    # Monthly usage VINs — sheet cols M-R (gid=603796861). Header text carries
+    # an apostrophe ("Jan'26"); match defensively then fall back to position.
+    u_jan   = Find-Col $sCols @("Usage Jan'26","Usage Jan26","Jan'26","Jan26")
+    u_feb   = Find-Col $sCols @("Feb'26","Feb26")
+    u_mar   = Find-Col $sCols @("Mar'26","Mar26")
+    u_apr   = Find-Col $sCols @("Apr'26","Apr26")
+    u_may   = Find-Col $sCols @("May'26","May26")
+    u_mtd   = Find-Col $sCols @('mtd_vins','MTD VINs','MTD Vins','MTD')
     arr     = Find-Col $sCols @('ARR')
     t1      = Find-Col $sCols @('Payment T1','T1')
     t2      = Find-Col $sCols @('T2')
@@ -982,6 +990,14 @@ $si = @{
     mbr     = Find-Col $sCols @('Leadership Connect MBR','MBR')
     cf      = Find-Col $sCols @('Contact Freq')
 }
+# Positional fallbacks for the monthly usage block (M=12 … R=17, 0-based) in
+# case the apostrophe'd header text doesn't match exactly.
+if ($si.u_jan -lt 0) { $si.u_jan = 12 }
+if ($si.u_feb -lt 0) { $si.u_feb = 13 }
+if ($si.u_mar -lt 0) { $si.u_mar = 14 }
+if ($si.u_apr -lt 0) { $si.u_apr = 15 }
+if ($si.u_may -lt 0) { $si.u_may = 16 }
+if ($si.u_mtd -lt 0) { $si.u_mtd = 17 }
 
 # Resolution time column is `[h]:mm:ss` formatted — extract from the
 # Gviz cell.f (display string) rather than .v (broken Date encoding).
@@ -1023,23 +1039,17 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['en']]      = [string](Gviz-Val $c[$si.en])
     $r[$idx['mrr']]     = $mrrNum
     $r[$idx['arr']]     = $arrNum
-    $avVal = Gviz-Val $c[$si.av]
-    $r[$idx['av']]      = $avVal
-    $r[$idx['acv']]     = Gviz-Val $c[$si.acv]
-    # IMS Vins — read directly from sheet column Q (gid=603796861), per user
-    # spec. Replaces the old derived "# Contracted" value (was 2/3 of Active
-    # VINs). Field key stays `cv` to avoid schema churn; the dashboard labels
-    # it "IMS Vins" and computes Usage Factor = #Actual / IMS Vins. Header-
-    # matched via $si.cv, with a positional fallback to column Q (0-based 16)
-    # in case the sheet header text differs.
-    $imsIdx = if ($si.cv -ge 0) { $si.cv } else { 16 }
-    $r[$idx['cv']]      = Gviz-Val $c[$imsIdx]
-    $r[$idx['lm_acv']]  = if ($si.lm_acv -ge 0) { Gviz-Val $c[$si.lm_acv] } else { '' }
-    $r[$idx['uf']]      = Gviz-Val $c[$si.uf]
+    # Monthly usage VINs (sheet cols M-R). Numeric per rooftop. The dashboard
+    # sums these across a group and derives the Usage Trend at render time.
+    $r[$idx['u_jan']]   = Gviz-Val $c[$si.u_jan]
+    $r[$idx['u_feb']]   = Gviz-Val $c[$si.u_feb]
+    $r[$idx['u_mar']]   = Gviz-Val $c[$si.u_mar]
+    $r[$idx['u_apr']]   = Gviz-Val $c[$si.u_apr]
+    $r[$idx['u_may']]   = Gviz-Val $c[$si.u_may]
+    $r[$idx['u_mtd']]   = Gviz-Val $c[$si.u_mtd]
     $r[$idx['pen']]     = Gviz-Val $c[$si.pen]
     $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
     $r[$idx['ws_link']] = if ($si.ws_link -ge 0) { [string](Gviz-Val $c[$si.ws_link]) } else { '' }
-    $r[$idx['isc']]     = Gviz-Val $c[$si.isc]
     # T-1 / T-2 / T-3 sourced from gid=1395015507 dense-rank by enterprise_id
     # (NOT the sheet's Payment T1/T2/T3 columns). Rank 2/3/4 customer_status →
     # t1/t2/t3. Payment RAG is recomputed worst-wins from the resulting statuses.
