@@ -1511,7 +1511,8 @@ const TIPS = {
   commInteractionsNum: '# Interaction = SUM of CSAT interaction_count (gid=701797891 col J) for this account in the current period — the actual number of CSAT interactions logged against the enterprise. Per-account rows show that account\'s count; the TOTAL row sums across the unique accounts in view. (Overview rows instead show Interaction %, the share of rooftops with ≥1 interaction.)',
   commFinalRag:'From the count breakdown above: G=100, A=60, R=20. Avg ≥80 Green, ≥60 Amber, <60 Red.',
   commRagBinary:'Binary engagement flag: Green if the enterprise logged ≥1 CSAT interaction in the current period, else Red. On overview / CSM rows the cell shows the Green/Red count across the unique enterprises in scope.',
-  usageTrend:  'Usage Trend over Jan→May (MTD excluded): least-squares slope of monthly VINs, normalized by the mean. Rising > +5%/mo, Declining < −5%/mo, otherwise Steady. Feeds the Usage signal of the Overall RAG (Rising→Green, Steady→Amber, Declining→Red).',
+  usageTrend:  'Mini sparkline of monthly VINs (Jan→May). The line colour follows the trend: green Rising, red Declining, grey Steady. Hover the line to see the raw monthly values.',
+  usageStatus: 'Usage Status over Jan→May (MTD excluded): least-squares slope of monthly VINs, normalized by the mean. Rising > +5%/mo, Declining < −5%/mo, otherwise Steady. Feeds the Usage signal of the Overall RAG (Rising→Green, Steady→Amber, Declining→Red).',
   overallRag:  'Account health rolled up from 3 signals: MTD RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
   churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
   openAgeing:  'Hours since each open ticket was created. Cross-enterprise avg here is ticket-weighted (sum of hours ÷ open-ticket count).',
@@ -1872,7 +1873,32 @@ function trendCell(trend) {
     Steady:    ['#92400E', '#FEF3C7', '▬'],
   };
   const [fg, bg, arrow] = map[trend] || ['#475569', '#F1F5F9', '▬'];
-  return `<span class="int-count" style="background:${bg};color:${fg}" title="Usage Trend (least-squares slope, Jan→May): ${trend}">${arrow} ${trend}</span>`;
+  return `<span class="int-count" style="background:${bg};color:${fg}" title="Usage Status (least-squares slope, Jan→May): ${trend}">${arrow} ${trend}</span>`;
+}
+// Mini inline sparkline (SVG) of a numeric series — shows the SHAPE of the
+// Jan→May VIN usage at a glance. Normalizes within the series' own min/max so
+// both small and very large accounts stay legible. Line colour follows the
+// trend (Rising green / Declining red / Steady grey).
+function sparklineCell(series, trend) {
+  const ys = (series || []).map(v => Number(v) || 0);
+  if (ys.length < 2 || ys.every(v => v === 0)) return '<span style="color:var(--text-4)">—</span>';
+  const w = 60, h = 18, pad = 2;
+  const min = Math.min(...ys), max = Math.max(...ys);
+  const rng = (max - min) || 1;
+  const stepX = (w - pad * 2) / (ys.length - 1);
+  const pts = ys.map((v, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((v - min) / rng) * (h - pad * 2);
+    return [x, y];
+  });
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const stroke = trend === 'Rising' ? '#10B981' : trend === 'Declining' ? '#EF4444' : '#94A3B8';
+  const last = pts[pts.length - 1];
+  const title = 'Jan→May VINs: ' + ys.join(' · ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:inline-block;vertical-align:middle;overflow:visible"><title>${title}</title>`
+    + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="1.8" fill="${stroke}"/>`
+    + `</svg>`;
 }
 // The 5 full-month usage series for a single Studio rooftop row (Jan→May).
 function rowUsageSeries(r) {
@@ -2273,7 +2299,7 @@ const S_GROUPS = [
   // health is visible at a glance, with the 7-day report trend right after).
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
-  { l:'Usage',        span:7, c:'g-usage' },       // Jan'26 … May'26 · MTD VINs · Usage Trend
+  { l:'Usage',        span:8, c:'g-usage' },       // Jan'26 … May'26 · MTD VINs · Usage Trend (sparkline) · Status
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
   { l:'Tickets',      span:4, c:'g-tickets' },                // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
@@ -2289,10 +2315,11 @@ const S_COLS_SHARED = [
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
   // 1 RoI — Report Sent (7-day per-enterprise aggregate)
   {l:'Report Sent', cc:'cell-roi', tip:'studioRoiPending'},
-  // 7 Usage — monthly VINs (sheet cols M-R) + derived Usage Trend.
+  // 8 Usage — monthly VINs (sheet cols M-R) + Usage Trend sparkline + Status.
   {l:"Jan'26", cc:'cell-usage'}, {l:"Feb'26", cc:'cell-usage'}, {l:"Mar'26", cc:'cell-usage'},
   {l:"Apr'26", cc:'cell-usage'}, {l:"May'26", cc:'cell-usage'}, {l:'MTD VINs', cc:'cell-usage'},
   {l:'Usage Trend', cc:'cell-usage', tip:'usageTrend'},
+  {l:'Status', cc:'cell-usage', tip:'usageStatus'},
   // 2 Quality (Inventory Score removed per user spec — kept the data path in
   // sync.ps1 so we can bring it back without a resync if needed).
   {l:'Pendency (6h)', cc:'cell-quality', tip:'pendency'},
@@ -2429,6 +2456,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
     <td class="cell-usage">${fmtNum(uJan)}</td><td class="cell-usage">${fmtNum(uFeb)}</td><td class="cell-usage">${fmtNum(uMar)}</td>
     <td class="cell-usage">${fmtNum(uApr)}</td><td class="cell-usage">${fmtNum(uMay)}</td><td class="cell-usage">${fmtNum(uMtd)}</td>
+    <td class="cell-usage">${sparklineCell([uJan,uFeb,uMar,uApr,uMay], uTrend)}</td>
     <td class="cell-usage">${trendCell(uTrend)}</td>
     <td class="cell-quality">${fmtNum(pen)}</td>
     <td class="cell-quality">${ragStack(wsRagCounts)}</td>
@@ -2439,7 +2467,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtNum(unr)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td>
     <td class="cell-tickets">${ragSingle(computeTicketRAG(studioTixAgg))}</td>
-    <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active))}</td>
     <td class="cell-comm">${ragStack((() => {
       // Comm. RAG = Green if the enterprise had ≥1 interaction this period,
@@ -2692,7 +2720,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-tickets">${fmtNum(op)}</td>
     <td class="cell-tickets">${fmtHrs(ota)}</td>
     <td class="cell-tickets">${ragSingle(computeTicketRAG(tixAgg))}</td>
-    <td class="cell-comm">${commScoreNum==null?'—':ragStack(commRagCounts)}</td>
+    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active, 'rid'))}</td>
     <td class="cell-comm">${ragStack(commBinaryCounts)}</td>
     <td class="cell-leader">${ragStack(mbr)}</td><td class="cell-leader">${cfTop?cfTop[0]:'—'}</td>
@@ -3155,7 +3183,7 @@ function renderEnterpriseList() {
       <td class="cell-tickets">${fmtNum(e._tix.op)}</td>
       <td class="cell-tickets">${fmtHrs(e._tix.ota)}</td>
       <td class="cell-tickets">${ragSingle(e._tixRag)}</td>
-      <td class="cell-comm">${e._commScoreNum == null ? '—' : ragStack(e._commCounts)}</td>
+      <td class="cell-comm">${e._commScoreNum == null ? '<span style="color:var(--text-4)">NA</span>' : ragStack(e._commCounts)}</td>
       <td class="cell-comm">${intCountCell(e._intCount)}</td>
       <td class="cell-comm">${ragSingle((e._intCount||0) > 0 ? 'Green' : 'Red')}</td>
     </tr>`;
@@ -3196,13 +3224,13 @@ function renderRooftop() {
     renderKpiStudio(rows, 'rooftop-kpi-strip');
 
     // Bucketing mirrors new S_GROUPS: 6 frozen / 1 Final Status / 1 RoI /
-    // 7 Usage / 2 Quality / 4 Payment / 4 Tickets / 3 Comm / 1 Leader = 29 cols
+    // 8 Usage / 2 Quality / 4 Payment / 4 Tickets / 3 Comm / 1 Leader = 30 cols
     let html = '<table class="data rooftop-layout rooftop-layout-6"><thead><tr class="group">' +
       // 6 frozen identity cells: # · Rooftop · Enterprise · Account Type · MRR · ARR
       '<th class="frozen frozen-1"></th><th class="frozen frozen-2"></th><th class="frozen frozen-3"></th><th class="frozen frozen-4"></th><th class="frozen frozen-5"></th><th class="frozen frozen-6"></th>' +
       '<th colspan="1" class="g-final">Final Status</th>' +
       '<th colspan="1" class="g-roi">RoI</th>' +
-      '<th colspan="7" class="g-usage">Usage</th>' +
+      '<th colspan="8" class="g-usage">Usage</th>' +
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="4" class="g-tickets">Tickets</th>' +       // # Created + # Unresolved + Open Ageing + Ticket RAG
@@ -3225,6 +3253,7 @@ function renderRooftop() {
       sortTh("May'26", 'u_may', 'studioRooftop', 'cell-usage') +
       sortTh('MTD VINs', 'u_mtd', 'studioRooftop', 'cell-usage') +
       '<th class="cell-usage">Usage Trend' + tip('usageTrend') + '</th>' +
+      '<th class="cell-usage">Status' + tip('usageStatus') + '</th>' +
       sortTh('Pendency (6h)' + tip('pendency'),  'pen', 'studioRooftop', 'cell-quality') +
       sortTh('Website RAG' + tip('websiteScore'), 'ws',  'studioRooftop', 'cell-quality') +
       sortTh('T-1' + tip('paymentT1'), 't1',   'studioRooftop', 'cell-payment') +
@@ -3333,6 +3362,7 @@ function renderRooftop() {
         <td class="cell-usage">${fmtNum(r[S_COL.u_apr])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_may])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_mtd])}</td>
+        <td class="cell-usage">${sparklineCell(rowUsageSeries(r), rowUTrend)}</td>
         <td class="cell-usage">${trendCell(rowUTrend)}</td>
         <td class="cell-quality">${fmtNum(r[S_COL.pen])}</td>
         <td class="cell-quality">${wsCell}</td>
@@ -3344,13 +3374,13 @@ function renderRooftop() {
         <td class="cell-tickets">${fmtNum(rowTix.op)}</td>
         <td class="cell-tickets">${fmtHrs(rowTix.ota)}</td>
         <td class="cell-tickets">${ragSingle(computeTicketRAG(rowTix))}</td>
-        <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">—</span>' : ragStack(cc); })()}</td>
+        <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">NA</span>' : ragStack(cc); })()}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0 ? 'Green' : 'Red')}</td>
         <td class="cell-leader">${r[S_COL.mbr]?ragSingle(r[S_COL.mbr]):'—'}</td>
       </tr>`;
     });
-    if (rows.length > 500) html += `<tr><td colspan="29" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
+    if (rows.length > 500) html += `<tr><td colspan="30" style="text-align:center;padding:20px;color:var(--text-3);font-style:italic">Showing first 500 of ${rows.length}. Use filters to narrow.</td></tr>`;
     // ─── TOTAL row (Studio Rooftop View) ─────────────────────────────────
     const avg = vs => vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : 0;
     // Ticket totals — ticket-weighted across every enterprise in scope,
@@ -3386,6 +3416,7 @@ function renderRooftop() {
       <td class="cell-usage">${fmtNum(sUApr)}</td>
       <td class="cell-usage">${fmtNum(sUMay)}</td>
       <td class="cell-usage">${fmtNum(sUMtd)}</td>
+      <td class="cell-usage">${sparklineCell([sUJan,sUFeb,sUMar,sUApr,sUMay], usageTrend([sUJan,sUFeb,sUMar,sUApr,sUMay]))}</td>
       <td class="cell-usage">${trendCell(usageTrend([sUJan,sUFeb,sUMar,sUApr,sUMay]))}</td>
       <td class="cell-quality">${fmtNum(sPen)}</td>
       <td class="cell-quality">${ragStack(sWsRag)}</td>
@@ -3397,7 +3428,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(totalStudioTix.op)}</td>
       <td class="cell-tickets">${fmtHrs(totalStudioTix.ota)}</td>
       <td class="cell-tickets">${ragSingle(computeTicketRAG(totalStudioTix))}</td>
-      <td class="cell-comm">${Object.keys(sCommScore).length ? ragStack(sCommScore) : '<span style="color:var(--text-4)">—</span>'}</td>
+      <td class="cell-comm">${Object.keys(sCommScore).length ? ragStack(sCommScore) : '<span style="color:var(--text-4)">NA</span>'}</td>
       <td class="cell-comm">${intCountCell(commInteractionCountSum(rows.slice(0, sliceN)))}</td>
       <td class="cell-comm">${ragStack(sComm)}</td>
       <td class="cell-leader">${ragStack(sMbr)}</td>
@@ -3491,7 +3522,7 @@ function renderRooftop() {
       const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
       const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
       const commScoreCell = commScoreNum == null
-        ? '<span style="color:var(--text-4)">—</span>'
+        ? '<span style="color:var(--text-4)">NA</span>'
         : ragStack(commCounts);
       // Total-row accumulators
       tMrr += Number(r.mrr)||0;  tLiveArr += Number(liveArr)||0;
@@ -3604,7 +3635,7 @@ function renderRooftop() {
       <td class="cell-tickets">${fmtNum(tOp)}</td>
       <td class="cell-tickets">${fmtHrs(totalOta)}</td>
       <td class="cell-tickets">${ragSingle(totalTrag)}</td>
-      <td class="cell-comm">${totalCommScoreNum==null?'—':ragStack(tCommScore)}</td>
+      <td class="cell-comm">${totalCommScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(tCommScore)}</td>
       <td class="cell-comm">${intCountCell(commInteractionCountSum(rows))}</td>
       <td class="cell-comm">${ragStack(tCommBinary)}</td>
       <td class="cell-leader">${ragStack(tMbr)}</td>
