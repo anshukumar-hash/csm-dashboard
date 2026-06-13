@@ -34,11 +34,16 @@ $urls = @{
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
     tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
     studio  = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=603796861"
-    # CSAT source: gid=701797891 with column I "Comm Avg." pre-computed by the
-    # user. The earlier IMPORTRANGE issue (which forced us to Metabase) appears
-    # to be resolved — the tab now returns real data via gviz. We read the
-    # pre-computed Comm Avg column directly so our display matches the sheet.
-    csat    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=701797891&headers=1"
+    # CSAT / Communication source: Metabase public CSV (per user spec, 2026-06-13).
+    # This is the upstream of what the old gid=701797891 tab IMPORTRANGE'd, so we
+    # read it directly — fresher, no IMPORTRANGE "Loading..." stalls, and the
+    # column set is identical:
+    #   date · company_name · company_external_id · csm_name ·
+    #   meeting_csat · thread_csat · ticket_csat · call_csat ·
+    #   average_csat_score · interaction_count
+    # Fetched as CSV (ConvertFrom-Csv) rather than gviz JSON. The auto-sync runs
+    # every 15 min, so this column auto-refreshes on each cycle.
+    csat    = "https://metabase.arali.ai/public/question/8f665676-ab26-45bf-bbab-597b9fd6b723.csv"
     # Report-coverage API — aggregate per-day counts of reports sent / not sent.
     # Used for the Studio "Reports Sent (7d)" KPI tile.
     coverage = "https://vin-tracker-dashboard.vercel.app/api/report-coverage?days=7"
@@ -118,6 +123,50 @@ function Fetch-Gviz($url, $expectedMinRows = 0) {
     }
 }
 
+function Fetch-Csv($url, $expectedMinRows = 0) {
+    # CSV sibling of Fetch-Gviz for the Metabase public-question endpoint.
+    # Metabase serves the CSV only to browser-like clients (a bare curl/UA
+    # gets an empty body), so we send the same Chrome User-Agent. We also
+    # cache-bust per attempt and retry on short/empty bodies, mirroring the
+    # gviz path. Returns an ARRAY of PSCustomObjects (one per data row, keyed
+    # by CSV header name). The leading comma in `return ,@(...)` stops
+    # PowerShell from unrolling a single-element array into a scalar.
+    $maxAttempts = 6
+    $sleeps = @(4, 6, 10, 15, 22)
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $sep = if ($url.Contains('?')) { '&' } else { '?' }
+        $u   = "$url$sep`_cb=" + [Guid]::NewGuid().ToString('N')
+        if ($attempt -gt 1) { Write-Host "  retry $attempt`: $u" }
+        else                { Write-Host "  fetch: $u" }
+        try {
+            $headers = @{
+                'User-Agent'      = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+                'Accept'          = 'text/csv, text/plain, */*'
+                'Accept-Language' = 'en-US,en;q=0.9'
+                'Cache-Control'   = 'no-cache'
+                'Pragma'          = 'no-cache'
+            }
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers $headers
+            if ($resp.StatusCode -ne 200) { throw "HTTP $($resp.StatusCode) for $u" }
+            $recs = @($resp.Content | ConvertFrom-Csv)
+            $rowCount = $recs.Count
+            if ($expectedMinRows -gt 0 -and $rowCount -lt $expectedMinRows) {
+                Write-Host ("    WARN got $rowCount rows; expected >= $expectedMinRows; retrying...")
+                if ($attempt -lt $maxAttempts) {
+                    Start-Sleep -Seconds $sleeps[[Math]::Min($attempt - 1, $sleeps.Count - 1)]
+                    continue
+                }
+                Write-Host ("    WARN exhausted retries; final attempt still short ($rowCount rows). Proceeding anyway.")
+            }
+            return ,@($recs)
+        } catch {
+            Write-Host ("    WARN attempt $attempt failed: $_")
+            if ($attempt -eq $maxAttempts) { throw }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
 function Norm-Lbl($s) { return ($s -replace '[^a-zA-Z0-9]+', '').ToLower() }
 function Find-Col($cols, $candidates) {
     foreach ($c in @($candidates)) {
@@ -162,12 +211,12 @@ $tixTab         = Fetch-Gviz $urls.tickets    500    # tickets ~1500 typical
 $studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
 $payPeriodsTab  = Fetch-Gviz $urls.payperiods 3000   # payment-periods ~6500 typical
 
-# CSAT comes back from gid=701797891 (gviz) now that the IMPORTRANGE works.
-# We still keep the "Loading..." sentinel detection from the original gviz
-# path so the sync degrades gracefully if the formula stops resolving.
-$csatTab = $null
+# CSAT now comes from the Metabase public CSV (see $urls.csat comment). It's
+# the fresh upstream of the old gid=701797891 IMPORTRANGE tab, so no more
+# "Loading..." stalls. On fetch failure we preserve the existing snapshot.
+$csatRows = $null
 try {
-    $csatTab = Fetch-Gviz $urls.csat
+    $csatRows = Fetch-Csv $urls.csat 1000   # ~12.7k rows typical
 } catch {
     Write-Host "  CSAT: WARNING — fetch failed ($_). Will preserve existing snapshot."
 }
@@ -220,7 +269,7 @@ try {
     $trackingFailed = $true
     $reportTracking = $null
 }
-Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatTab){$csatTab.rows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
+Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatRows){$csatRows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
 
 # --- Payment-period DENSE_RANK from gid=1395015507 ---
 # For each enterprise (col V EnterprisesID), rank unique (start_date, end_date)
@@ -572,32 +621,25 @@ $vRowsScoped = New-Object System.Collections.Generic.List[object]
 foreach ($r in $vRows) { if ($payEids.Contains([string]$r[$eidIdxV])) { [void]$vRowsScoped.Add($r) } }
 Write-Host "  v_rows in scope: $($vRowsScoped.Count)"
 
-# --- Build CSAT dicts from gid=701797891 (gviz) ---
-# Schema (with headers=1):
-#   A Day | B Enterprise Name | C Enterprise ID | D CSM Name |
-#   E meeting_csat | F thread_csat | G ticket_csat | H call_csat |
-#   I Comm Avg.
+# --- Build CSAT dicts from the Metabase public CSV ---
+# Columns (ConvertFrom-Csv → PSCustomObject per row, keyed by header):
+#   date · company_name · company_external_id · csm_name ·
+#   meeting_csat · thread_csat · ticket_csat · call_csat ·
+#   average_csat_score · interaction_count
 #
-# We read column I "Comm Avg." DIRECTLY rather than recomputing — the user
-# maintains the formula in the sheet, so the dashboard's avg matches what
-# they see in Sheets.
+# `average_csat_score` is read DIRECTLY (Metabase already computes the blend
+# across channels), so the dashboard avg matches the question. `date` is
+# already ISO YYYY-MM-DD — no Gviz-Date conversion needed.
 # RAG thresholds: avg<2.5 Red, <4 Amber, >=4 Green, blank → NA.
 #
-# If the gviz fetch FAILED OR returned the "Loading..." sentinel (the
-# IMPORTRANGE state we hit before), we preserve the previously-spliced
-# CSAT dicts from $D so we don't wipe the dashboard JSON.
+# If the CSV fetch FAILED or returned 0 rows, we preserve the
+# previously-spliced CSAT dicts from $D so we don't wipe the dashboard JSON.
 $csatBroken = $false
-if ($null -eq $csatTab) { $csatBroken = $true }
-if (-not $csatBroken -and $csatTab.rows.Count -eq 0) { $csatBroken = $true }
-if (-not $csatBroken) {
-    # Check first row col A for the "Loading..." sentinel
-    $firstCell = $csatTab.rows[0].c[0]
-    $firstVal = if ($firstCell -and $firstCell.v) { [string]$firstCell.v } else { '' }
-    if ($firstVal -match '^(?i)loading\.\.\.?$') { $csatBroken = $true }
-}
+if ($null -eq $csatRows) { $csatBroken = $true }
+if (-not $csatBroken -and $csatRows.Count -eq 0) { $csatBroken = $true }
 
 if ($csatBroken) {
-    Write-Host "  CSAT: WARNING — fetch empty or 'Loading...'. Preserving existing snapshot."
+    Write-Host "  CSAT: WARNING — Metabase CSV fetch empty or failed. Preserving existing snapshot."
     $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
     if ($D.csat_by_eid) {
         foreach ($k in $D.csat_by_eid.Keys) {
@@ -635,20 +677,6 @@ if ($csatBroken) {
     }
     Write-Host "  CSAT: preserved $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid | $($allByName.Count) all_by_name"
 } else {
-    $cCols = $csatTab.cols
-    # CSAT schema (gid=701797891, verified 2026-06-09):
-    #   A Date  |  B Enterprise_Name  |  C Enterprise_Id  |  D CSM_Name
-    #   E meeting_csat | F thread_csat | G ticket_csat | H call_csat
-    #   I average_csat_score   (numeric: Comm RAG source)
-    #   J interaction_count    (numeric: hash-Interaction column, SUMMED)
-    $ci = @{
-        date    = Find-Col $cCols @('Date','Day','date')
-        en      = Find-Col $cCols @('Enterprise_Name','Enterprise Name','company_name')
-        eid     = Find-Col $cCols @('Enterprise_Id','Enterprise ID','company_external_id')
-        csm     = Find-Col $cCols @('CSM_Name','CSM Name','csm_name')
-        avg     = Find-Col $cCols @('average_csat_score','Comm Avg.','Comm Avg','comm_avg')
-        intCnt  = Find-Col $cCols @('interaction_count','interactionCount','int_count')
-    }
     # Normalize enterprise name for fuzzy match: lowercase + trim + strip
     # " - <eid>" suffix the CSAT dump sometimes appends.
     function NormCsatName($s) {
@@ -659,26 +687,24 @@ if ($csatBroken) {
         return $t.Trim().ToLower()
     }
     $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
-    foreach ($row in $csatTab.rows) {
-        $c = $row.c; if (-not $c) { continue }
-        $eid  = ([string](Gviz-Val $c[$ci.eid])).Trim()
-        $name = ([string](Gviz-Val $c[$ci.en])).Trim()
-        $iso  = Gviz-Date $c[$ci.date]
-        $rawAvg = Gviz-Val $c[$ci.avg]
+    foreach ($row in $csatRows) {
+        if (-not $row) { continue }
+        $eid  = ([string]$row.company_external_id).Trim()
+        $name = ([string]$row.company_name).Trim()
+        $iso  = ([string]$row.date).Trim()
+        $rawAvg = $row.average_csat_score
         $avg = $null
-        if ($rawAvg -ne '' -and $null -ne $rawAvg) {
+        if ($null -ne $rawAvg -and ([string]$rawAvg) -ne '') {
             try { $avg = [double]$rawAvg } catch { $avg = $null }
         }
-        # interaction_count (column J) — the actual number of interactions
-        # captured for this reading. SUMMED downstream (rather than counting
-        # CSAT rows) so the dashboard's "# Interaction" reflects engagement
-        # volume, not just survey frequency.
+        # interaction_count — the actual number of interactions captured for
+        # this reading. SUMMED downstream (rather than counting CSAT rows) so
+        # the dashboard's "# Interaction" reflects engagement volume, not just
+        # survey frequency.
         $intCount = 0
-        if ($ci.intCnt -ge 0) {
-            $rawInt = Gviz-Val $c[$ci.intCnt]
-            if ($rawInt -ne '' -and $null -ne $rawInt) {
-                try { $intCount = [int]([double]$rawInt) } catch { $intCount = 0 }
-            }
+        $rawInt = $row.interaction_count
+        if ($null -ne $rawInt -and ([string]$rawInt) -ne '') {
+            try { $intCount = [int]([double]$rawInt) } catch { $intCount = 0 }
         }
         $rag = 'NA'
         if ($null -ne $avg) {
