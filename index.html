@@ -3414,13 +3414,14 @@ function studioCombinedMetrics(rows) {
     const g = studioRooftopOverallRag(r, null);
     if (g && g !== 'NA') finalCounts[g] = (finalCounts[g] || 0) + 1;
   }
-  // Payment T-1 — enterprise-deduped T-1 tier RAG counts.
+  // Payment — enterprise-deduped Payment RAG counts (SAME source/colour as the
+  // Studio tab's Payment Score: S_COL.prag → Green/Amber/Red).
   const seenPay = new Set();
   const entPay = active.filter(r => {
     const k = r[S_COL.eid] || r[S_COL.en];
     if (!k) return true; if (seenPay.has(k)) return false; seenPay.add(k); return true;
   });
-  const t1Counts = countBy(entPay, r => r[S_COL.t1]);
+  const t1Counts = countBy(entPay, r => r[S_COL.prag]);
   // Communication — binary Comm. RAG + interaction % + CSAT Sentiment stack.
   const intPctVal = commInteractionPct(active);
   const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
@@ -3442,13 +3443,15 @@ function studioCombinedMetrics(rows) {
   const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
   const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
   return { rt, ent, arr, finalCounts, t1Counts, intPctVal, commBin, sentimentCounts,
-           pendency, trend, unresolved };
+           pendency, series, trend, unresolved };
 }
 
 // Vini-side metrics for the combined table (one CSM's Vini rows).
 function viniCombinedMetrics(rows) {
   const active = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
-  const agents = uniqueSet(active, r => r.agent).size;
+  // Agents handled = count of live (rid × agent) contracts — each Vini row is
+  // one agent contract (matches the Vini tab's agent rows, e.g. Ankur = 43).
+  const agents = active.length;
   const arr = sumBy(active, r => r.arr);
   const roiCounts = viniRoiMtdCounts(rows);
   const seenT = new Set();
@@ -3476,8 +3479,11 @@ function buildCombinedCsmRecs() {
     if (!map.has(k)) map.set(k, { name: null, sRows: [], vRows: [] });
     const e = map.get(k); if (!e.name) e.name = titleCaseName(k); e.vRows.push(r);
   });
+  // CSMs to hide from the Display View per spec.
+  const EXCLUDE = k => k.includes('greeva') || k.includes('jatin');
   const recs = [];
   map.forEach((e, k) => {
+    if (EXCLUDE(k)) return;
     recs.push({
       key: k,
       name: e.name,
@@ -3584,7 +3590,7 @@ function renderDisplayView() {
       sortTh('Pendency (6 Hrs)', 'pendency', tk, 'cell-quality') +
       sortTh('Trend', 'trend', tk, 'cell-usage') +
       sortTh('# Unresolved', 'sUnresolved', tk, 'cell-tickets') +
-      sortTh('ROI', 'roi', tk, 'cell-usage') +
+      sortTh('MTD RoI', 'roi', tk, 'cell-usage') +
       sortTh('# Unresolved', 'vUnresolved', tk, 'cell-tickets') +
     '</tr></thead><tbody>';
 
@@ -3606,7 +3612,7 @@ function renderDisplayView() {
       <td class="cell-comm">${commRagCell}</td>
       <td class="cell-comm">${s && Object.keys(s.sentimentCounts).length ? ragStack(s.sentimentCounts) : _muteDash}</td>
       <td class="cell-quality">${s ? fmtNum(s.pendency) : _muteDash}</td>
-      <td class="cell-usage">${s ? trendCell(s.trend) : _muteDash}</td>
+      <td class="cell-usage">${s ? sparklineCell(s.series, s.trend) : _muteDash}</td>
       <td class="cell-tickets">${s ? fmtNum(s.unresolved) : _muteDash}</td>
       <td class="cell-usage">${v && Object.keys(v.roiCounts).length ? ragStack(v.roiCounts) : _muteDash}</td>
       <td class="cell-tickets">${v ? fmtNum(v.unresolved) : _muteDash}</td>
