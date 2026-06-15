@@ -479,12 +479,12 @@
   <div class="top-tabs">
     <button class="top-tab active" data-product="studio">Studio</button>
     <button class="top-tab" data-product="vini">Vini</button>
+    <button class="top-tab" data-view="display">Display View</button>
   </div>
 
   <div class="sub-tabs">
     <button class="sub-tab active" data-view="overview">Overview</button>
     <button class="sub-tab" data-view="rooftop">Rooftop View</button>
-    <button class="sub-tab" data-view="display">Display_View</button>
   </div>
 
   <div class="filter-bar">
@@ -3368,10 +3368,12 @@ function sortCsmSummaryRecs(recs, sortState) {
   let getter;
   switch (key) {
     case 'csm':        getter = r => r.sortName; break;
+    case 'agents':     getter = r => r.agents; break;
     case 'rt':         getter = r => r.rt; break;
     case 'ent':        getter = r => r.ent; break;
     case 'arr':        getter = r => r.arr; break;
     case 'overall':    getter = r => csmGreenPct(r); break;
+    case 'roi':        getter = r => r.roiVal; break;
     case 'reportSent': getter = r => r.reportSentVal; break;
     case 'payment':    getter = r => r.paymentVal; break;
     case 'intPct':     getter = r => r.intPctVal; break;
@@ -3390,7 +3392,7 @@ function sortCsmSummaryRecs(recs, sortState) {
 // reorder the other.
 function renderDisplayView() {
   renderCsmSummaryInto('studio', 'display-studio-wrap', 'display-studio-count', 'csmSummaryStudio');
-  renderCsmSummaryInto('vini',   'display-vini-wrap',   'display-vini-count',   'csmSummaryVini');
+  renderViniCsmSummaryInto('display-vini-wrap', 'display-vini-count', 'csmSummaryVini');
 }
 
 function renderCsmSummaryInto(product, wrapId, countId, sortTableKey) {
@@ -3469,6 +3471,99 @@ function renderCsmSummaryInto(product, wrapId, countId, sortTableKey) {
   wrap.innerHTML = html;
 }
 
+// Vini Display table — custom column set (per spec):
+//   # · CSM · Agents · Rt · Ent · Live ARR · Overall RAG (Final Status) ·
+//   MTD RoI (Usage) · Payment Score · Interaction % · Comm. RAG · # Unresolved.
+// No Report Sent / Quality buckets (Studio-only). MTD RoI occupies the Usage
+// slot as a per-rooftop RoI RAG stack.
+function renderViniCsmSummaryInto(wrapId, countId, sortTableKey) {
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  const rows = getVini();
+
+  const groups = new Map();
+  rows.forEach(r => {
+    const csm = r.csm || '(Unassigned)';
+    if (!groups.has(csm)) groups.set(csm, []);
+    groups.get(csm).push(r);
+  });
+
+  const recs = [];
+  groups.forEach((grpRows, csm) => recs.push(viniCsmSummary(csm, grpRows)));
+  const sortedRecs = sortCsmSummaryRecs(recs, state.sort[sortTableKey]);
+
+  const cntEl = document.getElementById(countId);
+  if (cntEl) cntEl.textContent = `· ${sortedRecs.length} CSM${sortedRecs.length === 1 ? '' : 's'}`;
+
+  let html = '<table class="data csm-summary"><thead>' +
+    '<tr class="group">' +
+      '<th colspan="6"></th>' +
+      '<th class="g-final">Final Status</th>' +
+      '<th class="g-usage">Usage</th>' +
+      '<th class="g-payment">Payment</th>' +
+      '<th colspan="2" class="g-comm">Communication</th>' +
+      '<th class="g-tickets">Tickets</th>' +
+    '</tr>' +
+    '<tr class="cols">' +
+      '<th class="ent-idx" style="text-align:right">#</th>' +
+      sortTh('CSM', 'csm', sortTableKey, 'left') +
+      sortTh('Agents', 'agents', sortTableKey) +
+      sortTh('Rt', 'rt', sortTableKey) +
+      sortTh('Ent', 'ent', sortTableKey) +
+      sortTh('Live ARR', 'arr', sortTableKey) +
+      sortTh('Overall RAG', 'overall', sortTableKey, 'cell-final') +
+      sortTh('MTD RoI', 'roi', sortTableKey, 'cell-usage') +
+      sortTh('Payment Score', 'payment', sortTableKey, 'cell-payment') +
+      sortTh('Interaction %', 'intPct', sortTableKey, 'cell-comm') +
+      sortTh('Comm. RAG', 'commRag', sortTableKey, 'cell-comm') +
+      sortTh('# Unresolved', 'unresolved', sortTableKey, 'cell-tickets') +
+    '</tr></thead><tbody>';
+  sortedRecs.forEach((rec, i) => {
+    html += `<tr>
+      <td class="ent-idx" style="text-align:right">${i + 1}</td>
+      <td class="left">${rec.csmLabel}</td>
+      <td>${fmtNum(rec.agents)}</td>
+      <td>${fmtNum(rec.rt)}</td>
+      <td>${fmtNum(rec.ent)}</td>
+      <td>${rec.arr ? fmtMoney(rec.arr) : '—'}</td>
+      <td class="cell-final">${Object.keys(rec.overallCounts).length ? ragStack(rec.overallCounts) : _muteDash}</td>
+      <td class="cell-usage">${Object.keys(rec.roiCounts).length ? ragStack(rec.roiCounts) : _muteDash}</td>
+      <td class="cell-payment">${rec.paymentScore}</td>
+      <td class="cell-comm">${rec.intPct}</td>
+      <td class="cell-comm">${rec.commRag}</td>
+      <td class="cell-tickets">${fmtNum(rec.unresolved)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+// Per-rooftop MTD RoI RAG distribution for a CSM's Vini rows (collapses to
+// distinct rid, grades each rooftop's MTD RoI via roiMtdRag → Green/Amber/Red).
+function viniRoiMtdCounts(rows) {
+  const o = {};
+  const byRid = new Map();
+  for (const r of rows) {
+    if (!r.rid) continue;
+    if (!byRid.has(r.rid)) byRid.set(r.rid, []);
+    byRid.get(r.rid).push(r);
+  }
+  const today = new Date();
+  const daysPassed  = today.getDate();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
+  for (const rrs of byRid.values()) {
+    const act  = rrs.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+    const base = act.length ? act : rrs;
+    const amrr = sumBy(base, r => r.mrr);
+    const mtdMrr = amrr * (daysPassed / daysInMonth);
+    const apptMtd = sumBy(base, r => r.apptValue_mtd || 0);
+    const ridRoi = mtdMrr > 0 ? apptMtd / mtdMrr : null;
+    const g = roiMtdRag(ridRoi);
+    if (g && g !== 'NA') o[g] = (o[g] || 0) + 1;
+  }
+  return o;
+}
+
 // Studio per-CSM condensed summary record.
 function studioCsmSummary(csm, rows) {
   const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
@@ -3540,12 +3635,20 @@ function viniCsmSummary(csm, rows) {
   const active = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
   const rt  = uniqueSet(rows, r => r.rid).size;
   const ent = uniqueSet(rows, r => r.en).size;
+  // Agents = distinct Agent Types across the CSM's live contracts.
+  const agents = uniqueSet(active, r => r.agent).size;
   const arr = sumBy(active, r => r.arr);
 
   // Overall RAG — SAME stack the Vini CSM-level view shows (per-rooftop Final
   // Status grouped by rid; RoI · Payment · Comm). overallScore drives sort only.
   const overallCounts = viniFinalStatusCounts(rows);
   const overallScore = overallStackScore(overallCounts);
+
+  // MTD RoI (Usage slot) — per-rooftop MTD RoI RAG stack. roiVal = green share
+  // of graded rooftops, used to sort the MTD RoI column.
+  const roiCounts = viniRoiMtdCounts(rows);
+  const roiTot = (roiCounts.Green||0) + (roiCounts.Amber||0) + (roiCounts.Red||0);
+  const roiVal = roiTot ? ((roiCounts.Green||0) / roiTot) * 100 : null;
 
   // Payment Score — enterprise-deduped payment RAG counts → stack.
   const seenPay = new Set();
@@ -3576,7 +3679,8 @@ function viniCsmSummary(csm, rows) {
   });
   const unresolved = sumBy(allByEid, r => r.op);
 
-  return { csmLabel: dispCsm(csm), sortName: csm, rt, ent, arr, overallCounts, overallScore,
+  return { csmLabel: dispCsm(csm), sortName: csm, agents, rt, ent, arr, overallCounts, overallScore,
+           roiCounts, roiVal,
            reportSent: _muteDash, reportSentVal: null,
            paymentScore, paymentVal, intPct, intPctVal, commRag, commVal,
            usageTrend: _muteDash, usageStatus: _muteDash, trendVal: null, quality: _muteDash, qualityVal: null,
@@ -3828,6 +3932,8 @@ function renderRooftop() {
     document.getElementById('rooftop-table-wrap').innerHTML = html;
   } else {
     rows = getVini();
+    // Per spec: exclude churned agent contracts from the Vini Rooftop View.
+    rows = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
     if (ctx.kind === 'segment') { rows = rows.filter(r => r.seg === ctx.value); contextLabel = `Segment: ${ctx.value}`; }
     else if (ctx.kind === 'agent') { rows = rows.filter(r => r.agent === ctx.value); contextLabel = `Agent: ${ctx.value}`; }
     else if (ctx.kind === 'csm')   { rows = rows.filter(r => r.csm === ctx.value); contextLabel = `CSM: ${dispCsm(ctx.value)}`; }
@@ -4464,11 +4570,18 @@ setInterval(refreshAllSheets, REFRESH_INTERVAL_MS);
 window.addEventListener('load', () => { refreshAllSheets(); });
 
 function renderAll() {
+  const isDisplay = state.view === 'display';
   document.getElementById('view-overview').style.display = state.view==='overview' ? 'block' : 'none';
   document.getElementById('view-rooftop').style.display = state.view==='rooftop' ? 'block' : 'none';
-  document.getElementById('view-display').style.display = state.view==='display' ? 'block' : 'none';
+  document.getElementById('view-display').style.display = isDisplay ? 'block' : 'none';
+  // Hide the Overview/Rooftop sub-tabs while on the product-agnostic Display View.
+  document.querySelector('.sub-tabs').style.display = isDisplay ? 'none' : 'flex';
   document.querySelectorAll('.sub-tab').forEach(t => t.classList.toggle('active', t.dataset.view===state.view));
-  document.querySelectorAll('.top-tab').forEach(t => t.classList.toggle('active', t.dataset.product===state.product));
+  document.querySelectorAll('.top-tab').forEach(t => {
+    const active = t.dataset.view === 'display' ? isDisplay
+                 : (!isDisplay && t.dataset.product === state.product);
+    t.classList.toggle('active', active);
+  });
 
   const isStudio = state.product === 'studio';
   // CSM filter is shown on both tabs; the Customer Type / Customer Subtype
@@ -4495,6 +4608,13 @@ function renderAll() {
 // ============================================================
 document.querySelectorAll('.top-tab').forEach(t => {
   t.addEventListener('click', () => {
+    // "Display View" is a product-agnostic top tab — it stacks both the Studio
+    // and Vini CSM Summary rollups regardless of which product is selected.
+    if (t.dataset.view === 'display') {
+      state.view = 'display';
+      renderAll();
+      return;
+    }
     state.product = t.dataset.product;
     state.rooftopContext = { kind:'all', value:null };
     state.view = 'overview';
