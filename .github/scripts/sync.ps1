@@ -34,16 +34,16 @@ $urls = @{
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
     tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
     studio  = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=603796861"
-    # CSAT / Communication source: Metabase public CSV (per user spec, 2026-06-13).
-    # This is the upstream of what the old gid=701797891 tab IMPORTRANGE'd, so we
-    # read it directly — fresher, no IMPORTRANGE "Loading..." stalls, and the
-    # column set is identical:
-    #   date · company_name · company_external_id · csm_name ·
-    #   meeting_csat · thread_csat · ticket_csat · call_csat ·
-    #   average_csat_score · interaction_count
-    # Fetched as CSV (ConvertFrom-Csv) rather than gviz JSON. The auto-sync runs
-    # every 15 min, so this column auto-refreshes on each cycle.
-    csat    = "https://metabase.arali.ai/public/question/8f665676-ab26-45bf-bbab-597b9fd6b723.csv"
+    # CSAT / Communication source: published Google Sheet, gid=179502765
+    # (per user spec, 2026-06-15). This is a "Publish to web" tab the user
+    # maintains; we read its CSV export endpoint directly. Headers:
+    #   Date · Enterprise Name · Enterprise ID · CSM Name ·
+    #   Meeting CSAT · Thread CSAT · Ticket CSAT · Call CSAST ·
+    #   Average_Csat_Score · Interaction Count
+    # The /d/e/2PACX-.../pub?...&output=csv form auto-republishes whenever the
+    # sheet changes, so the 15-min auto-sync picks up fresh data each cycle.
+    # Fetched as CSV (ConvertFrom-Csv) via Fetch-Csv.
+    csat    = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDnnhBjgOPrT56bih4U5DnVDWZwa20dS25L1UagS3s5FP5y3mFxWoaDE6Nyama86X9v-1LjUoPzIOv/pub?gid=179502765&single=true&output=csv"
     # Report-coverage API — aggregate per-day counts of reports sent / not sent.
     # Used for the Studio "Reports Sent (7d)" KPI tile.
     coverage = "https://vin-tracker-dashboard.vercel.app/api/report-coverage?days=7"
@@ -211,9 +211,10 @@ $tixTab         = Fetch-Gviz $urls.tickets    500    # tickets ~1500 typical
 $studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
 $payPeriodsTab  = Fetch-Gviz $urls.payperiods 3000   # payment-periods ~6500 typical
 
-# CSAT now comes from the Metabase public CSV (see $urls.csat comment). It's
-# the fresh upstream of the old gid=701797891 IMPORTRANGE tab, so no more
-# "Loading..." stalls. On fetch failure we preserve the existing snapshot.
+# CSAT now comes from the published Google Sheet CSV (gid=179502765, see
+# $urls.csat comment). It's the fresh upstream of the old gid=701797891
+# IMPORTRANGE tab, so no more "Loading..." stalls. On fetch failure we
+# preserve the existing snapshot.
 $csatRows = $null
 try {
     $csatRows = Fetch-Csv $urls.csat 1000   # ~12.7k rows typical
@@ -621,15 +622,16 @@ $vRowsScoped = New-Object System.Collections.Generic.List[object]
 foreach ($r in $vRows) { if ($payEids.Contains([string]$r[$eidIdxV])) { [void]$vRowsScoped.Add($r) } }
 Write-Host "  v_rows in scope: $($vRowsScoped.Count)"
 
-# --- Build CSAT dicts from the Metabase public CSV ---
+# --- Build CSAT dicts from the published Google Sheet (gid=179502765) ---
 # Columns (ConvertFrom-Csv → PSCustomObject per row, keyed by header):
-#   date · company_name · company_external_id · csm_name ·
-#   meeting_csat · thread_csat · ticket_csat · call_csat ·
-#   average_csat_score · interaction_count
+#   Date · Enterprise Name · Enterprise ID · CSM Name ·
+#   Meeting CSAT · Thread CSAT · Ticket CSAT · Call CSAST ·
+#   Average_Csat_Score · Interaction Count
 #
-# `average_csat_score` is read DIRECTLY (Metabase already computes the blend
-# across channels), so the dashboard avg matches the question. `date` is
-# already ISO YYYY-MM-DD — no Gviz-Date conversion needed.
+# `Average_Csat_Score` is read DIRECTLY (the sheet already computes the blend
+# across channels), so the dashboard avg matches the sheet. `Date` is already
+# ISO YYYY-MM-DD — no Gviz-Date conversion needed. Header names contain spaces,
+# so they're accessed via $row.'Enterprise ID' quoted-property syntax.
 # RAG thresholds: avg<2.5 Red, <4 Amber, >=4 Green, blank → NA.
 #
 # If the CSV fetch FAILED or returned 0 rows, we preserve the
@@ -639,7 +641,7 @@ if ($null -eq $csatRows) { $csatBroken = $true }
 if (-not $csatBroken -and $csatRows.Count -eq 0) { $csatBroken = $true }
 
 if ($csatBroken) {
-    Write-Host "  CSAT: WARNING — Metabase CSV fetch empty or failed. Preserving existing snapshot."
+    Write-Host "  CSAT: WARNING — published-sheet CSV fetch empty or failed. Preserving existing snapshot."
     $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
     if ($D.csat_by_eid) {
         foreach ($k in $D.csat_by_eid.Keys) {
@@ -689,10 +691,10 @@ if ($csatBroken) {
     $byEid=@{}; $byName=@{}; $allByEid=@{}; $allByName=@{}
     foreach ($row in $csatRows) {
         if (-not $row) { continue }
-        $eid  = ([string]$row.company_external_id).Trim()
-        $name = ([string]$row.company_name).Trim()
-        $iso  = ([string]$row.date).Trim()
-        $rawAvg = $row.average_csat_score
+        $eid  = ([string]$row.'Enterprise ID').Trim()
+        $name = ([string]$row.'Enterprise Name').Trim()
+        $iso  = ([string]$row.Date).Trim()
+        $rawAvg = $row.Average_Csat_Score
         $avg = $null
         if ($null -ne $rawAvg -and ([string]$rawAvg) -ne '') {
             try { $avg = [double]$rawAvg } catch { $avg = $null }
@@ -702,7 +704,7 @@ if ($csatBroken) {
         # the dashboard's "# Interaction" reflects engagement volume, not just
         # survey frequency.
         $intCount = 0
-        $rawInt = $row.interaction_count
+        $rawInt = $row.'Interaction Count'
         if ($null -ne $rawInt -and ([string]$rawInt) -ne '') {
             try { $intCount = [int]([double]$rawInt) } catch { $intCount = 0 }
         }
