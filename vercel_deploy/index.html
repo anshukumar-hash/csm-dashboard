@@ -433,8 +433,8 @@
   table.data.csm-combined{font-size:10px}
   table.data.csm-combined th,table.data.csm-combined td{padding:3px 4px;white-space:nowrap}
   table.data.csm-combined thead tr.prod th{height:22px;box-sizing:border-box;padding:3px 2px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-1);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
-  table.data.csm-combined thead tr.prod th.prod-studio{background:#EEF4FF}
-  table.data.csm-combined thead tr.prod th.prod-vini{background:#F3EEFF}
+  table.data.csm-combined thead tr.prod th.prod-studio{background:#DCE8FF}
+  table.data.csm-combined thead tr.prod th.prod-vini{background:#ECE0FF}
   table.data.csm-combined thead tr.group th{height:22px;box-sizing:border-box}
   /* Sticky header — each of the 3 rows pinned at its own top offset (22px tall). */
   table.data.csm-combined thead tr.prod  th{position:sticky;top:0;z-index:6}
@@ -445,6 +445,13 @@
   table.data.csm-combined thead tr.prod th.cmbf,
   table.data.csm-combined thead tr.group th.cmbf,
   table.data.csm-combined thead tr.cols th.cmbf{background:var(--bg);z-index:19}
+  /* Keep the leading (frozen) STUDIO / VINI product bands in their product
+     tint instead of the neutral frozen-header grey. */
+  table.data.csm-combined thead tr.prod th.prod-studio.cmbf{background:#DCE8FF}
+  table.data.csm-combined thead tr.prod th.prod-vini.cmbf{background:#ECE0FF}
+  /* Vini Report bucket — distinct peach so it reads apart from the mint ROI. */
+  table.data.csm-combined thead tr.group th.g-rs-v{background:#FFE3C2}
+  table.data.csm-combined tbody tr.total-row td.cell-rs-v{background:#FFF1E2}
   table.data.csm-combined tbody tr.total-row td{background:#F4FBF6;font-weight:600}
   table.data.csm-combined tbody tr.total-row td.cmbf{background:#EAF6EE}
   table.data.csm-combined .cmb-1{left:0;width:28px;min-width:28px;max-width:28px}
@@ -3618,21 +3625,22 @@ function renderDisplayView() {
       '<th class="cmbf" style="left:0" colspan="2"></th>' +
       '<th class="cmbf prod-studio" style="left:144px" colspan="3">Studio</th>' +
       '<th class="cmbf prod-vini" style="left:278px" colspan="2">Vini</th>' +
-      '<th colspan="8" class="prod-studio">Studio</th>' +
+      '<th colspan="4"></th>' +
+      '<th colspan="4" class="prod-studio">Studio</th>' +
       '<th colspan="3" class="prod-vini">Vini</th>' +
     '</tr>' +
     // Tier 2 — bucket band.
     '<tr class="group">' +
       '<th class="cmbf" style="left:0" colspan="2"></th>' +
       '<th class="cmbf" style="left:144px" colspan="5"></th>' +
-      '<th class="g-final">Final</th>' +
+      '<th class="g-final">Final RAG</th>' +
       '<th class="g-payment">Payment</th>' +
       '<th colspan="2" class="g-comm">Communication</th>' +
       '<th class="g-rs">Report</th>' +
       '<th class="g-quality">Quality</th>' +
       '<th class="g-usage">Usage</th>' +
       '<th class="g-tickets">Ticket</th>' +
-      '<th class="g-rs">Report</th>' +
+      '<th class="g-rs-v">Report</th>' +
       '<th class="g-roi">ROI</th>' +
       '<th class="g-tickets">Ticket</th>' +
     '</tr>' +
@@ -3645,7 +3653,7 @@ function renderDisplayView() {
       sortTh('Studio ARR', 'sArr', tk, 'cmbf cmb-5') +
       sortTh('Agents', 'vAgents', tk, 'cmbf cmb-6') +
       sortTh('Vini ARR', 'vArr', tk, 'cmbf cmb-7') +
-      sortTh('Final RAG', 'final', tk, 'cell-final') +
+      sortTh('Overall RAG', 'final', tk, 'cell-final') +
       sortTh('T-1', 't1', tk, 'cell-payment') +
       sortTh('Comm. RAG', 'commRag', tk, 'cell-comm') +
       sortTh('Sentiment', 'sentiment', tk, 'cell-comm') +
@@ -3698,7 +3706,7 @@ function renderDisplayView() {
       <td class="cell-quality">${s ? fmtNum(s.pendency) : _muteDash}</td>
       <td class="cell-usage">${s ? sparklineCell(s.series, s.trend) : _muteDash}</td>
       <td class="cell-tickets">${s ? fmtNum(s.unresolved) : _muteDash}</td>
-      <td class="cell-rs">${_muteDash}</td>
+      <td class="cell-rs-v">${_muteDash}</td>
       <td class="cell-roi ${v ? roiColorClass(v.roiMtdNum) : ''}">${v ? v.roiMtd : _muteDash}</td>
       <td class="cell-tickets">${v ? fmtNum(v.unresolved) : _muteDash}</td>
     </tr>`;
@@ -3726,7 +3734,7 @@ function renderDisplayView() {
     <td class="cell-quality">${fmtNum(tot.pendency)}</td>
     <td class="cell-usage">${sparklineCell(tot.series, totTrend)}</td>
     <td class="cell-tickets">${fmtNum(tot.sUnresolved)}</td>
-    <td class="cell-rs">${_muteDash}</td>
+    <td class="cell-rs-v">${_muteDash}</td>
     <td class="cell-roi ${roiColorClass(totRoiNum)}">${totRoi}</td>
     <td class="cell-tickets">${fmtNum(tot.vUnresolved)}</td>
   </tr>`;
