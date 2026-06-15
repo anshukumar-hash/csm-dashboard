@@ -452,6 +452,20 @@
   /* Vini Report bucket — distinct peach so it reads apart from the mint ROI. */
   table.data.csm-combined thead tr.group th.g-rs-v{background:#FFE3C2}
   table.data.csm-combined tbody tr.total-row td.cell-rs-v{background:#FFF1E2}
+  /* Suppress the wide RAG-stack buckets (Final RAG · Payment · Communication):
+     tighter cell padding + smaller, snugger badges — frees horizontal space. */
+  table.data.csm-combined th.cell-final,  table.data.csm-combined td.cell-final,
+  table.data.csm-combined th.cell-payment,table.data.csm-combined td.cell-payment,
+  table.data.csm-combined th.cell-comm,   table.data.csm-combined td.cell-comm{padding-left:1px;padding-right:1px}
+  table.data.csm-combined td.cell-final .badge,
+  table.data.csm-combined td.cell-payment .badge,
+  table.data.csm-combined td.cell-comm .badge{min-width:14px;height:16px;padding:0 2px;margin:0;font-size:9px}
+  table.data.csm-combined td.cell-final .pay-stack,
+  table.data.csm-combined td.cell-payment .pay-stack,
+  table.data.csm-combined td.cell-comm .pay-stack{gap:1px}
+  /* Give the ROI (MTD) + Studio Report Sent columns a little more breathing room. */
+  table.data.csm-combined th.cell-rs, table.data.csm-combined td.cell-rs,
+  table.data.csm-combined th.cell-roi,table.data.csm-combined td.cell-roi{padding-left:12px;padding-right:12px;min-width:56px}
   table.data.csm-combined tbody tr.total-row td{background:#F4FBF6;font-weight:600}
   table.data.csm-combined tbody tr.total-row td.cmbf{background:#EAF6EE}
   table.data.csm-combined .cmb-1{left:0;width:28px;min-width:28px;max-width:28px}
@@ -3692,7 +3706,7 @@ function renderDisplayView() {
     }
     html += `<tr>
       <td class="ent-idx cmbf cmb-1" style="text-align:right">${i + 1}</td>
-      <td class="left cmbf cmb-2">${rec.name}</td>
+      <td class="left cmbf cmb-2" title="${rec.name}">${(rec.name || '').split('@')[0]}</td>
       <td class="cmbf cmb-3">${s ? fmtNum(s.rt) : _muteDash}</td>
       <td class="cmbf cmb-4">${s ? fmtNum(s.ent) : _muteDash}</td>
       <td class="cmbf cmb-5">${s && s.arr ? fmtMoney(s.arr) : _muteDash}</td>
