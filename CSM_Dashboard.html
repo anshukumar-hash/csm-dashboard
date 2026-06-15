@@ -3,6 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<script>
+/* One-shot cache-bust. Symptom this fixes: the dashboard occasionally renders
+   an OLD build (e.g. Communication bucket all NA/0%) because the browser served
+   index.html straight from memory/disk cache without revalidating against the
+   server. We detect a true no-network cache hit (Navigation Timing transferSize
+   === 0; a revalidated 304 reports header bytes so it is NOT 0) and reload once
+   with a unique ?_fresh token so the browser is forced to fetch a current copy.
+   The ?_fresh guard means a reload loop is impossible. */
+(function(){
+  try{
+    if (location.search.indexOf('_fresh=') !== -1) return;        // already busted — never loop
+    var nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || null;
+    if (nav && nav.transferSize === 0 && nav.decodedBodySize > 0 && nav.type !== 'reload') {
+      var sep = location.search ? '&' : '?';
+      location.replace(location.pathname + location.search + sep + '_fresh=' + Date.now());
+    }
+  }catch(e){}
+})();
+</script>
 <title>CSM Dashboard — Studio &amp; Vini</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -190,16 +210,21 @@
      during horizontal scroll. Using `min-width` alone allowed cells to grow
      past the planned offset, causing the FINAL STATUS group header to drift
      over the frozen ARR cell when scrolled right. */
+  /* Overview grouped tables (By CSM / Segment / Agent) — squeezed identity
+     block. NAME is 130 (CSM emails are rendered without the @spyne.ai domain,
+     so the column no longer needs 180), and the small count columns (Rt / Ent /
+     Agents) are 46. Rooftop / Enterprise-List tables are NOT affected: they use
+     the .rooftop-layout overrides below / no frozen columns. */
   table.data .frozen-1{left:0;     width:32px;  min-width:32px;  max-width:32px}
-  table.data .frozen-2{left:32px;  width:180px; min-width:180px; max-width:180px}
-  table.data .frozen-3{left:212px; width:60px;  min-width:60px;  max-width:60px}
-  table.data .frozen-4{left:272px; width:64px;  min-width:64px;  max-width:64px}
-  table.data .frozen-5{left:336px; width:72px;  min-width:72px;  max-width:72px}
-  table.data .frozen-6{left:408px; width:76px;  min-width:76px;  max-width:76px; box-shadow:1px 0 0 var(--border)}
+  table.data .frozen-2{left:32px;  width:130px; min-width:130px; max-width:130px}
+  table.data .frozen-3{left:162px; width:46px;  min-width:46px;  max-width:46px}
+  table.data .frozen-4{left:208px; width:46px;  min-width:46px;  max-width:46px}
+  table.data .frozen-5{left:254px; width:72px;  min-width:72px;  max-width:72px}
+  table.data .frozen-6{left:326px; width:76px;  min-width:76px;  max-width:76px; box-shadow:1px 0 0 var(--border)}
   /* When Vini's 7-frozen layout is active, drop the shadow on column 6 and
      put it on column 7 instead so the visual boundary sits past ARR. */
   table.data.vini-7 .frozen-6{box-shadow:none}
-  table.data.vini-7 .frozen-7{left:484px; width:76px; min-width:76px; max-width:76px; box-shadow:1px 0 0 var(--border)}
+  table.data.vini-7 .frozen-7{left:402px; width:76px; min-width:76px; max-width:76px; box-shadow:1px 0 0 var(--border)}
   /* Rooftop View layout: # / Rooftop / Enterprise / Agent / MRR / ARR.
      Rooftop and Agent Type both carry real strings so each needs room. Tuned
      widths: Rooftop 180 (was 220), Enterprise 160, Agent Type 160 (was 120),
@@ -240,7 +265,7 @@
   table.data .frozen-2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   table.data tbody tr:hover .frozen{background:#FAFAFA}
   table.data tr.total-row .frozen{background:#F9FAFB}
-  table.data thead tr.group th{padding:6px 3px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
+  table.data thead tr.group th{padding:5px 2px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
   table.data thead tr.group th:first-child{border-left:none}
   table.data thead tr.group th.g-final{background:var(--grp-final)}
   table.data thead tr.group th.g-usage{background:var(--grp-usage)}
@@ -250,7 +275,7 @@
   table.data thead tr.group th.g-comm{background:var(--grp-comm)}
   table.data thead tr.group th.g-leader{background:var(--grp-leader)}
   table.data thead tr.group th.g-quality{background:var(--grp-quality)}
-  table.data thead tr.cols th{padding:6px 3px;font-size:10px;font-weight:600;color:var(--text-2);text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
+  table.data thead tr.cols th{padding:5px 2px;font-size:10px;font-weight:600;color:var(--text-2);text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
   table.data thead tr.cols th.left{text-align:left}
   /* Column-row + body tints — each bucket gets a 3-stop ramp that aligns
      with --grp-* in the group header, so the bucket reads as one
@@ -268,7 +293,7 @@
   table.data thead tr.cols th.cell-tickets{background:#EEF2FF}
   table.data thead tr.cols th.cell-comm   {background:#DDFAFE}
   table.data thead tr.cols th.cell-leader {background:#F4F1FE}
-  table.data tbody td{padding:6px 3px;text-align:right;border-bottom:1px solid #F3F4F6;white-space:nowrap;font-size:11px}
+  table.data tbody td{padding:5px 2px;text-align:right;border-bottom:1px solid #F3F4F6;white-space:nowrap;font-size:11px}
   table.data tbody td.left{text-align:left}
   table.data tbody tr:hover{background:#FAFAFA}
   table.data tbody td.cell-final  {background:#FFFEF7}
@@ -2304,7 +2329,7 @@ const S_GROUPS = [
   // Usage · Quality · Tickets · Leadership.
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
-  { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count) · RAG (single)
+  { l:'Enterprise-Level Payment', span:4, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count)
   { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · Interaction % · Comm. RAG
   { l:'Usage',        span:8, c:'g-usage' },       // Jan'26 … May'26 · MTD VINs · Usage Trend (sparkline) · Status
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
@@ -2314,7 +2339,7 @@ const S_GROUPS = [
 const S_COLS_SHARED = [
   // 6 identity (frozen / sticky)
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
-  {l:'Rooftops', cls:'frozen frozen-3'}, {l:'Enterprises', cls:'frozen frozen-4'},
+  {l:'Rt', cls:'frozen frozen-3'}, {l:'Ent', cls:'frozen frozen-4'},
   {l:'MRR', cls:'frozen frozen-5'}, {l:'ARR', cls:'frozen frozen-6'},
   // 1 Final Status — Overall RAG only (now BEFORE the RoI / Report Sent col)
   {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
@@ -2323,7 +2348,7 @@ const S_COLS_SHARED = [
   // 5 Payment — counts deduped per ENTERPRISE (not per rooftop) per user spec
   {l:'T-1', cc:'cell-payment', tip:'paymentT1'}, {l:'T-2', cc:'cell-payment', tip:'paymentT2'},
   {l:'T-3', cc:'cell-payment', tip:'paymentT3'},
-  {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
+  {l:'Score', cc:'cell-payment', tip:'paymentAcct'},
   // 3 Comm — Score (count stack) · Interaction % · Comm. RAG
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
@@ -2461,7 +2486,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-roi">${groupSentPercent(rows.map(r => r[S_COL.eid]))}</td>
     <td class="cell-payment">${payTileAgg(t1, enterprisesPayment.length)}</td><td class="cell-payment">${payTileAgg(t2, enterprisesPayment.length)}</td>
     <td class="cell-payment">${payTileAgg(t3, enterprisesPayment.length)}</td>
-    <td class="cell-payment">${ragStack(prag)}</td><td class="cell-payment">${ragSingle(scoreRag(prag,90,80))}</td>
+    <td class="cell-payment">${ragStack(prag)}</td>
     <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active))}</td>
     <td class="cell-comm">${ragStack((() => {
@@ -2490,6 +2515,12 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   </tr>`;
 }
 
+// Display helper: strip the "@spyne.ai" domain from a CSM email for display.
+// Only affects rendered text — the underlying value (used for drill-downs and
+// filter state) stays the full email so row matching is unchanged.
+function dispCsm(c) {
+  return String(c == null ? '' : c).replace(/@spyne\.ai\s*$/i, '');
+}
 function buildStudioTable(target, firstColLabel, groupingFn, drillKey) {
   let html = '<table class="data"><thead><tr class="group">';
   S_GROUPS.forEach((g, gi) => {
@@ -2536,7 +2567,7 @@ const V_GROUPS = [
   { l:'Final Status', span:2, c:'g-final' },       // Churned Agent · Overall RAG (account health)
   { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
-  { l:'Enterprise-Level Payment', span:5, c:'g-payment' },  // T1 · T2 · T3 · Account Level RAG · RAG (score)
+  { l:'Enterprise-Level Payment', span:4, c:'g-payment' },  // T1 · T2 · T3 · Score
   { l:'Communication', span:3, c:'g-comm' },       // Score (weighted, with count) · Interaction % · Final RAG
   { l:'Usage',        span:5, c:'g-usage' },
   { l:'Tickets',      span:4, c:'g-tickets' },              // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
@@ -2545,8 +2576,8 @@ const V_GROUPS = [
 const V_COLS_SHARED = [
   {l:'#', cls:'left frozen frozen-1'}, {l:'NAME', cls:'left frozen frozen-2'},
   {l:'Agents', cls:'frozen frozen-3'},          // live contract count badge
-  {l:'Rooftops', cls:'frozen frozen-4'},
-  {l:'Enterprises', cls:'frozen frozen-5'},     // distinct enterprises in group
+  {l:'Rt', cls:'frozen frozen-4'},
+  {l:'Ent', cls:'frozen frozen-5'},             // distinct enterprises in group
   {l:'MRR', cls:'frozen frozen-6'}, {l:'Live ARR', cls:'frozen frozen-7'},
   // Final Status moved BEFORE Report Sent per user spec.
   {l:'Churned Agent', cc:'cell-final', tip:'churnedAgent'}, {l:'Overall RAG', cc:'cell-final', tip:'overallRag'},
@@ -2554,7 +2585,7 @@ const V_COLS_SHARED = [
   // RoI bucket: L2L/LM/MTD values colored G/A/R inline (RAG column removed)
   {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
   {l:'T-1', cc:'cell-payment'}, {l:'T-2', cc:'cell-payment'}, {l:'T-3', cc:'cell-payment'},
-  {l:'Score', cc:'cell-payment', tip:'paymentAcct'}, {l:'RAG', cc:'cell-payment', tip:'paymentRagCol'},
+  {l:'Score', cc:'cell-payment', tip:'paymentAcct'},
   {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
   {l:'Comm. RAG', cc:'cell-comm', tip:'commRagBinary'},
@@ -2720,7 +2751,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-rs">—</td>
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
     <td class="cell-payment">${payTileAgg(t1, allByEid.length)}</td><td class="cell-payment">${payTileAgg(t2, allByEid.length)}</td>
-    <td class="cell-payment">${payTileAgg(t3, allByEid.length)}</td><td class="cell-payment">${ragStack(ps)}</td><td class="cell-payment">${ragSingle(paymentRag)}</td>
+    <td class="cell-payment">${payTileAgg(t3, allByEid.length)}</td><td class="cell-payment">${ragStack(ps)}</td>
     <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active, 'rid'))}</td>
     <td class="cell-comm">${ragStack(commBinaryCounts)}</td>
@@ -2977,7 +3008,7 @@ function renderOverviewStudio() {
     'CSM',
     // Studio CSM-level: show the CSM email/name only. Manager bracket removed
     // per user request — they don't need it visible on this view.
-    () => sorted.map(([csm, csmRows]) => ({ label: csm, drillValue: csm, rows: csmRows })),
+    () => sorted.map(([csm, csmRows]) => ({ label: dispCsm(csm), drillValue: csm, rows: csmRows })),
     'csm'
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
@@ -3047,7 +3078,8 @@ function renderOverviewVini() {
     'CSM',
     () => sorted.map(([csm, csmRows]) => {
       const mgr = getManager(csm);
-      const label = mgr ? `${csm} <span class="csm-mgr">[${mgr}]</span>` : csm;
+      const name = dispCsm(csm);
+      const label = mgr ? `${name} <span class="csm-mgr">[${mgr}]</span>` : name;
       return { label, drillValue: csm, rows: csmRows };
     }),
     'csm'
@@ -3210,7 +3242,7 @@ function renderRooftop() {
       // CSM label may have HTML — strip it
       const cleanCsm = ctx.value.replace(/<.*$/, '').trim();
       rows = rows.filter(r => r[S_COL.csm] === cleanCsm);
-      contextLabel = `CSM: ${cleanCsm}`;
+      contextLabel = `CSM: ${dispCsm(cleanCsm)}`;
     }
     // Search-box filter (case-insensitive substring on rooftop OR enterprise).
     const q = (state.rooftopSearch || '').trim().toLowerCase();
@@ -3446,7 +3478,7 @@ function renderRooftop() {
     rows = getVini();
     if (ctx.kind === 'segment') { rows = rows.filter(r => r.seg === ctx.value); contextLabel = `Segment: ${ctx.value}`; }
     else if (ctx.kind === 'agent') { rows = rows.filter(r => r.agent === ctx.value); contextLabel = `Agent: ${ctx.value}`; }
-    else if (ctx.kind === 'csm')   { rows = rows.filter(r => r.csm === ctx.value); contextLabel = `CSM: ${ctx.value}`; }
+    else if (ctx.kind === 'csm')   { rows = rows.filter(r => r.csm === ctx.value); contextLabel = `CSM: ${dispCsm(ctx.value)}`; }
     // Search-box filter (case-insensitive substring on rooftop OR enterprise).
     const q = (state.rooftopSearch || '').trim().toLowerCase();
     if (q) {
@@ -4263,7 +4295,10 @@ function setFilterOptions(key, values) {
   el.innerHTML = '<option value="">' + defaultLabel + '</option>' +
     (values || []).map(v => {
       const safe = String(v).replace(/"/g, '&quot;');
-      return '<option value="' + safe + '">' + safe + '</option>';
+      // CSM options keep the full email as the value (filter state matches on
+      // it) but show the name without the @spyne.ai domain.
+      const text = key === 'csm' ? dispCsm(safe) : safe;
+      return '<option value="' + safe + '">' + text + '</option>';
     }).join('');
   if (cur && values && values.includes(cur)) el.value = cur;
   else { el.value = ''; state.filters[key] = []; }
