@@ -616,8 +616,11 @@ const VINI_SHEET_URL = `https://docs.google.com/spreadsheets/d/${VINI_SHEET_ID}/
 const SHEET_URLS = {
   // headers=2 because the Vini daily tab has a 2-row header (group + col label)
   vini_daily: `https://docs.google.com/spreadsheets/d/${VINI_SHEET_ID}/gviz/tq?tqx=out:json&gid=1616842841&headers=2`,
-  payment:    `https://docs.google.com/spreadsheets/d/${VINI_SHEET_ID}/gviz/tq?tqx=out:json&gid=674556270`,
-  csat:       `https://docs.google.com/spreadsheets/d/${VINI_SHEET_ID}/gviz/tq?tqx=out:json&gid=701797891&headers=1`
+  payment:    `https://docs.google.com/spreadsheets/d/${VINI_SHEET_ID}/gviz/tq?tqx=out:json&gid=674556270`
+  // NOTE: CSAT is intentionally NOT live-fetched client-side. It is served from
+  // the embedded snapshot, rebuilt every 15 min by sync.ps1 from the published
+  // sheet gid=179502765. The legacy gid=701797891 gviz tab is DEAD — polling it
+  // wiped the good snapshot and blanked Communication, so it must not be used.
 };
 const REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;  // 4 hours
 
@@ -4065,10 +4068,9 @@ async function refreshAllSheets() {
   status.className = 'live-indicator loading';
   status.textContent = '● Refreshing';
   try {
-    const [vTab, pTab, cTab] = await Promise.all([
+    const [vTab, pTab] = await Promise.all([
       fetchTab(SHEET_URLS.vini_daily),
-      fetchTab(SHEET_URLS.payment),
-      fetchTab(SHEET_URLS.csat)
+      fetchTab(SHEET_URLS.payment)
     ]);
     // Vini daily: rebuild v_rows and viniRows in place
     const newV = gvizToVRows(vTab);
@@ -4078,24 +4080,17 @@ async function refreshAllSheets() {
     const newStage = gvizToViniStage(pTab);
     D.vini_stage = newStage;
     VINI_STAGE.length = 0; newStage.forEach(s => VINI_STAGE.push(s));
-    // CSAT: swap in new lookups
-    const csat = gvizToCsat(cTab);
-    Object.keys(CSAT_BY_EID).forEach(k => delete CSAT_BY_EID[k]);
-    Object.assign(CSAT_BY_EID, csat.byEid);
-    Object.keys(CSAT_BY_NAME).forEach(k => delete CSAT_BY_NAME[k]);
-    Object.assign(CSAT_BY_NAME, csat.byName);
-    Object.keys(CSAT_ALL_BY_EID).forEach(k => delete CSAT_ALL_BY_EID[k]);
-    Object.assign(CSAT_ALL_BY_EID, csat.allByEid);
-    // Rebuild name-keyed all-readings index so the name-fallback path
-    // (commInteractionCount / csatRagInRange) sees the freshest data too.
-    if (csat.allByName) {
-      Object.keys(CSAT_ALL_BY_NAME).forEach(k => delete CSAT_ALL_BY_NAME[k]);
-      Object.assign(CSAT_ALL_BY_NAME, csat.allByName);
-    }
+    // CSAT / Communication is deliberately NOT live-fetched here. It is rebuilt
+    // every 15 min by the server sync (.github/scripts/sync.ps1) from the
+    // published Google Sheet gid=179502765 and shipped in the embedded snapshot
+    // (the CSAT_* lookups). The previous client-side gviz fetch pointed at the
+    // DEAD gid=701797891 tab: on load it wiped the good snapshot and repopulated
+    // blanks, so Communication flashed correct for ~2s then went all-NA. We now
+    // keep the authoritative bundled CSAT and never overwrite it client-side.
 
     status.className = 'live-indicator';
     status.textContent = '● Live';
-    sync.textContent = `synced ${new Date().toLocaleTimeString()} (Vini ${newV.length} rows · Payment ${newStage.length} · CSAT ${Object.keys(csat.byEid).length} ents)`;
+    sync.textContent = `synced ${new Date().toLocaleTimeString()} (Vini ${newV.length} rows · Payment ${newStage.length} · CSAT ${Object.keys(CSAT_BY_EID).length} ents)`;
     renderAll();
   } catch (e) {
     status.className = 'live-indicator error';
