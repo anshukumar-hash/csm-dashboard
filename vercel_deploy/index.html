@@ -411,6 +411,20 @@
   .int-count.int-md{background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE}
   .int-count.int-hi{background:#D1FAE5;color:#065F46;border-color:#A7F3D0}
   .cell-comm{text-align:center}
+  /* CSM Summary — center every bucket column (Final Status → Tickets) in both
+     header and body so the RAG stacks / pills sit under their group label. */
+  table.data.csm-summary thead tr.cols th.cell-final,
+  table.data.csm-summary thead tr.cols th.cell-roi,
+  table.data.csm-summary thead tr.cols th.cell-payment,
+  table.data.csm-summary thead tr.cols th.cell-usage,
+  table.data.csm-summary thead tr.cols th.cell-quality,
+  table.data.csm-summary thead tr.cols th.cell-tickets,
+  table.data.csm-summary tbody td.cell-final,
+  table.data.csm-summary tbody td.cell-roi,
+  table.data.csm-summary tbody td.cell-payment,
+  table.data.csm-summary tbody td.cell-usage,
+  table.data.csm-summary tbody td.cell-quality,
+  table.data.csm-summary tbody td.cell-tickets{text-align:center}
   /* Enterprise List table layout — narrow # column, generous Enterprise +
      Account Type + MRR / ARR. Prevents the index column from eating space. */
   table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
@@ -1018,7 +1032,7 @@ let state = {
   // .length and .includes() instead of strict equality.
   filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
-  sort: { studioRooftop: null, viniRooftop: null, entList: null },
+  sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummary: null },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -3309,6 +3323,58 @@ function viniFinalStatusCounts(rows) {
   return o;
 }
 
+// Numeric version of groupSentPercent (returns the raw % or null) — used to
+// SORT the CSM Summary Report Sent column without re-parsing the rendered pill.
+function groupSentPctValue(eids) {
+  let sent = 0; const seen = new Set();
+  for (const eid of eids) {
+    if (!eid || seen.has(eid)) continue;
+    seen.add(eid);
+    const m = eidDailyStatus(eid);
+    for (const d in m) if (m[d] === 'sent') sent++;
+  }
+  return seen.size ? (sent / (seen.size * 7)) * 100 : null;
+}
+// Default ranking metric: % of a CSM's rooftops whose Overall RAG is Green,
+// relative to that CSM's rooftop count. Higher = healthier → sorts to top.
+function csmGreenPct(rec) {
+  return rec.rt > 0 ? ((rec.overallCounts.Green || 0) / rec.rt) * 100 : 0;
+}
+function toggleCsmSummarySort(key) {
+  const cur = state.sort.csmSummary;
+  if (!cur || cur.key !== key) state.sort.csmSummary = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')  state.sort.csmSummary = { key, dir: 'desc' };
+  else                         state.sort.csmSummary = null;
+  renderCsmSummary();
+}
+function sortCsmSummaryRecs(recs, sortState) {
+  const s = recs.slice();
+  // Default (no explicit sort): Overall RAG DESC by green-share of rooftops,
+  // ARR desc as a stable tiebreak.
+  if (!sortState || !sortState.key) {
+    return s.sort((a, b) => (csmGreenPct(b) - csmGreenPct(a)) || (b.arr - a.arr));
+  }
+  const { key, dir } = sortState;
+  let getter;
+  switch (key) {
+    case 'csm':        getter = r => r.sortName; break;
+    case 'rt':         getter = r => r.rt; break;
+    case 'ent':        getter = r => r.ent; break;
+    case 'arr':        getter = r => r.arr; break;
+    case 'overall':    getter = r => csmGreenPct(r); break;
+    case 'reportSent': getter = r => r.reportSentVal; break;
+    case 'payment':    getter = r => r.paymentVal; break;
+    case 'intPct':     getter = r => r.intPctVal; break;
+    case 'commRag':    getter = r => r.commVal; break;
+    case 'usageTrend':
+    case 'status':     getter = r => r.trendVal; break;
+    case 'quality':    getter = r => r.qualityVal; break;
+    case 'unresolved': getter = r => r.unresolved; break;
+    default:           getter = r => 0;
+  }
+  return s.sort(makeCmp(getter, dir));
+}
+
 function renderCsmSummary() {
   const wrap = document.getElementById('csm-summary-wrap');
   if (!wrap) return;
@@ -3327,12 +3393,13 @@ function renderCsmSummary() {
   groups.forEach((grpRows, csm) => {
     recs.push(isStudio ? studioCsmSummary(csm, grpRows) : viniCsmSummary(csm, grpRows));
   });
-  // Sort by Overall RAG DESC (greener first, by weighted stack score); ARR
-  // desc as tiebreak. Row number reflects this ranking.
-  recs.sort((a, b) => (b.overallScore - a.overallScore) || (b.arr - a.arr));
+  // Default sort: Overall RAG DESC by green-share of rooftops (ARR tiebreak).
+  // Any column-header click overrides via state.sort.csmSummary. Row number
+  // reflects the current ranking.
+  const sortedRecs = sortCsmSummaryRecs(recs, state.sort.csmSummary);
 
   const cntEl = document.getElementById('csm-summary-count');
-  if (cntEl) cntEl.textContent = `· ${recs.length} CSM${recs.length === 1 ? '' : 's'}`;
+  if (cntEl) cntEl.textContent = `· ${sortedRecs.length} CSM${sortedRecs.length === 1 ? '' : 's'}`;
 
   let html = '<table class="data csm-summary"><thead>' +
     '<tr class="group">' +
@@ -3346,20 +3413,22 @@ function renderCsmSummary() {
       '<th class="g-tickets">Tickets</th>' +
     '</tr>' +
     '<tr class="cols">' +
-      '<th class="left">CSM</th>' +
-      '<th>Rt</th><th>Ent</th><th>ARR</th>' +
+      sortTh('CSM', 'csm', 'csmSummary', 'left') +
+      sortTh('Rt', 'rt', 'csmSummary') +
+      sortTh('Ent', 'ent', 'csmSummary') +
+      sortTh('ARR', 'arr', 'csmSummary') +
       '<th class="ent-idx" style="text-align:center">#</th>' +
-      '<th class="cell-final">Overall RAG</th>' +
-      '<th class="cell-roi">Report Sent</th>' +
-      '<th class="cell-payment">Payment Score</th>' +
-      '<th class="cell-comm">Interaction %</th>' +
-      '<th class="cell-comm">Comm. RAG</th>' +
-      '<th class="cell-usage">Usage Trend</th>' +
-      '<th class="cell-usage">Status</th>' +
-      '<th class="cell-quality">Quality</th>' +
-      '<th class="cell-tickets"># Unresolved</th>' +
+      sortTh('Overall RAG', 'overall', 'csmSummary', 'cell-final') +
+      sortTh('Report Sent', 'reportSent', 'csmSummary', 'cell-roi') +
+      sortTh('Payment Score', 'payment', 'csmSummary', 'cell-payment') +
+      sortTh('Interaction %', 'intPct', 'csmSummary', 'cell-comm') +
+      sortTh('Comm. RAG', 'commRag', 'csmSummary', 'cell-comm') +
+      sortTh('Usage Trend', 'usageTrend', 'csmSummary', 'cell-usage') +
+      sortTh('Status', 'status', 'csmSummary', 'cell-usage') +
+      sortTh('Quality', 'quality', 'csmSummary', 'cell-quality') +
+      sortTh('# Unresolved', 'unresolved', 'csmSummary', 'cell-tickets') +
     '</tr></thead><tbody>';
-  recs.forEach((rec, i) => {
+  sortedRecs.forEach((rec, i) => {
     html += `<tr>
       <td class="left">${rec.csmLabel}</td>
       <td>${fmtNum(rec.rt)}</td>
@@ -3399,6 +3468,7 @@ function studioCsmSummary(csm, rows) {
 
   // Report Sent — 7-day per-enterprise aggregate (same as the overview RoI col).
   const reportSent = groupSentPercent(rows.map(r => r[S_COL.eid]));
+  const reportSentVal = groupSentPctValue(rows.map(r => r[S_COL.eid]));
 
   // Payment Score — enterprise-deduped payment RAG counts → stack.
   const seenPay = new Set();
@@ -3408,9 +3478,11 @@ function studioCsmSummary(csm, rows) {
   });
   const prag = countBy(entPay, r => r[S_COL.prag]);
   const paymentScore = Object.keys(prag).length ? ragStack(prag) : _muteDash;
+  const paymentVal = scoreValue(prag);
 
   // Communication — Interaction % + binary Comm. RAG (deduped per enterprise).
-  const intPct = intPctCell(commInteractionPct(active));
+  const intPctVal = commInteractionPct(active);
+  const intPct = intPctCell(intPctVal);
   const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
   for (const r of active) {
     const ek = r[S_COL.eid] || r[S_COL.en];
@@ -3419,25 +3491,28 @@ function studioCsmSummary(csm, rows) {
     if (commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0) commBin.Green++; else commBin.Red++;
   }
   const commRag = ragStack(commBin);
+  const commVal = (commBin.Green + commBin.Red) ? (commBin.Green / (commBin.Green + commBin.Red)) * 100 : null;
 
   // Usage Trend (sparkline) + Status (trend pill) from Jan→May VIN totals.
   const series = [sumBy(active,r=>r[S_COL.u_jan]), sumBy(active,r=>r[S_COL.u_feb]),
                   sumBy(active,r=>r[S_COL.u_mar]), sumBy(active,r=>r[S_COL.u_apr]),
                   sumBy(active,r=>r[S_COL.u_may])];
   const trend = usageTrend(series);
+  const trendVal = trend === 'Rising' ? 3 : trend === 'Steady' ? 2 : trend === 'Declining' ? 1 : 0;
 
   // Quality — Website RAG distribution stack.
   const wsRag = countBy(active, r => websiteRag(r[S_COL.ws]));
   const quality = Object.keys(wsRag).length ? ragStack(wsRag) : _muteDash;
+  const qualityVal = scoreValue(wsRag);
 
   // Ticket Unresolved — open tickets across the CSM's enterprises.
   const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
   const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
 
-  return { csmLabel: dispCsm(csm), rt, ent, arr, overallCounts, overallScore, reportSent,
-           paymentScore, intPct, commRag,
-           usageTrend: sparklineCell(series, trend), usageStatus: trendCell(trend),
-           quality, unresolved };
+  return { csmLabel: dispCsm(csm), sortName: csm, rt, ent, arr, overallCounts, overallScore, reportSent, reportSentVal,
+           paymentScore, paymentVal, intPct, intPctVal, commRag, commVal,
+           usageTrend: sparklineCell(series, trend), usageStatus: trendCell(trend), trendVal,
+           quality, qualityVal, unresolved };
 }
 
 // Vini per-CSM condensed summary record. Usage Trend/Status + Quality are
@@ -3460,9 +3535,11 @@ function viniCsmSummary(csm, rows) {
   });
   const prag = countBy(entPay, r => r.ps);
   const paymentScore = Object.keys(prag).length ? ragStack(prag) : _muteDash;
+  const paymentVal = scoreValue(prag);
 
   // Communication — Interaction % + binary Comm. RAG (deduped per enterprise).
-  const intPct = intPctCell(commInteractionPct(active, 'rid'));
+  const intPctVal = commInteractionPct(active, 'rid');
+  const intPct = intPctCell(intPctVal);
   const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
   for (const r of rows) {
     const ek = r.eid || r.en;
@@ -3471,6 +3548,7 @@ function viniCsmSummary(csm, rows) {
     if (commInteractionCount(r.eid, r.en) > 0) commBin.Green++; else commBin.Red++;
   }
   const commRag = ragStack(commBin);
+  const commVal = (commBin.Green + commBin.Red) ? (commBin.Green / (commBin.Green + commBin.Red)) * 100 : null;
 
   // Ticket Unresolved — open tickets across the CSM's enterprises (deduped).
   const seenT = new Set();
@@ -3479,9 +3557,10 @@ function viniCsmSummary(csm, rows) {
   });
   const unresolved = sumBy(allByEid, r => r.op);
 
-  return { csmLabel: dispCsm(csm), rt, ent, arr, overallCounts, overallScore, reportSent: _muteDash,
-           paymentScore, intPct, commRag,
-           usageTrend: _muteDash, usageStatus: _muteDash, quality: _muteDash,
+  return { csmLabel: dispCsm(csm), sortName: csm, rt, ent, arr, overallCounts, overallScore,
+           reportSent: _muteDash, reportSentVal: null,
+           paymentScore, paymentVal, intPct, intPctVal, commRag, commVal,
+           usageTrend: _muteDash, usageStatus: _muteDash, trendVal: null, quality: _muteDash, qualityVal: null,
            unresolved };
 }
 
@@ -4427,6 +4506,7 @@ document.addEventListener('click', e => {
   if (table === 'studioRooftop') toggleStudioSort(key);
   else if (table === 'viniRooftop') toggleViniSort(key);
   else if (table === 'entList')     toggleEntListSort(key);
+  else if (table === 'csmSummary')  toggleCsmSummarySort(key);
 });
 
 // ============================================================
@@ -4564,7 +4644,7 @@ FILTER_KEYS.forEach(key => {
 
 document.getElementById('f-reset').addEventListener('click', () => {
   state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
-  state.sort = { studioRooftop: null, viniRooftop: null, entList: null };
+  state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummary: null };
   state.rooftopContext = { kind:'all', value:null };
   syncAllFilterSelects();
   renderAll();
