@@ -3496,17 +3496,29 @@ function viniCombinedMetrics(rows) {
   // one agent contract (matches the Vini tab's agent rows, e.g. Ankur = 43).
   const agents = active.length;
   const arr = sumBy(active, r => r.arr);
-  const roiCounts = viniRoiMtdCounts(rows);
+  // MTD RoI multiplier — fetched the SAME way as the Vini tab's "MTD" column:
+  //   roiMTD = Σ apptValue_mtd / (Σ active MRR × daysPassed / daysInMonth)
+  // colored G/A/R via roiColorClass (≥4x green · ≥2x amber · <2x red). The MRR
+  // is prorated to the elapsed share of the month so early-month MTD isn't
+  // understated. Shown as the actual factor (e.g. 1.58x), not a RAG stack.
+  const activeMrr    = sumBy(active, r => r.mrr);
+  const apptValueMtd = sumBy(active, r => r.apptValue_mtd || 0);
+  const _t = new Date();
+  const _daysPassed  = _t.getDate();
+  const _daysInMonth = new Date(_t.getFullYear(), _t.getMonth() + 1, 0).getDate();
+  const mrrMtd   = activeMrr * (_daysPassed / _daysInMonth);
+  const roiMtdNum = mrrMtd > 0 ? apptValueMtd / mrrMtd : null;
+  const roiMtd    = roiMtdNum !== null ? roiMtdNum.toFixed(2) + 'x' : '—';
   const seenT = new Set();
   const allByEid = rows.filter(r => {
     if (!r.eid) return true; if (seenT.has(r.eid)) return false; seenT.add(r.eid); return true;
   });
   const unresolved = sumBy(allByEid, r => r.op);
-  // Report Sent — same 7-day per-enterprise aggregate, over this CSM's Vini eids.
   const vEids = active.map(r => r.eid).filter(Boolean);
-  const reportSent    = groupSentPercent(vEids);
-  const reportSentVal = groupSentPctValue(vEids);
-  return { agents, arr, roiCounts, unresolved, reportSent, reportSentVal, eids: vEids };
+  // Report Sent — Vini does NOT track report-sent (the Vini tab's Report Sent
+  // column is blank "—"), so the Display View mirrors that rather than borrowing
+  // the Studio report-tracking feed (which produced bogus % for Vini eids).
+  return { agents, arr, roiMtdNum, roiMtd, apptValueMtd, activeMrr, unresolved, eids: vEids };
 }
 
 // Build one merged record per CSM across both products.
@@ -3583,8 +3595,8 @@ function sortCombinedRecs(recs, sortState) {
     case 'pendency':    getter = r => r.s ? r.s.pendency : null; break;
     case 'trend':       getter = r => r.s ? (r.s.trend==='Rising'?3:r.s.trend==='Steady'?2:r.s.trend==='Declining'?1:0) : null; break;
     case 'sUnresolved': getter = r => r.s ? r.s.unresolved : null; break;
-    case 'vSent':       getter = r => r.v ? r.v.reportSentVal : null; break;
-    case 'roi':         getter = r => r.v ? greenShare(r.v.roiCounts) : null; break;
+    case 'vSent':       getter = r => null; break;
+    case 'roi':         getter = r => r.v ? r.v.roiMtdNum : null; break;
     case 'vUnresolved': getter = r => r.v ? r.v.unresolved : null; break;
     default:            getter = r => 0;
   }
@@ -3648,8 +3660,8 @@ function renderDisplayView() {
 
   // Running totals for the footer row.
   const tot = { rt:0, ent:0, sArr:0, vAgents:0, vArr:0, pendency:0, sUnresolved:0,
-    vUnresolved:0, finalCounts:{}, t1Counts:{}, commBin:{Green:0,Red:0},
-    sentimentCounts:{}, roiCounts:{}, series:[0,0,0,0,0], sEids:[], vEids:[] };
+    vUnresolved:0, vApptMtd:0, vMrr:0, finalCounts:{}, t1Counts:{}, commBin:{Green:0,Red:0},
+    sentimentCounts:{}, series:[0,0,0,0,0], sEids:[] };
   const addCounts = (dst, src) => { if (src) for (const k in src) dst[k] = (dst[k]||0) + src[k]; };
 
   recs.forEach((rec, i) => {
@@ -3668,8 +3680,7 @@ function renderDisplayView() {
     }
     if (v) {
       tot.vAgents += v.agents; tot.vArr += v.arr; tot.vUnresolved += v.unresolved;
-      addCounts(tot.roiCounts, v.roiCounts);
-      if (v.eids) tot.vEids.push(...v.eids);
+      tot.vApptMtd += v.apptValueMtd; tot.vMrr += v.activeMrr;
     }
     html += `<tr>
       <td class="ent-idx cmbf cmb-1" style="text-align:right">${i + 1}</td>
@@ -3687,14 +3698,18 @@ function renderDisplayView() {
       <td class="cell-quality">${s ? fmtNum(s.pendency) : _muteDash}</td>
       <td class="cell-usage">${s ? sparklineCell(s.series, s.trend) : _muteDash}</td>
       <td class="cell-tickets">${s ? fmtNum(s.unresolved) : _muteDash}</td>
-      <td class="cell-rs">${v ? v.reportSent : _muteDash}</td>
-      <td class="cell-roi">${v && Object.keys(v.roiCounts).length ? ragStack(v.roiCounts) : _muteDash}</td>
+      <td class="cell-rs">${_muteDash}</td>
+      <td class="cell-roi ${v ? roiColorClass(v.roiMtdNum) : ''}">${v ? v.roiMtd : _muteDash}</td>
       <td class="cell-tickets">${v ? fmtNum(v.unresolved) : _muteDash}</td>
     </tr>`;
   });
 
   // Totals row.
   const totTrend = usageTrend(tot.series);
+  const _tt = new Date();
+  const _totMrrMtd = tot.vMrr * (_tt.getDate() / new Date(_tt.getFullYear(), _tt.getMonth()+1, 0).getDate());
+  const totRoiNum = _totMrrMtd > 0 ? tot.vApptMtd / _totMrrMtd : null;
+  const totRoi    = totRoiNum !== null ? totRoiNum.toFixed(2) + 'x' : '—';
   html += `<tr class="total-row">
     <td class="ent-idx cmbf cmb-1" style="text-align:right"></td>
     <td class="left cmbf cmb-2"><strong>Total</strong></td>
@@ -3711,8 +3726,8 @@ function renderDisplayView() {
     <td class="cell-quality">${fmtNum(tot.pendency)}</td>
     <td class="cell-usage">${sparklineCell(tot.series, totTrend)}</td>
     <td class="cell-tickets">${fmtNum(tot.sUnresolved)}</td>
-    <td class="cell-rs">${groupSentPercent(tot.vEids)}</td>
-    <td class="cell-roi">${Object.keys(tot.roiCounts).length ? ragStack(tot.roiCounts) : _muteDash}</td>
+    <td class="cell-rs">${_muteDash}</td>
+    <td class="cell-roi ${roiColorClass(totRoiNum)}">${totRoi}</td>
     <td class="cell-tickets">${fmtNum(tot.vUnresolved)}</td>
   </tr>`;
   html += '</tbody></table>';
