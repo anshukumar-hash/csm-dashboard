@@ -585,6 +585,18 @@
       </div>
       <div class="table-wrap" id="enterprise-list-wrap"></div>
     </div>
+
+    <!-- CSM SUMMARY — one condensed row per CSM, shown directly below the
+         Enterprise List. Columns: CSM · Rt · Ent · ARR · Overall RAG (sorted
+         descending) · Report Sent · Payment Score · Comm Interaction% ·
+         Comm. RAG · Usage Trend · Status · Quality · # Unresolved. -->
+    <div class="section" id="csm-summary-section">
+      <div class="section-head">
+        <span class="section-title">CSM Summary</span>
+        <span style="font-size:11.5px;color:var(--text-3)" id="csm-summary-count"></span>
+      </div>
+      <div class="table-wrap" id="csm-summary-wrap"></div>
+    </div>
   </div>
 </div>
 
@@ -887,6 +899,21 @@ function csatRagInRange(eid, en) {
   const nameKey = en ? normCsatName(en) : '';
   const byName = nameKey ? tryArr(CSAT_ALL_BY_NAME[nameKey]) : undefined;
   if (byName != null) return byName;
+  return null;
+}
+
+// Communication "Sentiment" RAG with interaction-based imputation (per user
+// spec). The Sentiment column should reflect HOW MANY calls have scores on the
+// overview: an account that had >=1 interaction in the period but no graded
+// CSAT reading is ASSUMED to be a 5 -> "Green" and counted in the overall
+// stack. Accounts with no interaction at all stay null (NA / excluded).
+//   real graded reading in range  -> that RAG (Red / Amber / Green)
+//   interaction but no score      -> 'Green' (assumed 5)
+//   no interaction                -> null
+function commRagImputed(eid, en) {
+  const rag = csatRagInRange(eid, en);
+  if (rag != null) return rag;
+  if (commInteractionCount(eid, en) > 0) return 'Green';
   return null;
 }
 
@@ -2333,7 +2360,7 @@ const S_GROUPS = [
   { l:'Final Status', span:1, c:'g-final' },       // Overall RAG ONLY
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count)
-  { l:'Communication', span:3, c:'g-comm' },       // Score (count stack) · Interaction % · Comm. RAG
+  { l:'Communication', span:3, c:'g-comm' },       // Interaction % · Comm. RAG · Sentiment (count stack)
   { l:'Usage',        span:8, c:'g-usage' },       // Jan'26 … May'26 · MTD VINs · Usage Trend (sparkline) · Status
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG  (Inventory Score removed per user spec)
   { l:'Tickets',      span:4, c:'g-tickets' },                // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
@@ -2353,9 +2380,9 @@ const S_COLS_SHARED = [
   {l:'T-3', cc:'cell-payment', tip:'paymentT3'},
   {l:'Score', cc:'cell-payment', tip:'paymentAcct'},
   // 3 Comm — Score (count stack) · Interaction % · Comm. RAG
-  {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
   {l:'Comm. RAG', cc:'cell-comm', tip:'commRagBinary'},
+  {l:'Sentiment', cc:'cell-comm', tip:'commScore'},
   // 8 Usage — monthly VINs (sheet cols M-R) + Usage Trend sparkline + Status.
   {l:"Jan'26", cc:'cell-usage'}, {l:"Feb'26", cc:'cell-usage'}, {l:"Mar'26", cc:'cell-usage'},
   {l:"Apr'26", cc:'cell-usage'}, {l:"May'26", cc:'cell-usage'}, {l:'MTD VINs', cc:'cell-usage'},
@@ -2454,11 +2481,11 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     if (seenEnAll.has(en)) return false;
     seenEnAll.add(en); return true;
   });
-  // Pass eid so csatRagInRange uses CSAT_ALL_BY_EID and the date filter
-  // engages. If eid doesn't match CSAT, it falls back to name (no date
-  // filter). Was previously eid=null which forced the name fallback every
-  // time — meaning Studio Communication never reflected the period selector.
-  const commRagCounts = countBy(allByEn, r => csatRagInRange(r[S_COL.eid], r[S_COL.en]));
+  // Sentiment = imputed comm RAG per enterprise: graded reading wins, else an
+  // account with >=1 interaction this period is assumed Green (score 5), else
+  // NA. This makes the Sentiment stack reflect "how many calls have scores"
+  // plus the assumed-Green imputation the user asked for.
+  const commRagCounts = countBy(allByEn, r => commRagImputed(r[S_COL.eid], r[S_COL.en]));
   const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
   const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r[S_COL.cf]);
@@ -2490,7 +2517,6 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-payment">${payTileAgg(t1, enterprisesPayment.length)}</td><td class="cell-payment">${payTileAgg(t2, enterprisesPayment.length)}</td>
     <td class="cell-payment">${payTileAgg(t3, enterprisesPayment.length)}</td>
     <td class="cell-payment">${ragStack(prag)}</td>
-    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active))}</td>
     <td class="cell-comm">${ragStack((() => {
       // Comm. RAG = Green if the enterprise had ≥1 interaction this period,
@@ -2504,6 +2530,7 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
       }
       return o;
     })())}</td>
+    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-usage">${fmtNum(uJan)}</td><td class="cell-usage">${fmtNum(uFeb)}</td><td class="cell-usage">${fmtNum(uMar)}</td>
     <td class="cell-usage">${fmtNum(uApr)}</td><td class="cell-usage">${fmtNum(uMay)}</td><td class="cell-usage">${fmtNum(uMtd)}</td>
     <td class="cell-usage">${sparklineCell([uJan,uFeb,uMar,uApr,uMay], uTrend)}</td>
@@ -2571,7 +2598,7 @@ const V_GROUPS = [
   { l:'Report Sent',  span:1, c:'g-rs' },          // own class so hide-rs targets it without killing L2L/LM/MTD
   { l:'RoI?',         span:3, c:'g-roi' },          // L2L · LM · MTD (each value colored G/A/R)
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },  // T1 · T2 · T3 · Score
-  { l:'Communication', span:3, c:'g-comm' },       // Score (weighted, with count) · Interaction % · Final RAG
+  { l:'Communication', span:3, c:'g-comm' },       // Interaction % · Comm. RAG · Sentiment (weighted count stack)
   { l:'Usage',        span:5, c:'g-usage' },
   { l:'Tickets',      span:4, c:'g-tickets' },              // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
   { l:'Leadership',   span:2, c:'g-leader' },      // MBR + Contact Freq
@@ -2589,9 +2616,9 @@ const V_COLS_SHARED = [
   {l:'L2L Month', cc:'cell-roi', tip:'roiFactor'}, {l:'Last Month', cc:'cell-roi', tip:'roiFactor'}, {l:'MTD', cc:'cell-roi', tip:'roiFactor'},
   {l:'T-1', cc:'cell-payment'}, {l:'T-2', cc:'cell-payment'}, {l:'T-3', cc:'cell-payment'},
   {l:'Score', cc:'cell-payment', tip:'paymentAcct'},
-  {l:'Score', cc:'cell-comm', tip:'commScore'},
   {l:'Interaction %', cc:'cell-comm', tip:'commInteractions'},
   {l:'Comm. RAG', cc:'cell-comm', tip:'commRagBinary'},
+  {l:'Sentiment', cc:'cell-comm', tip:'commScore'},
   {l:'# Touched', cc:'cell-usage'}, {l:'# Qualified', cc:'cell-usage'}, {l:'# Appt Booked', cc:'cell-usage'},
   {l:'Conv Rate', cc:'cell-usage', tip:'convRate'}, {l:'Appt Value ($)', cc:'cell-usage', tip:'apptValue'},
   // Ticket bucket per user spec: # Created · # Unresolved · Open Ageing · Ticket RAG
@@ -2686,7 +2713,7 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
   // Date-filtered to the active period; csatRagInRange returns null for
   // enterprises with no in-window readings so countBy naturally excludes
   // them. Counts across ALL enterprises in the group (live + churned-only).
-  const commRagCounts = countBy(allByEid, r => csatRagInRange(r.eid, r.en));
+  const commRagCounts = countBy(allByEid, r => commRagImputed(r.eid, r.en));
   const commScoreNum  = scoreValue(commRagCounts, COMM_WEIGHTS);
   const commFinalRag  = scoreRag(commRagCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
   const cf = countBy(active, r => r.cf);
@@ -2755,9 +2782,9 @@ function viniRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-roi ${roiColorClass(roiL2LNum)}">${roiL2L}</td><td class="cell-roi ${roiColorClass(roiLMNum)}">${roiLM}</td><td class="cell-roi ${roiColorClass(roiMTDNum)}">${roiMTD}</td>
     <td class="cell-payment">${payTileAgg(t1, allByEid.length)}</td><td class="cell-payment">${payTileAgg(t2, allByEid.length)}</td>
     <td class="cell-payment">${payTileAgg(t3, allByEid.length)}</td><td class="cell-payment">${ragStack(ps)}</td>
-    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-comm">${intPctCell(commInteractionPct(active, 'rid'))}</td>
     <td class="cell-comm">${ragStack(commBinaryCounts)}</td>
+    <td class="cell-comm">${commScoreNum==null?'<span style="color:var(--text-4)">NA</span>':ragStack(commRagCounts)}</td>
     <td class="cell-usage">${fmtNum(touched)}</td><td class="cell-usage">${fmtNum(qualified)}</td><td class="cell-usage">${fmtNum(appts)}</td>
     <td class="cell-usage">${convRate}</td><td class="cell-usage">${fmtMoney(apptValue)}</td>
     <td class="cell-tickets">${fmtNum(cr)}</td>
@@ -3199,7 +3226,7 @@ function renderEnterpriseList() {
       sortTh('T-2' + tip('paymentT2'),            't2',   'entList', 'cell-payment') +
       sortTh('T-3' + tip('paymentT3'),            't3',   'entList', 'cell-payment') +
       sortTh('Pay RAG' + tip('paymentAcct'),      'prag', 'entList', 'cell-payment') +
-      sortTh('Score' + tip('commScore'),          'commScore','entList','cell-comm') +
+      sortTh('Sentiment' + tip('commScore'),      'commScore','entList','cell-comm') +
       sortTh('# Interaction' + tip('commInteractionsNum'),'intCount','entList','cell-comm') +
       sortTh('Comm. RAG' + tip('commRagBinary'),  'commRag','entList','cell-comm') +
       sortTh('# Created' + tip('createdCnt'),     'cr',   'entList', 'cell-tickets') +
@@ -3232,6 +3259,191 @@ function renderEnterpriseList() {
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
+  // Keep the CSM Summary (directly below) in lock-step with the list — same
+  // product + same active filters.
+  renderCsmSummary();
+}
+
+// ============================================================
+// CSM SUMMARY (Rooftop View) — one condensed row per CSM, shown directly
+// BELOW the Enterprise List. Columns (per user spec):
+//   CSM · Rt · Ent · ARR · Overall RAG (sorted DESC) · Report Sent ·
+//   Payment Score · Comm Interaction% · Comm. RAG · Usage Trend ·
+//   Status · Quality · # Unresolved
+// Works for both Studio and Vini. Usage Trend/Status + Quality are Studio-
+// native buckets; Vini renders an em-dash for those cells.
+// ============================================================
+const RAG_ORDER = { Green: 3, Amber: 2, Orange: 1, Red: 0, NA: -1 };
+const _muteDash = '<span style="color:var(--text-4)">—</span>';
+
+function renderCsmSummary() {
+  const wrap = document.getElementById('csm-summary-wrap');
+  if (!wrap) return;
+  const isStudio = state.product === 'studio';
+  const rows = isStudio ? getStudio() : getVini();
+
+  // Group the filtered rows by CSM.
+  const groups = new Map();
+  rows.forEach(r => {
+    const csm = (isStudio ? r[S_COL.csm] : r.csm) || '(Unassigned)';
+    if (!groups.has(csm)) groups.set(csm, []);
+    groups.get(csm).push(r);
+  });
+
+  const recs = [];
+  groups.forEach((grpRows, csm) => {
+    recs.push(isStudio ? studioCsmSummary(csm, grpRows) : viniCsmSummary(csm, grpRows));
+  });
+  // Sort by Overall RAG DESC (Green → Amber → Red → NA); ARR desc as tiebreak.
+  recs.sort((a, b) => (RAG_ORDER[b.overall] - RAG_ORDER[a.overall]) || (b.arr - a.arr));
+
+  const cntEl = document.getElementById('csm-summary-count');
+  if (cntEl) cntEl.textContent = `· ${recs.length} CSM${recs.length === 1 ? '' : 's'}`;
+
+  let html = '<table class="data csm-summary"><thead>' +
+    '<tr class="cols">' +
+      '<th class="left">CSM</th>' +
+      '<th>Rt</th><th>Ent</th><th>ARR</th>' +
+      '<th class="cell-final">Overall RAG</th>' +
+      '<th class="cell-roi">Report Sent</th>' +
+      '<th class="cell-payment">Payment Score</th>' +
+      '<th class="cell-comm">Interaction %</th>' +
+      '<th class="cell-comm">Comm. RAG</th>' +
+      '<th class="cell-usage">Usage Trend</th>' +
+      '<th class="cell-usage">Status</th>' +
+      '<th class="cell-quality">Quality</th>' +
+      '<th class="cell-tickets"># Unresolved</th>' +
+    '</tr></thead><tbody>';
+  recs.forEach(rec => {
+    html += `<tr>
+      <td class="left">${rec.csmLabel}</td>
+      <td>${fmtNum(rec.rt)}</td>
+      <td>${fmtNum(rec.ent)}</td>
+      <td>${rec.arr ? fmtMoney(rec.arr) : '—'}</td>
+      <td class="cell-final">${ragSingle(rec.overall)}</td>
+      <td class="cell-roi">${rec.reportSent}</td>
+      <td class="cell-payment">${rec.paymentScore}</td>
+      <td class="cell-comm">${rec.intPct}</td>
+      <td class="cell-comm">${rec.commRag}</td>
+      <td class="cell-usage">${rec.usageTrend}</td>
+      <td class="cell-usage">${rec.usageStatus}</td>
+      <td class="cell-quality">${rec.quality}</td>
+      <td class="cell-tickets">${fmtNum(rec.unresolved)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+// Studio per-CSM condensed summary record.
+function studioCsmSummary(csm, rows) {
+  const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
+  const rt  = uniqueSet(rows, r => r[S_COL.rid]).size;
+  const ent = uniqueSet(rows, r => r[S_COL.en]).size;
+  const arr = sumBy(rows, r => r[S_COL.arr]);
+
+  // Overall RAG — average of per-rooftop account-health RAG values (same
+  // verdict the overview Final Status stack is built from), thresholded.
+  let sum = 0, cnt = 0;
+  for (const r of active) {
+    const v = OVERALL_RAG_VALUE[studioRooftopOverallRag(r, null)];
+    if (v == null) continue;
+    sum += v; cnt++;
+  }
+  const overall = !cnt ? 'NA' : (sum/cnt >= 80 ? 'Green' : sum/cnt >= 60 ? 'Amber' : 'Red');
+
+  // Report Sent — 7-day per-enterprise aggregate (same as the overview RoI col).
+  const reportSent = groupSentPercent(rows.map(r => r[S_COL.eid]));
+
+  // Payment Score — enterprise-deduped payment RAG counts → stack.
+  const seenPay = new Set();
+  const entPay = active.filter(r => {
+    const k = r[S_COL.eid] || r[S_COL.en];
+    if (!k) return true; if (seenPay.has(k)) return false; seenPay.add(k); return true;
+  });
+  const prag = countBy(entPay, r => r[S_COL.prag]);
+  const paymentScore = Object.keys(prag).length ? ragStack(prag) : _muteDash;
+
+  // Communication — Interaction % + binary Comm. RAG (deduped per enterprise).
+  const intPct = intPctCell(commInteractionPct(active));
+  const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
+  for (const r of active) {
+    const ek = r[S_COL.eid] || r[S_COL.en];
+    if (!ek || seenC.has(ek)) continue;
+    seenC.add(ek);
+    if (commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0) commBin.Green++; else commBin.Red++;
+  }
+  const commRag = ragStack(commBin);
+
+  // Usage Trend (sparkline) + Status (trend pill) from Jan→May VIN totals.
+  const series = [sumBy(active,r=>r[S_COL.u_jan]), sumBy(active,r=>r[S_COL.u_feb]),
+                  sumBy(active,r=>r[S_COL.u_mar]), sumBy(active,r=>r[S_COL.u_apr]),
+                  sumBy(active,r=>r[S_COL.u_may])];
+  const trend = usageTrend(series);
+
+  // Quality — Website RAG distribution stack.
+  const wsRag = countBy(active, r => websiteRag(r[S_COL.ws]));
+  const quality = Object.keys(wsRag).length ? ragStack(wsRag) : _muteDash;
+
+  // Ticket Unresolved — open tickets across the CSM's enterprises.
+  const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
+  const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
+
+  return { csmLabel: dispCsm(csm), rt, ent, arr, overall, reportSent,
+           paymentScore, intPct, commRag,
+           usageTrend: sparklineCell(series, trend), usageStatus: trendCell(trend),
+           quality, unresolved };
+}
+
+// Vini per-CSM condensed summary record. Usage Trend/Status + Quality are
+// Studio-only buckets → em-dash here.
+function viniCsmSummary(csm, rows) {
+  const active = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+  const rt  = uniqueSet(rows, r => r.rid).size;
+  const ent = uniqueSet(rows, r => r.en).size;
+  const arr = sumBy(active, r => r.arr);
+
+  // Overall RAG — average of per-rooftop account-health RAG (RoI · Payment ·
+  // Comm), matching the Vini overview Final Status pillars.
+  let sum = 0, cnt = 0;
+  for (const r of active) {
+    const g = computeOverallRAG([roiMtdRag(r.roi_mtd), r.ps, csatRagInRange(r.eid, r.en)]);
+    const v = OVERALL_RAG_VALUE[g];
+    if (v == null) continue;
+    sum += v; cnt++;
+  }
+  const overall = !cnt ? 'NA' : (sum/cnt >= 80 ? 'Green' : sum/cnt >= 60 ? 'Amber' : 'Red');
+
+  // Payment Score — enterprise-deduped payment RAG counts → stack.
+  const seenPay = new Set();
+  const entPay = rows.filter(r => {
+    if (!r.eid) return true; if (seenPay.has(r.eid)) return false; seenPay.add(r.eid); return true;
+  });
+  const prag = countBy(entPay, r => r.ps);
+  const paymentScore = Object.keys(prag).length ? ragStack(prag) : _muteDash;
+
+  // Communication — Interaction % + binary Comm. RAG (deduped per enterprise).
+  const intPct = intPctCell(commInteractionPct(active, 'rid'));
+  const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
+  for (const r of rows) {
+    const ek = r.eid || r.en;
+    if (!ek || seenC.has(ek)) continue;
+    seenC.add(ek);
+    if (commInteractionCount(r.eid, r.en) > 0) commBin.Green++; else commBin.Red++;
+  }
+  const commRag = ragStack(commBin);
+
+  // Ticket Unresolved — open tickets across the CSM's enterprises (deduped).
+  const seenT = new Set();
+  const allByEid = rows.filter(r => {
+    if (!r.eid) return true; if (seenT.has(r.eid)) return false; seenT.add(r.eid); return true;
+  });
+  const unresolved = sumBy(allByEid, r => r.op);
+
+  return { csmLabel: dispCsm(csm), rt, ent, arr, overall, reportSent: _muteDash,
+           paymentScore, intPct, commRag,
+           usageTrend: _muteDash, usageStatus: _muteDash, quality: _muteDash,
+           unresolved };
 }
 
 function renderRooftop() {
@@ -3292,7 +3504,7 @@ function renderRooftop() {
       sortTh('T-2' + tip('paymentT2'), 't2',   'studioRooftop', 'cell-payment') +
       sortTh('T-3' + tip('paymentT3'), 't3',   'studioRooftop', 'cell-payment') +
       sortTh('Pay RAG' + tip('paymentAcct'), 'prag', 'studioRooftop', 'cell-payment') +
-      sortTh('Score' + tip('commScore'),         'commScore', 'studioRooftop', 'cell-comm') +
+      sortTh('Sentiment' + tip('commScore'),     'commScore', 'studioRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractionsNum') + '</th>' +
       sortTh('Comm. RAG' + tip('commRagBinary'), 'commRagBin',  'studioRooftop', 'cell-comm') +
       sortTh("Jan'26", 'u_jan', 'studioRooftop', 'cell-usage') +
@@ -3533,7 +3745,7 @@ function renderRooftop() {
       sortTh('T-2', 't2', 'viniRooftop', 'cell-payment') +
       sortTh('T-3', 't3', 'viniRooftop', 'cell-payment') +
       sortTh('Account Level RAG' + tip('paymentAcct'), 'ps', 'viniRooftop', 'cell-payment') +
-      sortTh('Score'    + tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
+      sortTh('Sentiment'+ tip('commScore'),     'commScore', 'viniRooftop', 'cell-comm') +
       '<th class="cell-comm"># Interaction' + tip('commInteractionsNum') + '</th>' +
       sortTh('Comm. RAG' + tip('commRagBinary'), 'commRag',   'viniRooftop', 'cell-comm') +
       sortTh('#Touched',     'touched',   'viniRooftop', 'cell-usage') +
