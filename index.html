@@ -3270,8 +3270,44 @@ function renderEnterpriseList() {
 // Works for both Studio and Vini. Usage Trend/Status + Quality are Studio-
 // native buckets; Vini renders an em-dash for those cells.
 // ============================================================
-const RAG_ORDER = { Green: 3, Amber: 2, Orange: 1, Red: 0, NA: -1 };
 const _muteDash = '<span style="color:var(--text-4)">—</span>';
+// Average per-rooftop Overall RAG value from a {Green,Amber,Orange,Red} count
+// stack — used to SORT the CSM Summary descending (greener = higher). Empty
+// stacks (all-NA) score -1 so they sort to the bottom.
+function overallStackScore(counts) {
+  let sum = 0, n = 0;
+  for (const k of ['Green','Amber','Orange','Red']) {
+    const c = counts[k] || 0; if (!c) continue;
+    sum += OVERALL_RAG_VALUE[k] * c; n += c;
+  }
+  return n ? sum / n : -1;
+}
+// Vini per-rooftop Overall RAG count stack — replicates viniRow's Final Status
+// grouping (by rid; RoI·Payment·Comm pillars) so the CSM Summary "Overall RAG"
+// column shows the SAME data as the Vini CSM-level view's Final Status cell.
+function viniFinalStatusCounts(rows) {
+  const o = {};
+  const byRid = new Map();
+  for (const r of rows) {
+    if (!r.rid) continue;
+    if (!byRid.has(r.rid)) byRid.set(r.rid, []);
+    byRid.get(r.rid).push(r);
+  }
+  const today = new Date();
+  const daysPassed  = today.getDate();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
+  for (const rrs of byRid.values()) {
+    const act  = rrs.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+    const base = act.length ? act : rrs;
+    const amrr = sumBy(base, r => r.mrr);
+    const mtdMrr = amrr * (daysPassed / daysInMonth);
+    const apptMtd = sumBy(base, r => r.apptValue_mtd || 0);
+    const ridRoi = mtdMrr > 0 ? apptMtd / mtdMrr : null;
+    const g = computeOverallRAG([roiMtdRag(ridRoi), base[0].ps, csatRagInRange(base[0].eid, base[0].en)]);
+    if (g && g !== 'NA') o[g] = (o[g] || 0) + 1;
+  }
+  return o;
+}
 
 function renderCsmSummary() {
   const wrap = document.getElementById('csm-summary-wrap');
@@ -3291,16 +3327,28 @@ function renderCsmSummary() {
   groups.forEach((grpRows, csm) => {
     recs.push(isStudio ? studioCsmSummary(csm, grpRows) : viniCsmSummary(csm, grpRows));
   });
-  // Sort by Overall RAG DESC (Green → Amber → Red → NA); ARR desc as tiebreak.
-  recs.sort((a, b) => (RAG_ORDER[b.overall] - RAG_ORDER[a.overall]) || (b.arr - a.arr));
+  // Sort by Overall RAG DESC (greener first, by weighted stack score); ARR
+  // desc as tiebreak. Row number reflects this ranking.
+  recs.sort((a, b) => (b.overallScore - a.overallScore) || (b.arr - a.arr));
 
   const cntEl = document.getElementById('csm-summary-count');
   if (cntEl) cntEl.textContent = `· ${recs.length} CSM${recs.length === 1 ? '' : 's'}`;
 
   let html = '<table class="data csm-summary"><thead>' +
+    '<tr class="group">' +
+      '<th colspan="5"></th>' +
+      '<th class="g-final">Final Status</th>' +
+      '<th class="g-roi">RoI</th>' +
+      '<th class="g-payment">Payment</th>' +
+      '<th colspan="2" class="g-comm">Communication</th>' +
+      '<th colspan="2" class="g-usage">Usage</th>' +
+      '<th class="g-quality">Quality</th>' +
+      '<th class="g-tickets">Tickets</th>' +
+    '</tr>' +
     '<tr class="cols">' +
       '<th class="left">CSM</th>' +
       '<th>Rt</th><th>Ent</th><th>ARR</th>' +
+      '<th class="ent-idx" style="text-align:center">#</th>' +
       '<th class="cell-final">Overall RAG</th>' +
       '<th class="cell-roi">Report Sent</th>' +
       '<th class="cell-payment">Payment Score</th>' +
@@ -3311,13 +3359,14 @@ function renderCsmSummary() {
       '<th class="cell-quality">Quality</th>' +
       '<th class="cell-tickets"># Unresolved</th>' +
     '</tr></thead><tbody>';
-  recs.forEach(rec => {
+  recs.forEach((rec, i) => {
     html += `<tr>
       <td class="left">${rec.csmLabel}</td>
       <td>${fmtNum(rec.rt)}</td>
       <td>${fmtNum(rec.ent)}</td>
       <td>${rec.arr ? fmtMoney(rec.arr) : '—'}</td>
-      <td class="cell-final">${ragSingle(rec.overall)}</td>
+      <td class="ent-idx" style="text-align:center">${i + 1}</td>
+      <td class="cell-final">${Object.keys(rec.overallCounts).length ? ragStack(rec.overallCounts) : _muteDash}</td>
       <td class="cell-roi">${rec.reportSent}</td>
       <td class="cell-payment">${rec.paymentScore}</td>
       <td class="cell-comm">${rec.intPct}</td>
@@ -3339,15 +3388,14 @@ function studioCsmSummary(csm, rows) {
   const ent = uniqueSet(rows, r => r[S_COL.en]).size;
   const arr = sumBy(rows, r => r[S_COL.arr]);
 
-  // Overall RAG — average of per-rooftop account-health RAG values (same
-  // verdict the overview Final Status stack is built from), thresholded.
-  let sum = 0, cnt = 0;
+  // Overall RAG — SAME stack the CSM-level view shows: count of per-rooftop
+  // account-health RAGs (Green/Amber/Red). overallScore drives the sort only.
+  const overallCounts = {};
   for (const r of active) {
-    const v = OVERALL_RAG_VALUE[studioRooftopOverallRag(r, null)];
-    if (v == null) continue;
-    sum += v; cnt++;
+    const g = studioRooftopOverallRag(r, null);
+    if (g && g !== 'NA') overallCounts[g] = (overallCounts[g] || 0) + 1;
   }
-  const overall = !cnt ? 'NA' : (sum/cnt >= 80 ? 'Green' : sum/cnt >= 60 ? 'Amber' : 'Red');
+  const overallScore = overallStackScore(overallCounts);
 
   // Report Sent — 7-day per-enterprise aggregate (same as the overview RoI col).
   const reportSent = groupSentPercent(rows.map(r => r[S_COL.eid]));
@@ -3386,7 +3434,7 @@ function studioCsmSummary(csm, rows) {
   const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
   const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
 
-  return { csmLabel: dispCsm(csm), rt, ent, arr, overall, reportSent,
+  return { csmLabel: dispCsm(csm), rt, ent, arr, overallCounts, overallScore, reportSent,
            paymentScore, intPct, commRag,
            usageTrend: sparklineCell(series, trend), usageStatus: trendCell(trend),
            quality, unresolved };
@@ -3400,16 +3448,10 @@ function viniCsmSummary(csm, rows) {
   const ent = uniqueSet(rows, r => r.en).size;
   const arr = sumBy(active, r => r.arr);
 
-  // Overall RAG — average of per-rooftop account-health RAG (RoI · Payment ·
-  // Comm), matching the Vini overview Final Status pillars.
-  let sum = 0, cnt = 0;
-  for (const r of active) {
-    const g = computeOverallRAG([roiMtdRag(r.roi_mtd), r.ps, csatRagInRange(r.eid, r.en)]);
-    const v = OVERALL_RAG_VALUE[g];
-    if (v == null) continue;
-    sum += v; cnt++;
-  }
-  const overall = !cnt ? 'NA' : (sum/cnt >= 80 ? 'Green' : sum/cnt >= 60 ? 'Amber' : 'Red');
+  // Overall RAG — SAME stack the Vini CSM-level view shows (per-rooftop Final
+  // Status grouped by rid; RoI · Payment · Comm). overallScore drives sort only.
+  const overallCounts = viniFinalStatusCounts(rows);
+  const overallScore = overallStackScore(overallCounts);
 
   // Payment Score — enterprise-deduped payment RAG counts → stack.
   const seenPay = new Set();
@@ -3437,7 +3479,7 @@ function viniCsmSummary(csm, rows) {
   });
   const unresolved = sumBy(allByEid, r => r.op);
 
-  return { csmLabel: dispCsm(csm), rt, ent, arr, overall, reportSent: _muteDash,
+  return { csmLabel: dispCsm(csm), rt, ent, arr, overallCounts, overallScore, reportSent: _muteDash,
            paymentScore, intPct, commRag,
            usageTrend: _muteDash, usageStatus: _muteDash, quality: _muteDash,
            unresolved };
