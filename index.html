@@ -543,6 +543,16 @@
         <div class="table-wrap" id="csm-table-wrap"></div>
       </div>
     </div>
+    <!-- CSM SUMMARY — one condensed row per CSM. Columns: CSM · Rt · Ent · ARR ·
+         Overall RAG (sorted descending) · Report Sent · Payment Score · Comm
+         Interaction% · Comm. RAG · Usage Trend · Status · Quality · # Unresolved. -->
+    <div class="section-block" id="block-csm-summary">
+      <h2><span>CSM Summary</span><span class="count" id="csm-summary-count"></span></h2>
+      <div class="section">
+        <div class="section-head"><span class="section-title">Per-CSM account-health rollup</span></div>
+        <div class="table-wrap" id="csm-summary-wrap"></div>
+      </div>
+    </div>
   </div>
 
   <div class="view" id="view-rooftop" style="display:none">
@@ -584,18 +594,6 @@
         <span class="hint">case-insensitive, matches name or eid</span>
       </div>
       <div class="table-wrap" id="enterprise-list-wrap"></div>
-    </div>
-
-    <!-- CSM SUMMARY — one condensed row per CSM, shown directly below the
-         Enterprise List. Columns: CSM · Rt · Ent · ARR · Overall RAG (sorted
-         descending) · Report Sent · Payment Score · Comm Interaction% ·
-         Comm. RAG · Usage Trend · Status · Quality · # Unresolved. -->
-    <div class="section" id="csm-summary-section">
-      <div class="section-head">
-        <span class="section-title">CSM Summary</span>
-        <span style="font-size:11.5px;color:var(--text-3)" id="csm-summary-count"></span>
-      </div>
-      <div class="table-wrap" id="csm-summary-wrap"></div>
     </div>
   </div>
 </div>
@@ -3043,6 +3041,7 @@ function renderOverviewStudio() {
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
   document.getElementById('csm-count').textContent = `· ${sorted.length} CSMs`;
+  renderCsmSummary();
   attachDrills();
 }
 
@@ -3116,6 +3115,7 @@ function renderOverviewVini() {
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
   document.getElementById('csm-count').textContent = `· ${sorted.length} CSMs`;
+  renderCsmSummary();
   attachDrills();
 }
 
@@ -3259,14 +3259,11 @@ function renderEnterpriseList() {
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
-  // Keep the CSM Summary (directly below) in lock-step with the list — same
-  // product + same active filters.
-  renderCsmSummary();
 }
 
 // ============================================================
-// CSM SUMMARY (Rooftop View) — one condensed row per CSM, shown directly
-// BELOW the Enterprise List. Columns (per user spec):
+// CSM SUMMARY (Overview) — one condensed row per CSM, shown on the Overview
+// page below the CSM-level view. Columns (per user spec):
 //   CSM · Rt · Ent · ARR · Overall RAG (sorted DESC) · Report Sent ·
 //   Payment Score · Comm Interaction% · Comm. RAG · Usage Trend ·
 //   Status · Quality · # Unresolved
