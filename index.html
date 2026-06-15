@@ -427,6 +427,13 @@
   table.data.csm-summary tbody td.cell-usage,
   table.data.csm-summary tbody td.cell-quality,
   table.data.csm-summary tbody td.cell-tickets{text-align:right}
+  /* Combined Display table has a 3-row header (product · bucket · leaf); the
+     default 2-row sticky offsets would overlap, so render its header static.
+     The table is short (one row per CSM) so it never needs a sticky header. */
+  table.data.csm-combined thead th{position:static;top:auto}
+  table.data.csm-combined thead tr.prod th{padding:5px 2px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-1);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
+  table.data.csm-combined thead tr.prod th.prod-studio{background:#EEF4FF}
+  table.data.csm-combined thead tr.prod th.prod-vini{background:#F3EEFF}
   /* Enterprise List table layout — narrow # column, generous Enterprise +
      Account Type + MRR / ARR. Prevents the index column from eating space. */
   table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
@@ -604,21 +611,14 @@
     </div>
   </div>
 
-  <!-- DISPLAY VIEW — both CSM Summary rollups stacked: Studio first, then Vini.
-       Independent of the Studio/Vini product tab; always shows both products. -->
+  <!-- DISPLAY VIEW — ONE combined per-CSM table merging Studio + Vini (matched
+       by normalized CSM name). Product-agnostic; always shows both products. -->
   <div class="view" id="view-display" style="display:none">
-    <div class="section-block" id="block-display-studio">
-      <h2><span>Studio · CSM Summary</span><span class="count" id="display-studio-count"></span></h2>
+    <div class="section-block" id="block-display-combined">
+      <h2><span>CSM Display</span><span class="count" id="display-combined-count"></span></h2>
       <div class="section">
-        <div class="section-head"><span class="section-title">Per-CSM account-health rollup — Studio</span></div>
-        <div class="table-wrap" id="display-studio-wrap"></div>
-      </div>
-    </div>
-    <div class="section-block" id="block-display-vini">
-      <h2><span>Vini · CSM Summary</span><span class="count" id="display-vini-count"></span></h2>
-      <div class="section">
-        <div class="section-head"><span class="section-title">Per-CSM account-health rollup — Vini</span></div>
-        <div class="table-wrap" id="display-vini-wrap"></div>
+        <div class="section-head"><span class="section-title">Combined Studio + Vini per-CSM rollup</span></div>
+        <div class="table-wrap" id="display-combined-wrap"></div>
       </div>
     </div>
   </div>
@@ -1044,7 +1044,7 @@ let state = {
   // .length and .includes() instead of strict equality.
   filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
-  sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null },
+  sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null, csmCombined: null },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -3387,12 +3387,233 @@ function sortCsmSummaryRecs(recs, sortState) {
   return s.sort(makeCmp(getter, dir));
 }
 
-// Display View — render BOTH product rollups (Studio first, then Vini). Each
-// table keeps its own independent sort state so a header click on one doesn't
-// reorder the other.
+// Display View — ONE combined table, one row per CSM, merging Studio + Vini
+// data. CSMs are matched across products by a normalized name key (Studio
+// "Ankur Batra" ⇄ Vini "ankur.batra@spyne.ai"). Middle buckets (Final RAG,
+// Payment T-1, Communication) are Studio-only per spec.
+
+// Normalized join key: strip @spyne.ai, turn dots/underscores into spaces,
+// collapse whitespace, lowercase. "ankur.batra@spyne.ai" & "Ankur Batra" → "ankur batra".
+function csmJoinKey(name) {
+  return dispCsm(name).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function titleCaseName(key) {
+  return key.split(' ').filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+// Studio-side metrics for the combined table (one CSM's Studio rows).
+function studioCombinedMetrics(rows) {
+  const active = rows.filter(r => !String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
+  const rt  = uniqueSet(rows, r => r[S_COL.rid]).size;
+  const ent = uniqueSet(rows, r => r[S_COL.en]).size;
+  const arr = sumBy(rows, r => r[S_COL.arr]);
+  // Final RAG — per-rooftop account-health RAG counts.
+  const finalCounts = {};
+  for (const r of active) {
+    const g = studioRooftopOverallRag(r, null);
+    if (g && g !== 'NA') finalCounts[g] = (finalCounts[g] || 0) + 1;
+  }
+  // Payment T-1 — enterprise-deduped T-1 tier RAG counts.
+  const seenPay = new Set();
+  const entPay = active.filter(r => {
+    const k = r[S_COL.eid] || r[S_COL.en];
+    if (!k) return true; if (seenPay.has(k)) return false; seenPay.add(k); return true;
+  });
+  const t1Counts = countBy(entPay, r => r[S_COL.t1]);
+  // Communication — binary Comm. RAG + interaction % + CSAT Sentiment stack.
+  const intPctVal = commInteractionPct(active);
+  const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
+  for (const r of active) {
+    const ek = r[S_COL.eid] || r[S_COL.en];
+    if (!ek || seenC.has(ek)) continue;
+    seenC.add(ek);
+    if (commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0) commBin.Green++; else commBin.Red++;
+  }
+  const sentimentCounts = countBy(active, r => commRagImputed(r[S_COL.eid], r[S_COL.en]));
+  // Quality — Pendency (6h) total.
+  const pendency = sumBy(active, r => r[S_COL.pen]);
+  // Usage — Jan→May VIN trend.
+  const series = [sumBy(active,r=>r[S_COL.u_jan]), sumBy(active,r=>r[S_COL.u_feb]),
+                  sumBy(active,r=>r[S_COL.u_mar]), sumBy(active,r=>r[S_COL.u_apr]),
+                  sumBy(active,r=>r[S_COL.u_may])];
+  const trend = usageTrend(series);
+  // Tickets — open count across the CSM's enterprises.
+  const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
+  const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
+  return { rt, ent, arr, finalCounts, t1Counts, intPctVal, commBin, sentimentCounts,
+           pendency, trend, unresolved };
+}
+
+// Vini-side metrics for the combined table (one CSM's Vini rows).
+function viniCombinedMetrics(rows) {
+  const active = rows.filter(r => String(r.stage||'').toLowerCase() !== 'churned');
+  const agents = uniqueSet(active, r => r.agent).size;
+  const arr = sumBy(active, r => r.arr);
+  const roiCounts = viniRoiMtdCounts(rows);
+  const seenT = new Set();
+  const allByEid = rows.filter(r => {
+    if (!r.eid) return true; if (seenT.has(r.eid)) return false; seenT.add(r.eid); return true;
+  });
+  const unresolved = sumBy(allByEid, r => r.op);
+  return { agents, arr, roiCounts, unresolved };
+}
+
+// Build one merged record per CSM across both products.
+function buildCombinedCsmRecs() {
+  const sRows = getStudio();
+  const vRows = getVini();
+  const map = new Map();  // key -> { name, sRows[], vRows[] }
+  sRows.forEach(r => {
+    const raw = r[S_COL.csm] || '(Unassigned)';
+    const k = csmJoinKey(raw) || '(unassigned)';
+    if (!map.has(k)) map.set(k, { name: null, sRows: [], vRows: [] });
+    const e = map.get(k); e.name = raw; e.sRows.push(r);   // Studio name wins
+  });
+  vRows.forEach(r => {
+    const raw = r.csm || 'Unassigned CSM';
+    const k = csmJoinKey(raw) || '(unassigned)';
+    if (!map.has(k)) map.set(k, { name: null, sRows: [], vRows: [] });
+    const e = map.get(k); if (!e.name) e.name = titleCaseName(k); e.vRows.push(r);
+  });
+  const recs = [];
+  map.forEach((e, k) => {
+    recs.push({
+      key: k,
+      name: e.name,
+      s: e.sRows.length ? studioCombinedMetrics(e.sRows) : null,
+      v: e.vRows.length ? viniCombinedMetrics(e.vRows) : null,
+    });
+  });
+  return recs;
+}
+
+// Green-share helpers for sorting RAG-stack columns.
+function greenShare(counts) {
+  const t = (counts.Green||0) + (counts.Amber||0) + (counts.Red||0);
+  return t ? ((counts.Green||0) / t) * 100 : null;
+}
+function combinedArr(rec) {
+  return (rec.s ? rec.s.arr : 0) + (rec.v ? rec.v.arr : 0);
+}
+function toggleCombinedSort(key) {
+  const cur = state.sort.csmCombined;
+  if (!cur || cur.key !== key) state.sort.csmCombined = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')  state.sort.csmCombined = { key, dir: 'desc' };
+  else                         state.sort.csmCombined = null;
+  renderDisplayView();
+}
+function sortCombinedRecs(recs, sortState) {
+  const s = recs.slice();
+  if (!sortState || !sortState.key) {
+    // Default: Final RAG green-share (of Studio rooftops) DESC, combined ARR tiebreak.
+    return s.sort((a, b) => {
+      const fa = a.s ? (greenShare(a.s.finalCounts) ?? -1) : -1;
+      const fb = b.s ? (greenShare(b.s.finalCounts) ?? -1) : -1;
+      return (fb - fa) || (combinedArr(b) - combinedArr(a));
+    });
+  }
+  const { key, dir } = sortState;
+  let getter;
+  switch (key) {
+    case 'csm':         getter = r => r.name ? r.name.toLowerCase() : null; break;
+    case 'rt':          getter = r => r.s ? r.s.rt : null; break;
+    case 'ent':         getter = r => r.s ? r.s.ent : null; break;
+    case 'sArr':        getter = r => r.s ? r.s.arr : null; break;
+    case 'vAgents':     getter = r => r.v ? r.v.agents : null; break;
+    case 'vArr':        getter = r => r.v ? r.v.arr : null; break;
+    case 'final':       getter = r => r.s ? greenShare(r.s.finalCounts) : null; break;
+    case 't1':          getter = r => r.s ? scoreValue(r.s.t1Counts) : null; break;
+    case 'commRag':     getter = r => r.s ? greenShare(r.s.commBin) : null; break;
+    case 'sentiment':   getter = r => r.s ? scoreValue(r.s.sentimentCounts) : null; break;
+    case 'pendency':    getter = r => r.s ? r.s.pendency : null; break;
+    case 'trend':       getter = r => r.s ? (r.s.trend==='Rising'?3:r.s.trend==='Steady'?2:r.s.trend==='Declining'?1:0) : null; break;
+    case 'sUnresolved': getter = r => r.s ? r.s.unresolved : null; break;
+    case 'roi':         getter = r => r.v ? greenShare(r.v.roiCounts) : null; break;
+    case 'vUnresolved': getter = r => r.v ? r.v.unresolved : null; break;
+    default:            getter = r => 0;
+  }
+  return s.sort(makeCmp(getter, dir));
+}
+
 function renderDisplayView() {
-  renderCsmSummaryInto('studio', 'display-studio-wrap', 'display-studio-count', 'csmSummaryStudio');
-  renderViniCsmSummaryInto('display-vini-wrap', 'display-vini-count', 'csmSummaryVini');
+  const wrap = document.getElementById('display-combined-wrap');
+  if (!wrap) return;
+  const recs = sortCombinedRecs(buildCombinedCsmRecs(), state.sort.csmCombined);
+
+  const cntEl = document.getElementById('display-combined-count');
+  if (cntEl) cntEl.textContent = `· ${recs.length} CSM${recs.length === 1 ? '' : 's'}`;
+
+  const tk = 'csmCombined';
+  let html = '<table class="data csm-summary csm-combined"><thead>' +
+    // Tier 1 — product band.
+    '<tr class="prod">' +
+      '<th></th>' +
+      '<th colspan="4" class="prod-studio">Studio</th>' +
+      '<th colspan="2" class="prod-vini">Vini</th>' +
+      '<th colspan="4"></th>' +
+      '<th colspan="3" class="prod-studio">Studio</th>' +
+      '<th colspan="2" class="prod-vini">Vini</th>' +
+    '</tr>' +
+    // Tier 2 — bucket band.
+    '<tr class="group">' +
+      '<th></th>' +
+      '<th colspan="6"></th>' +
+      '<th class="g-final"></th>' +
+      '<th class="g-payment">Payment</th>' +
+      '<th colspan="2" class="g-comm">Communication</th>' +
+      '<th class="g-quality">Quality</th>' +
+      '<th class="g-usage">Usage</th>' +
+      '<th class="g-tickets">Ticket</th>' +
+      '<th class="g-usage">Usage</th>' +
+      '<th class="g-tickets">Ticket</th>' +
+    '</tr>' +
+    // Tier 3 — leaf columns (sortable).
+    '<tr class="cols">' +
+      '<th class="ent-idx" style="text-align:right">#</th>' +
+      sortTh('CSM Name', 'csm', tk, 'left') +
+      sortTh('Rt', 'rt', tk) +
+      sortTh('Ent', 'ent', tk) +
+      sortTh('Studio ARR', 'sArr', tk) +
+      sortTh('Vini Agents', 'vAgents', tk) +
+      sortTh('Vini ARR', 'vArr', tk) +
+      sortTh('Final RAG', 'final', tk, 'cell-final') +
+      sortTh('T-1', 't1', tk, 'cell-payment') +
+      sortTh('Comm. RAG', 'commRag', tk, 'cell-comm') +
+      sortTh('Sentiment', 'sentiment', tk, 'cell-comm') +
+      sortTh('Pendency (6 Hrs)', 'pendency', tk, 'cell-quality') +
+      sortTh('Trend', 'trend', tk, 'cell-usage') +
+      sortTh('# Unresolved', 'sUnresolved', tk, 'cell-tickets') +
+      sortTh('ROI', 'roi', tk, 'cell-usage') +
+      sortTh('# Unresolved', 'vUnresolved', tk, 'cell-tickets') +
+    '</tr></thead><tbody>';
+
+  recs.forEach((rec, i) => {
+    const s = rec.s, v = rec.v;
+    const commRagCell = s
+      ? `${ragStack(s.commBin)}${s.intPctVal != null ? ` <span style="color:var(--text-3)">(${Math.round(s.intPctVal)}%)</span>` : ''}`
+      : _muteDash;
+    html += `<tr>
+      <td class="ent-idx" style="text-align:right">${i + 1}</td>
+      <td class="left">${rec.name}</td>
+      <td>${s ? fmtNum(s.rt) : _muteDash}</td>
+      <td>${s ? fmtNum(s.ent) : _muteDash}</td>
+      <td>${s && s.arr ? fmtMoney(s.arr) : _muteDash}</td>
+      <td>${v ? fmtNum(v.agents) : _muteDash}</td>
+      <td>${v && v.arr ? fmtMoney(v.arr) : _muteDash}</td>
+      <td class="cell-final">${s && Object.keys(s.finalCounts).length ? ragStack(s.finalCounts) : _muteDash}</td>
+      <td class="cell-payment">${s && Object.keys(s.t1Counts).length ? ragStack(s.t1Counts) : _muteDash}</td>
+      <td class="cell-comm">${commRagCell}</td>
+      <td class="cell-comm">${s && Object.keys(s.sentimentCounts).length ? ragStack(s.sentimentCounts) : _muteDash}</td>
+      <td class="cell-quality">${s ? fmtNum(s.pendency) : _muteDash}</td>
+      <td class="cell-usage">${s ? trendCell(s.trend) : _muteDash}</td>
+      <td class="cell-tickets">${s ? fmtNum(s.unresolved) : _muteDash}</td>
+      <td class="cell-usage">${v && Object.keys(v.roiCounts).length ? ragStack(v.roiCounts) : _muteDash}</td>
+      <td class="cell-tickets">${v ? fmtNum(v.unresolved) : _muteDash}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
 }
 
 function renderCsmSummaryInto(product, wrapId, countId, sortTableKey) {
@@ -4650,6 +4871,7 @@ document.addEventListener('click', e => {
   else if (table === 'entList')     toggleEntListSort(key);
   else if (table === 'csmSummaryStudio') toggleCsmSummarySort('csmSummaryStudio', key);
   else if (table === 'csmSummaryVini')   toggleCsmSummarySort('csmSummaryVini', key);
+  else if (table === 'csmCombined')      toggleCombinedSort(key);
 });
 
 // ============================================================
@@ -4787,7 +5009,7 @@ FILTER_KEYS.forEach(key => {
 
 document.getElementById('f-reset').addEventListener('click', () => {
   state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
-  state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null };
+  state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null, csmCombined: null };
   state.rooftopContext = { kind:'all', value:null };
   syncAllFilterSelects();
   renderAll();
