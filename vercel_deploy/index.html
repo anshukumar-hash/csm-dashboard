@@ -427,13 +427,33 @@
   table.data.csm-summary tbody td.cell-usage,
   table.data.csm-summary tbody td.cell-quality,
   table.data.csm-summary tbody td.cell-tickets{text-align:right}
-  /* Combined Display table has a 3-row header (product · bucket · leaf); the
-     default 2-row sticky offsets would overlap, so render its header static.
-     The table is short (one row per CSM) so it never needs a sticky header. */
-  table.data.csm-combined thead th{position:static;top:auto}
-  table.data.csm-combined thead tr.prod th{padding:5px 2px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-1);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
+  /* Combined Display table — 3-row header (product · bucket · leaf). Compact
+     columns so the whole roster fits one view, sticky header (all 3 rows), and
+     frozen identity columns (# … Vini ARR) that stay put on horizontal scroll. */
+  table.data.csm-combined{font-size:10px}
+  table.data.csm-combined th,table.data.csm-combined td{padding:3px 4px;white-space:nowrap}
+  table.data.csm-combined thead tr.prod th{height:22px;box-sizing:border-box;padding:3px 2px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-1);text-align:center;background:var(--bg);border-left:1px solid var(--border);border-bottom:1px solid var(--border)}
   table.data.csm-combined thead tr.prod th.prod-studio{background:#EEF4FF}
   table.data.csm-combined thead tr.prod th.prod-vini{background:#F3EEFF}
+  table.data.csm-combined thead tr.group th{height:22px;box-sizing:border-box}
+  /* Sticky header — each of the 3 rows pinned at its own top offset (22px tall). */
+  table.data.csm-combined thead tr.prod  th{position:sticky;top:0;z-index:6}
+  table.data.csm-combined thead tr.group th{position:sticky;top:22px;z-index:6}
+  table.data.csm-combined thead tr.cols  th{position:sticky;top:44px;z-index:6}
+  /* Frozen identity columns (#, CSM, Rt, Ent, Studio ARR, Agents, Vini ARR). */
+  table.data.csm-combined .cmbf{position:sticky;background:#fff;z-index:12}
+  table.data.csm-combined thead tr.prod th.cmbf,
+  table.data.csm-combined thead tr.group th.cmbf,
+  table.data.csm-combined thead tr.cols th.cmbf{background:var(--bg);z-index:19}
+  table.data.csm-combined tbody tr.total-row td{background:#F4FBF6;font-weight:600}
+  table.data.csm-combined tbody tr.total-row td.cmbf{background:#EAF6EE}
+  table.data.csm-combined .cmb-1{left:0;width:28px;min-width:28px;max-width:28px}
+  table.data.csm-combined .cmb-2{left:28px;width:116px;min-width:116px;max-width:116px;overflow:hidden;text-overflow:ellipsis}
+  table.data.csm-combined .cmb-3{left:144px;width:36px;min-width:36px;max-width:36px}
+  table.data.csm-combined .cmb-4{left:180px;width:38px;min-width:38px;max-width:38px}
+  table.data.csm-combined .cmb-5{left:218px;width:60px;min-width:60px;max-width:60px}
+  table.data.csm-combined .cmb-6{left:278px;width:50px;min-width:50px;max-width:50px}
+  table.data.csm-combined .cmb-7{left:328px;width:60px;min-width:60px;max-width:60px;box-shadow:1px 0 0 var(--border)}
   /* Enterprise List table layout — narrow # column, generous Enterprise +
      Account Type + MRR / ARR. Prevents the index column from eating space. */
   table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
@@ -941,6 +961,17 @@ function commRagImputed(eid, en) {
   return null;
 }
 
+// Per-account Sentiment counts with the SAME imputation rule used by the
+// aggregate rollups (per user spec): graded CSAT readings are counted by RAG;
+// if there are NO graded readings but the account had >=1 interaction in the
+// period, assume a 5 -> {Green:1}; otherwise {} (NA / no interaction).
+function sentimentCountsImputed(eid, en) {
+  const cc = csatRagCountsForInRange(eid, en);
+  if (cc && Object.keys(cc).length) return cc;
+  if (commInteractionCount(eid, en) > 0) return { Green: 1 };
+  return {};
+}
+
 // Same as csatRagCountsFor() but filtered to the active periodRange(). Used by
 // the Rooftop View Communication "Score" column so it tracks the date
 // selector. Falls back to CSAT_ALL_BY_NAME with the same date filter when the
@@ -1335,7 +1366,7 @@ function sortStudioRows(rows, sortState) {
     // Sort by the numeric Communication Score (CSAT-history weighted blend).
     // null / no readings sinks to the bottom of asc; rises in desc.
     getter = r => {
-      const v = scoreValue(csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]), COMM_WEIGHTS);
+      const v = scoreValue(sentimentCountsImputed(r[S_COL.eid], r[S_COL.en]), COMM_WEIGHTS);
       return v == null ? -Infinity : v;
     };
   } else if (RAG_KEYS.has(key)) {
@@ -1378,7 +1409,7 @@ function sortViniRows(rows, sortState) {
       getter = r => ragSortKey(computeTicketRAG(r));
       break;
     case 'commScore':
-      getter = r => scoreValue(csatRagCountsForInRange(r.eid, r.en), COMM_WEIGHTS);
+      getter = r => scoreValue(sentimentCountsImputed(r.eid, r.en), COMM_WEIGHTS);
       break;
     case 'commRag':
       // Binary Comm. RAG: Green (has interaction) sorts above Red.
@@ -1416,7 +1447,7 @@ function sortEntListRows(rows, sortState) {
   switch (key) {
     case 'acct':       getter = r => r.acct || ''; break;
     case 'tixRag':     getter = r => ragSortKey(r._tixRag);   break;
-    case 'commScore':  getter = r => Number(r._commScoreNum) || 0; break;
+    case 'commScore':  getter = r => Number(r._sentScoreNum) || 0; break;
     case 'commRag':    getter = r => (Number(r._intCount)||0) > 0 ? 1 : 0;  break;
     case 'op':         getter = r => Number(r._tix?.op) || 0; break;
     case 'cr':         getter = r => Number(r._tix?.cr) || 0; break;
@@ -3224,6 +3255,10 @@ function renderEnterpriseList() {
     e._commCounts  = csatRagCountsForInRange(e.eid, e.en);
     e._commScoreNum= scoreValue(e._commCounts, COMM_WEIGHTS);
     e._commRag     = scoreRag(e._commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+    // Sentiment column uses the imputed counts: graded CSAT wins; else an
+    // account with >=1 interaction is assumed Green (5). Drives display + sort.
+    e._sentCounts  = sentimentCountsImputed(e.eid, e.en);
+    e._sentScoreNum= scoreValue(e._sentCounts, COMM_WEIGHTS);
     // Pre-cache the binary "has interaction" bit (0 or 100) for the
     // Interaction % column so sort + render don't redo the CSAT lookup
     // on every row. Per-enterprise rows are inherently binary; group
@@ -3272,7 +3307,7 @@ function renderEnterpriseList() {
       <td class="cell-payment">${payTile(e.t2)}</td>
       <td class="cell-payment">${payTile(e.t3)}</td>
       <td class="cell-payment">${ragSingle(e.prag)}</td>
-      <td class="cell-comm">${e._commScoreNum == null ? '<span style="color:var(--text-4)">NA</span>' : ragStack(e._commCounts)}</td>
+      <td class="cell-comm">${Object.keys(e._sentCounts).length ? ragStack(e._sentCounts) : '<span style="color:var(--text-4)">NA</span>'}</td>
       <td class="cell-comm">${intCountCell(e._intCount)}</td>
       <td class="cell-comm">${ragSingle((e._intCount||0) > 0 ? 'Green' : 'Red')}</td>
       <td class="cell-tickets">${fmtNum(e._tix.cr)}</td>
@@ -3422,16 +3457,24 @@ function studioCombinedMetrics(rows) {
     if (!k) return true; if (seenPay.has(k)) return false; seenPay.add(k); return true;
   });
   const t1Counts = countBy(entPay, r => r[S_COL.prag]);
-  // Communication — binary Comm. RAG + interaction % + CSAT Sentiment stack.
+  // Communication — binary Comm. RAG + interaction % + imputed Sentiment, all
+  // deduped to ONE rating per enterprise. Sentiment: graded CSAT reading wins;
+  // else interaction>0 ⇒ assumed Green (5); else excluded. (commRagImputed.)
   const intPctVal = commInteractionPct(active);
-  const commBin = { Green: 0, Red: 0 }; const seenC = new Set();
+  const commBin = { Green: 0, Red: 0 };
+  const sentimentCounts = {};
+  const seenC = new Set();
   for (const r of active) {
     const ek = r[S_COL.eid] || r[S_COL.en];
     if (!ek || seenC.has(ek)) continue;
     seenC.add(ek);
     if (commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0) commBin.Green++; else commBin.Red++;
+    const g = commRagImputed(r[S_COL.eid], r[S_COL.en]);
+    if (g) sentimentCounts[g] = (sentimentCounts[g] || 0) + 1;
   }
-  const sentimentCounts = countBy(active, r => commRagImputed(r[S_COL.eid], r[S_COL.en]));
+  // Report Sent — 7-day per-enterprise aggregate (same source as the Studio tab).
+  const reportSent    = groupSentPercent(rows.map(r => r[S_COL.eid]));
+  const reportSentVal = groupSentPctValue(rows.map(r => r[S_COL.eid]));
   // Quality — Pendency (6h) total.
   const pendency = sumBy(active, r => r[S_COL.pen]);
   // Usage — Jan→May VIN trend.
@@ -3443,7 +3486,7 @@ function studioCombinedMetrics(rows) {
   const eidList = active.map(r => r[S_COL.eid] || r[S_COL.en]).filter(Boolean);
   const unresolved = aggregateTicketsForEids(eidList, STUDIO_TIX).op;
   return { rt, ent, arr, finalCounts, t1Counts, intPctVal, commBin, sentimentCounts,
-           pendency, series, trend, unresolved };
+           reportSent, reportSentVal, pendency, series, trend, unresolved, eids: eidList };
 }
 
 // Vini-side metrics for the combined table (one CSM's Vini rows).
@@ -3459,7 +3502,11 @@ function viniCombinedMetrics(rows) {
     if (!r.eid) return true; if (seenT.has(r.eid)) return false; seenT.add(r.eid); return true;
   });
   const unresolved = sumBy(allByEid, r => r.op);
-  return { agents, arr, roiCounts, unresolved };
+  // Report Sent — same 7-day per-enterprise aggregate, over this CSM's Vini eids.
+  const vEids = active.map(r => r.eid).filter(Boolean);
+  const reportSent    = groupSentPercent(vEids);
+  const reportSentVal = groupSentPctValue(vEids);
+  return { agents, arr, roiCounts, unresolved, reportSent, reportSentVal, eids: vEids };
 }
 
 // Build one merged record per CSM across both products.
@@ -3532,9 +3579,11 @@ function sortCombinedRecs(recs, sortState) {
     case 't1':          getter = r => r.s ? scoreValue(r.s.t1Counts) : null; break;
     case 'commRag':     getter = r => r.s ? greenShare(r.s.commBin) : null; break;
     case 'sentiment':   getter = r => r.s ? scoreValue(r.s.sentimentCounts) : null; break;
+    case 'sSent':       getter = r => r.s ? r.s.reportSentVal : null; break;
     case 'pendency':    getter = r => r.s ? r.s.pendency : null; break;
     case 'trend':       getter = r => r.s ? (r.s.trend==='Rising'?3:r.s.trend==='Steady'?2:r.s.trend==='Declining'?1:0) : null; break;
     case 'sUnresolved': getter = r => r.s ? r.s.unresolved : null; break;
+    case 'vSent':       getter = r => r.v ? r.v.reportSentVal : null; break;
     case 'roi':         getter = r => r.v ? greenShare(r.v.roiCounts) : null; break;
     case 'vUnresolved': getter = r => r.v ? r.v.unresolved : null; break;
     default:            getter = r => 0;
@@ -3552,72 +3601,120 @@ function renderDisplayView() {
 
   const tk = 'csmCombined';
   let html = '<table class="data csm-summary csm-combined"><thead>' +
-    // Tier 1 — product band.
+    // Tier 1 — product band (frozen identity span pinned left through Vini ARR).
     '<tr class="prod">' +
-      '<th></th>' +
-      '<th colspan="4" class="prod-studio">Studio</th>' +
-      '<th colspan="2" class="prod-vini">Vini</th>' +
-      '<th colspan="4"></th>' +
-      '<th colspan="3" class="prod-studio">Studio</th>' +
-      '<th colspan="2" class="prod-vini">Vini</th>' +
+      '<th class="cmbf" style="left:0" colspan="2"></th>' +
+      '<th class="cmbf prod-studio" style="left:144px" colspan="3">Studio</th>' +
+      '<th class="cmbf prod-vini" style="left:278px" colspan="2">Vini</th>' +
+      '<th colspan="8" class="prod-studio">Studio</th>' +
+      '<th colspan="3" class="prod-vini">Vini</th>' +
     '</tr>' +
     // Tier 2 — bucket band.
     '<tr class="group">' +
-      '<th></th>' +
-      '<th colspan="6"></th>' +
-      '<th class="g-final"></th>' +
+      '<th class="cmbf" style="left:0" colspan="2"></th>' +
+      '<th class="cmbf" style="left:144px" colspan="5"></th>' +
+      '<th class="g-final">Final</th>' +
       '<th class="g-payment">Payment</th>' +
       '<th colspan="2" class="g-comm">Communication</th>' +
+      '<th class="g-rs">Report</th>' +
       '<th class="g-quality">Quality</th>' +
       '<th class="g-usage">Usage</th>' +
       '<th class="g-tickets">Ticket</th>' +
-      '<th class="g-usage">Usage</th>' +
+      '<th class="g-rs">Report</th>' +
+      '<th class="g-roi">ROI</th>' +
       '<th class="g-tickets">Ticket</th>' +
     '</tr>' +
-    // Tier 3 — leaf columns (sortable).
+    // Tier 3 — leaf columns (sortable). First 7 are frozen (cmbf cmb-1..7).
     '<tr class="cols">' +
-      '<th class="ent-idx" style="text-align:right">#</th>' +
-      sortTh('CSM Name', 'csm', tk, 'left') +
-      sortTh('Rt', 'rt', tk) +
-      sortTh('Ent', 'ent', tk) +
-      sortTh('Studio ARR', 'sArr', tk) +
-      sortTh('Vini Agents', 'vAgents', tk) +
-      sortTh('Vini ARR', 'vArr', tk) +
+      '<th class="ent-idx cmbf cmb-1" style="text-align:right">#</th>' +
+      sortTh('CSM Name', 'csm', tk, 'left cmbf cmb-2') +
+      sortTh('Rt', 'rt', tk, 'cmbf cmb-3') +
+      sortTh('Ent', 'ent', tk, 'cmbf cmb-4') +
+      sortTh('Studio ARR', 'sArr', tk, 'cmbf cmb-5') +
+      sortTh('Agents', 'vAgents', tk, 'cmbf cmb-6') +
+      sortTh('Vini ARR', 'vArr', tk, 'cmbf cmb-7') +
       sortTh('Final RAG', 'final', tk, 'cell-final') +
       sortTh('T-1', 't1', tk, 'cell-payment') +
       sortTh('Comm. RAG', 'commRag', tk, 'cell-comm') +
       sortTh('Sentiment', 'sentiment', tk, 'cell-comm') +
+      sortTh('Sent', 'sSent', tk, 'cell-rs') +
       sortTh('Pendency (6 Hrs)', 'pendency', tk, 'cell-quality') +
       sortTh('Trend', 'trend', tk, 'cell-usage') +
       sortTh('# Unresolved', 'sUnresolved', tk, 'cell-tickets') +
-      sortTh('MTD RoI', 'roi', tk, 'cell-usage') +
+      sortTh('Sent', 'vSent', tk, 'cell-rs') +
+      sortTh('MTD', 'roi', tk, 'cell-roi') +
       sortTh('# Unresolved', 'vUnresolved', tk, 'cell-tickets') +
     '</tr></thead><tbody>';
+
+  // Running totals for the footer row.
+  const tot = { rt:0, ent:0, sArr:0, vAgents:0, vArr:0, pendency:0, sUnresolved:0,
+    vUnresolved:0, finalCounts:{}, t1Counts:{}, commBin:{Green:0,Red:0},
+    sentimentCounts:{}, roiCounts:{}, series:[0,0,0,0,0], sEids:[], vEids:[] };
+  const addCounts = (dst, src) => { if (src) for (const k in src) dst[k] = (dst[k]||0) + src[k]; };
 
   recs.forEach((rec, i) => {
     const s = rec.s, v = rec.v;
     const commRagCell = s
       ? `${ragStack(s.commBin)}${s.intPctVal != null ? ` <span style="color:var(--text-3)">(${Math.round(s.intPctVal)}%)</span>` : ''}`
       : _muteDash;
+    if (s) {
+      tot.rt += s.rt; tot.ent += s.ent; tot.sArr += s.arr; tot.pendency += s.pendency;
+      tot.sUnresolved += s.unresolved;
+      addCounts(tot.finalCounts, s.finalCounts); addCounts(tot.t1Counts, s.t1Counts);
+      tot.commBin.Green += s.commBin.Green; tot.commBin.Red += s.commBin.Red;
+      addCounts(tot.sentimentCounts, s.sentimentCounts);
+      s.series.forEach((x, j) => tot.series[j] += x);
+      if (s.eids) tot.sEids.push(...s.eids);
+    }
+    if (v) {
+      tot.vAgents += v.agents; tot.vArr += v.arr; tot.vUnresolved += v.unresolved;
+      addCounts(tot.roiCounts, v.roiCounts);
+      if (v.eids) tot.vEids.push(...v.eids);
+    }
     html += `<tr>
-      <td class="ent-idx" style="text-align:right">${i + 1}</td>
-      <td class="left">${rec.name}</td>
-      <td>${s ? fmtNum(s.rt) : _muteDash}</td>
-      <td>${s ? fmtNum(s.ent) : _muteDash}</td>
-      <td>${s && s.arr ? fmtMoney(s.arr) : _muteDash}</td>
-      <td>${v ? fmtNum(v.agents) : _muteDash}</td>
-      <td>${v && v.arr ? fmtMoney(v.arr) : _muteDash}</td>
+      <td class="ent-idx cmbf cmb-1" style="text-align:right">${i + 1}</td>
+      <td class="left cmbf cmb-2">${rec.name}</td>
+      <td class="cmbf cmb-3">${s ? fmtNum(s.rt) : _muteDash}</td>
+      <td class="cmbf cmb-4">${s ? fmtNum(s.ent) : _muteDash}</td>
+      <td class="cmbf cmb-5">${s && s.arr ? fmtMoney(s.arr) : _muteDash}</td>
+      <td class="cmbf cmb-6">${v ? fmtNum(v.agents) : _muteDash}</td>
+      <td class="cmbf cmb-7">${v && v.arr ? fmtMoney(v.arr) : _muteDash}</td>
       <td class="cell-final">${s && Object.keys(s.finalCounts).length ? ragStack(s.finalCounts) : _muteDash}</td>
       <td class="cell-payment">${s && Object.keys(s.t1Counts).length ? ragStack(s.t1Counts) : _muteDash}</td>
       <td class="cell-comm">${commRagCell}</td>
       <td class="cell-comm">${s && Object.keys(s.sentimentCounts).length ? ragStack(s.sentimentCounts) : _muteDash}</td>
+      <td class="cell-rs">${s ? s.reportSent : _muteDash}</td>
       <td class="cell-quality">${s ? fmtNum(s.pendency) : _muteDash}</td>
       <td class="cell-usage">${s ? sparklineCell(s.series, s.trend) : _muteDash}</td>
       <td class="cell-tickets">${s ? fmtNum(s.unresolved) : _muteDash}</td>
-      <td class="cell-usage">${v && Object.keys(v.roiCounts).length ? ragStack(v.roiCounts) : _muteDash}</td>
+      <td class="cell-rs">${v ? v.reportSent : _muteDash}</td>
+      <td class="cell-roi">${v && Object.keys(v.roiCounts).length ? ragStack(v.roiCounts) : _muteDash}</td>
       <td class="cell-tickets">${v ? fmtNum(v.unresolved) : _muteDash}</td>
     </tr>`;
   });
+
+  // Totals row.
+  const totTrend = usageTrend(tot.series);
+  html += `<tr class="total-row">
+    <td class="ent-idx cmbf cmb-1" style="text-align:right"></td>
+    <td class="left cmbf cmb-2"><strong>Total</strong></td>
+    <td class="cmbf cmb-3">${fmtNum(tot.rt)}</td>
+    <td class="cmbf cmb-4">${fmtNum(tot.ent)}</td>
+    <td class="cmbf cmb-5">${tot.sArr ? fmtMoney(tot.sArr) : _muteDash}</td>
+    <td class="cmbf cmb-6">${fmtNum(tot.vAgents)}</td>
+    <td class="cmbf cmb-7">${tot.vArr ? fmtMoney(tot.vArr) : _muteDash}</td>
+    <td class="cell-final">${Object.keys(tot.finalCounts).length ? ragStack(tot.finalCounts) : _muteDash}</td>
+    <td class="cell-payment">${Object.keys(tot.t1Counts).length ? ragStack(tot.t1Counts) : _muteDash}</td>
+    <td class="cell-comm">${(tot.commBin.Green + tot.commBin.Red) ? ragStack(tot.commBin) : _muteDash}</td>
+    <td class="cell-comm">${Object.keys(tot.sentimentCounts).length ? ragStack(tot.sentimentCounts) : _muteDash}</td>
+    <td class="cell-rs">${groupSentPercent(tot.sEids)}</td>
+    <td class="cell-quality">${fmtNum(tot.pendency)}</td>
+    <td class="cell-usage">${sparklineCell(tot.series, totTrend)}</td>
+    <td class="cell-tickets">${fmtNum(tot.sUnresolved)}</td>
+    <td class="cell-rs">${groupSentPercent(tot.vEids)}</td>
+    <td class="cell-roi">${Object.keys(tot.roiCounts).length ? ragStack(tot.roiCounts) : _muteDash}</td>
+    <td class="cell-tickets">${fmtNum(tot.vUnresolved)}</td>
+  </tr>`;
   html += '</tbody></table>';
   wrap.innerHTML = html;
 }
@@ -4049,7 +4146,7 @@ function renderRooftop() {
       const sKey = r[S_COL.eid] || r[S_COL.en];
       if (sKey && !seenEidCommScore.has(sKey)) {
         seenEidCommScore.add(sKey);
-        const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]);
+        const cc = sentimentCountsImputed(r[S_COL.eid], r[S_COL.en]);
         Object.entries(cc).forEach(([k,v]) => { sCommScore[k] = (sCommScore[k]||0) + v; });
       }
       inc(sOverall, studioRooftopOverallRag(r, rTrag));
@@ -4082,7 +4179,7 @@ function renderRooftop() {
         <td class="cell-payment">${payTile(r[S_COL.t2])}</td>
         <td class="cell-payment">${payTile(r[S_COL.t3])}</td>
         <td class="cell-payment">${ragSingle(r[S_COL.prag])}</td>
-        <td class="cell-comm">${(() => { const cc = csatRagCountsForInRange(r[S_COL.eid], r[S_COL.en]); const s = scoreValue(cc, COMM_WEIGHTS); return s == null ? '<span style="color:var(--text-4)">NA</span>' : ragStack(cc); })()}</td>
+        <td class="cell-comm">${(() => { const cc = sentimentCountsImputed(r[S_COL.eid], r[S_COL.en]); return Object.keys(cc).length ? ragStack(cc) : '<span style="color:var(--text-4)">NA</span>'; })()}</td>
         <td class="cell-comm">${intCountCell(commInteractionCount(r[S_COL.eid], r[S_COL.en]))}</td>
         <td class="cell-comm">${ragSingle(commInteractionCount(r[S_COL.eid], r[S_COL.en]) > 0 ? 'Green' : 'Red')}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_jan])}</td>
@@ -4242,12 +4339,14 @@ function renderRooftop() {
       const isChurned = String(r.stage||'').toLowerCase() === 'churned';
       const liveArr = isChurned ? 0 : r.arr;
       // Per-row Communication Score (numeric) + Final RAG (single chip).
+      // commFinalRag (account-health) stays on raw CSAT; the Sentiment column
+      // uses the imputed counts (interaction>0 & no score ⇒ assumed Green).
       const commCounts = csatRagCountsForInRange(r.eid, r.en);
-      const commScoreNum = scoreValue(commCounts, COMM_WEIGHTS);
       const commFinalRag = scoreRag(commCounts, COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
-      const commScoreCell = commScoreNum == null
-        ? '<span style="color:var(--text-4)">NA</span>'
-        : ragStack(commCounts);
+      const sentCounts = sentimentCountsImputed(r.eid, r.en);
+      const commScoreCell = Object.keys(sentCounts).length
+        ? ragStack(sentCounts)
+        : '<span style="color:var(--text-4)">NA</span>';
       // Total-row accumulators
       tMrr += Number(r.mrr)||0;  tLiveArr += Number(liveArr)||0;
       tTouch += Number(r.touched)||0; tQual += Number(r.qualified)||0;
@@ -4272,7 +4371,7 @@ function renderRooftop() {
       }
       if (r.eid && !seenEidComm.has(r.eid)) {
         seenEidComm.add(r.eid);
-        Object.entries(commCounts).forEach(([k,v]) => { tCommScore[k] = (tCommScore[k]||0) + v; });
+        Object.entries(sentCounts).forEach(([k,v]) => { tCommScore[k] = (tCommScore[k]||0) + v; });
         incCount(tFinalRag, commFinalRag);
         // Binary Comm. RAG total: Green if enterprise had ≥1 interaction else Red.
         incCount(tCommBinary, commInteractionCount(r.eid, r.en) > 0 ? 'Green' : 'Red');
