@@ -411,20 +411,22 @@
   .int-count.int-md{background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE}
   .int-count.int-hi{background:#D1FAE5;color:#065F46;border-color:#A7F3D0}
   .cell-comm{text-align:center}
-  /* CSM Summary — center every bucket column (Final Status → Tickets) in both
-     header and body so the RAG stacks / pills sit under their group label. */
+  /* CSM Summary — RIGHT-align every bucket column (Final Status → Tickets) in
+     both header and body (default table alignment, not centered). */
   table.data.csm-summary thead tr.cols th.cell-final,
   table.data.csm-summary thead tr.cols th.cell-roi,
   table.data.csm-summary thead tr.cols th.cell-payment,
+  table.data.csm-summary thead tr.cols th.cell-comm,
   table.data.csm-summary thead tr.cols th.cell-usage,
   table.data.csm-summary thead tr.cols th.cell-quality,
   table.data.csm-summary thead tr.cols th.cell-tickets,
   table.data.csm-summary tbody td.cell-final,
   table.data.csm-summary tbody td.cell-roi,
   table.data.csm-summary tbody td.cell-payment,
+  table.data.csm-summary tbody td.cell-comm,
   table.data.csm-summary tbody td.cell-usage,
   table.data.csm-summary tbody td.cell-quality,
-  table.data.csm-summary tbody td.cell-tickets{text-align:center}
+  table.data.csm-summary tbody td.cell-tickets{text-align:right}
   /* Enterprise List table layout — narrow # column, generous Enterprise +
      Account Type + MRR / ARR. Prevents the index column from eating space. */
   table.data.ent-list .ent-idx{width:32px;min-width:32px;max-width:32px;text-align:center}
@@ -482,6 +484,7 @@
   <div class="sub-tabs">
     <button class="sub-tab active" data-view="overview">Overview</button>
     <button class="sub-tab" data-view="rooftop">Rooftop View</button>
+    <button class="sub-tab" data-view="display">Display_View</button>
   </div>
 
   <div class="filter-bar">
@@ -557,16 +560,6 @@
         <div class="table-wrap" id="csm-table-wrap"></div>
       </div>
     </div>
-    <!-- CSM SUMMARY — one condensed row per CSM. Columns: CSM · Rt · Ent · ARR ·
-         Overall RAG (sorted descending) · Report Sent · Payment Score · Comm
-         Interaction% · Comm. RAG · Usage Trend · Status · Quality · # Unresolved. -->
-    <div class="section-block" id="block-csm-summary">
-      <h2><span>CSM Summary</span><span class="count" id="csm-summary-count"></span></h2>
-      <div class="section">
-        <div class="section-head"><span class="section-title">Per-CSM account-health rollup</span></div>
-        <div class="table-wrap" id="csm-summary-wrap"></div>
-      </div>
-    </div>
   </div>
 
   <div class="view" id="view-rooftop" style="display:none">
@@ -608,6 +601,25 @@
         <span class="hint">case-insensitive, matches name or eid</span>
       </div>
       <div class="table-wrap" id="enterprise-list-wrap"></div>
+    </div>
+  </div>
+
+  <!-- DISPLAY VIEW — both CSM Summary rollups stacked: Studio first, then Vini.
+       Independent of the Studio/Vini product tab; always shows both products. -->
+  <div class="view" id="view-display" style="display:none">
+    <div class="section-block" id="block-display-studio">
+      <h2><span>Studio · CSM Summary</span><span class="count" id="display-studio-count"></span></h2>
+      <div class="section">
+        <div class="section-head"><span class="section-title">Per-CSM account-health rollup — Studio</span></div>
+        <div class="table-wrap" id="display-studio-wrap"></div>
+      </div>
+    </div>
+    <div class="section-block" id="block-display-vini">
+      <h2><span>Vini · CSM Summary</span><span class="count" id="display-vini-count"></span></h2>
+      <div class="section">
+        <div class="section-head"><span class="section-title">Per-CSM account-health rollup — Vini</span></div>
+        <div class="table-wrap" id="display-vini-wrap"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1032,7 +1044,7 @@ let state = {
   // .length and .includes() instead of strict equality.
   filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
-  sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummary: null },
+  sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null },
   rooftopContext: { kind:'all', value:null },
   rooftopSearch: ''    // case-insensitive substring filter on rooftop/enterprise name
 };
@@ -3055,7 +3067,6 @@ function renderOverviewStudio() {
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
   document.getElementById('csm-count').textContent = `· ${sorted.length} CSMs`;
-  renderCsmSummary();
   attachDrills();
 }
 
@@ -3129,7 +3140,6 @@ function renderOverviewVini() {
   );
   document.getElementById('csm-h2-text').textContent = 'CSM-level view';
   document.getElementById('csm-count').textContent = `· ${sorted.length} CSMs`;
-  renderCsmSummary();
   attachDrills();
 }
 
@@ -3340,12 +3350,12 @@ function groupSentPctValue(eids) {
 function csmGreenPct(rec) {
   return rec.rt > 0 ? ((rec.overallCounts.Green || 0) / rec.rt) * 100 : 0;
 }
-function toggleCsmSummarySort(key) {
-  const cur = state.sort.csmSummary;
-  if (!cur || cur.key !== key) state.sort.csmSummary = { key, dir: 'asc' };
-  else if (cur.dir === 'asc')  state.sort.csmSummary = { key, dir: 'desc' };
-  else                         state.sort.csmSummary = null;
-  renderCsmSummary();
+function toggleCsmSummarySort(tableKey, key) {
+  const cur = state.sort[tableKey];
+  if (!cur || cur.key !== key) state.sort[tableKey] = { key, dir: 'asc' };
+  else if (cur.dir === 'asc')  state.sort[tableKey] = { key, dir: 'desc' };
+  else                         state.sort[tableKey] = null;
+  renderDisplayView();
 }
 function sortCsmSummaryRecs(recs, sortState) {
   const s = recs.slice();
@@ -3375,10 +3385,18 @@ function sortCsmSummaryRecs(recs, sortState) {
   return s.sort(makeCmp(getter, dir));
 }
 
-function renderCsmSummary() {
-  const wrap = document.getElementById('csm-summary-wrap');
+// Display View — render BOTH product rollups (Studio first, then Vini). Each
+// table keeps its own independent sort state so a header click on one doesn't
+// reorder the other.
+function renderDisplayView() {
+  renderCsmSummaryInto('studio', 'display-studio-wrap', 'display-studio-count', 'csmSummaryStudio');
+  renderCsmSummaryInto('vini',   'display-vini-wrap',   'display-vini-count',   'csmSummaryVini');
+}
+
+function renderCsmSummaryInto(product, wrapId, countId, sortTableKey) {
+  const wrap = document.getElementById(wrapId);
   if (!wrap) return;
-  const isStudio = state.product === 'studio';
+  const isStudio = product === 'studio';
   const rows = isStudio ? getStudio() : getVini();
 
   // Group the filtered rows by CSM.
@@ -3394,16 +3412,17 @@ function renderCsmSummary() {
     recs.push(isStudio ? studioCsmSummary(csm, grpRows) : viniCsmSummary(csm, grpRows));
   });
   // Default sort: Overall RAG DESC by green-share of rooftops (ARR tiebreak).
-  // Any column-header click overrides via state.sort.csmSummary. Row number
+  // Any column-header click overrides via state.sort[sortTableKey]. Row number
   // reflects the current ranking.
-  const sortedRecs = sortCsmSummaryRecs(recs, state.sort.csmSummary);
+  const sortedRecs = sortCsmSummaryRecs(recs, state.sort[sortTableKey]);
 
-  const cntEl = document.getElementById('csm-summary-count');
+  const cntEl = document.getElementById(countId);
   if (cntEl) cntEl.textContent = `· ${sortedRecs.length} CSM${sortedRecs.length === 1 ? '' : 's'}`;
 
   let html = '<table class="data csm-summary"><thead>' +
     '<tr class="group">' +
-      '<th colspan="5"></th>' +
+      '<th colspan="2"></th>' +
+      '<th colspan="3"></th>' +
       '<th class="g-final">Final Status</th>' +
       '<th class="g-roi">RoI</th>' +
       '<th class="g-payment">Payment</th>' +
@@ -3413,28 +3432,28 @@ function renderCsmSummary() {
       '<th class="g-tickets">Tickets</th>' +
     '</tr>' +
     '<tr class="cols">' +
-      sortTh('CSM', 'csm', 'csmSummary', 'left') +
-      sortTh('Rt', 'rt', 'csmSummary') +
-      sortTh('Ent', 'ent', 'csmSummary') +
-      sortTh('ARR', 'arr', 'csmSummary') +
-      '<th class="ent-idx" style="text-align:center">#</th>' +
-      sortTh('Overall RAG', 'overall', 'csmSummary', 'cell-final') +
-      sortTh('Report Sent', 'reportSent', 'csmSummary', 'cell-roi') +
-      sortTh('Payment Score', 'payment', 'csmSummary', 'cell-payment') +
-      sortTh('Interaction %', 'intPct', 'csmSummary', 'cell-comm') +
-      sortTh('Comm. RAG', 'commRag', 'csmSummary', 'cell-comm') +
-      sortTh('Usage Trend', 'usageTrend', 'csmSummary', 'cell-usage') +
-      sortTh('Status', 'status', 'csmSummary', 'cell-usage') +
-      sortTh('Quality', 'quality', 'csmSummary', 'cell-quality') +
-      sortTh('# Unresolved', 'unresolved', 'csmSummary', 'cell-tickets') +
+      '<th class="ent-idx" style="text-align:right">#</th>' +
+      sortTh('CSM', 'csm', sortTableKey, 'left') +
+      sortTh('Rt', 'rt', sortTableKey) +
+      sortTh('Ent', 'ent', sortTableKey) +
+      sortTh('ARR', 'arr', sortTableKey) +
+      sortTh('Overall RAG', 'overall', sortTableKey, 'cell-final') +
+      sortTh('Report Sent', 'reportSent', sortTableKey, 'cell-roi') +
+      sortTh('Payment Score', 'payment', sortTableKey, 'cell-payment') +
+      sortTh('Interaction %', 'intPct', sortTableKey, 'cell-comm') +
+      sortTh('Comm. RAG', 'commRag', sortTableKey, 'cell-comm') +
+      sortTh('Usage Trend', 'usageTrend', sortTableKey, 'cell-usage') +
+      sortTh('Status', 'status', sortTableKey, 'cell-usage') +
+      sortTh('Quality', 'quality', sortTableKey, 'cell-quality') +
+      sortTh('# Unresolved', 'unresolved', sortTableKey, 'cell-tickets') +
     '</tr></thead><tbody>';
   sortedRecs.forEach((rec, i) => {
     html += `<tr>
+      <td class="ent-idx" style="text-align:right">${i + 1}</td>
       <td class="left">${rec.csmLabel}</td>
       <td>${fmtNum(rec.rt)}</td>
       <td>${fmtNum(rec.ent)}</td>
       <td>${rec.arr ? fmtMoney(rec.arr) : '—'}</td>
-      <td class="ent-idx" style="text-align:center">${i + 1}</td>
       <td class="cell-final">${Object.keys(rec.overallCounts).length ? ragStack(rec.overallCounts) : _muteDash}</td>
       <td class="cell-roi">${rec.reportSent}</td>
       <td class="cell-payment">${rec.paymentScore}</td>
@@ -4447,6 +4466,7 @@ window.addEventListener('load', () => { refreshAllSheets(); });
 function renderAll() {
   document.getElementById('view-overview').style.display = state.view==='overview' ? 'block' : 'none';
   document.getElementById('view-rooftop').style.display = state.view==='rooftop' ? 'block' : 'none';
+  document.getElementById('view-display').style.display = state.view==='display' ? 'block' : 'none';
   document.querySelectorAll('.sub-tab').forEach(t => t.classList.toggle('active', t.dataset.view===state.view));
   document.querySelectorAll('.top-tab').forEach(t => t.classList.toggle('active', t.dataset.product===state.product));
 
@@ -4463,6 +4483,8 @@ function renderAll() {
 
   if (state.view === 'overview') {
     if (isStudio) renderOverviewStudio(); else renderOverviewVini();
+  } else if (state.view === 'display') {
+    renderDisplayView();
   } else {
     renderRooftop();
   }
@@ -4506,7 +4528,8 @@ document.addEventListener('click', e => {
   if (table === 'studioRooftop') toggleStudioSort(key);
   else if (table === 'viniRooftop') toggleViniSort(key);
   else if (table === 'entList')     toggleEntListSort(key);
-  else if (table === 'csmSummary')  toggleCsmSummarySort(key);
+  else if (table === 'csmSummaryStudio') toggleCsmSummarySort('csmSummaryStudio', key);
+  else if (table === 'csmSummaryVini')   toggleCsmSummarySort('csmSummaryVini', key);
 });
 
 // ============================================================
@@ -4644,7 +4667,7 @@ FILTER_KEYS.forEach(key => {
 
 document.getElementById('f-reset').addEventListener('click', () => {
   state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
-  state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummary: null };
+  state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null };
   state.rooftopContext = { kind:'all', value:null };
   syncAllFilterSelects();
   renderAll();
