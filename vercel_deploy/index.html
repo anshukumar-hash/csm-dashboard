@@ -154,6 +154,9 @@
   .csv-btn{padding:4px 10px;font-size:11.5px;border:1px solid var(--border-strong);background:var(--surface);border-radius:6px;cursor:pointer;color:var(--text-2)}
 
   .table-wrap{overflow-x:auto;max-height:75vh;overflow-y:auto}
+  /* CSM-level view: show every CSM (+ Total) in one go — no inner vertical
+     scroll cap. Horizontal scroll stays for the wide bucket columns. */
+  #csm-table-wrap{max-height:none;overflow-y:visible}
   table.data{width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px}
   /* Pin the entire thead to top so vertical scroll keeps headers visible.
      Non-frozen thead cells sit at z-index 4. Frozen body cells: 12. Frozen
