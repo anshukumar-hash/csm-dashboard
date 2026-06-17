@@ -41,6 +41,15 @@ async function fetchCard({ key, dashcard, card }) {
   const out = rows.map(r => {
     const o = {};
     cols.forEach((name, i) => { o[name] = r[i]; });
+    // Normalize ARR to whole US dollars. Metabase's `arr_cents` column actually
+    // holds the dollar figure (per business definition, e.g. 7500 => $7,500);
+    // the `arr` column is that value / 100. Prefer arr_cents when present (the
+    // resolved card); otherwise recover it as arr*100 (verified identical to
+    // arr_cents on every resolved row). After this, o.arr is always US dollars.
+    const dollars = (o.arr_cents !== undefined && o.arr_cents !== null && o.arr_cents !== '')
+      ? Number(o.arr_cents)
+      : Math.round((Number(o.arr) || 0) * 100);
+    o.arr = dollars;
     return o;
   });
   return { rows: out, cols };
