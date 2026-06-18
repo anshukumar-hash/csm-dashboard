@@ -1398,10 +1398,14 @@ function Title-Token($t) {
     return $t.Substring(0,1).ToUpper() + $t.Substring(1).ToLower()
 }
 function Csm-Display($raw) {
-    $s = ([string]$raw).Trim()
+    # Normalize CSM identity to ONE canonical form so the dropdown doesn't show
+    # dirty duplicates (e.g. a stray tab + lowercase "\tankur Batra" vs the clean
+    # "Ankur Batra"). Strip an email domain if present, then split on dots /
+    # underscores / ANY whitespace (incl. tabs) and Title-Case each token.
+    $s = (([string]$raw) -replace '\s+', ' ').Trim()
     if (-not $s) { return 'Unassigned' }
     if ($s.Contains('@')) { $s = $s.Substring(0, $s.IndexOf('@')) }
-    $toks = $s -split '[._]+' | Where-Object { $_ -ne '' } | ForEach-Object { Title-Token $_ }
+    $toks = $s -split '[._\s]+' | Where-Object { $_ -ne '' } | ForEach-Object { Title-Token $_ }
     $disp = ($toks -join ' ').Trim()
     if (-not $disp) { return 'Unassigned' }
     return $disp
