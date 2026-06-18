@@ -57,6 +57,10 @@ $urls = @{
     # Cols: E=customer_status, V=EnterprisesID, Y=Service_period_Start_date,
     # Z=Service_period_End_date.
     payperiods = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1395015507&headers=1"
+    # Churn-analysis source — a SEPARATE Spyne churn-tracker spreadsheet (NOT
+    # $sheetId), gid=646726928. Feeds window.__CHURN_ANALYSIS__ (the Churn
+    # Intelligence tab) independently of the main dashboard data above.
+    churn   = "https://docs.google.com/spreadsheets/d/1FZUApKKZ8jl3qflDJI_Ic7UxuJ72rU0ocrqiUax0wHU/gviz/tq?tqx=out:json&gid=646726928"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -1378,6 +1382,82 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"report_coverage":' + $jsonCoverage +
             ',"report_tracking":' + $jsonTracking
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
+
+# --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
+# Source: the SEPARATE Spyne churn tracker (see $urls.churn, gid=646726928).
+# Row 0 is a "do not shift columns" note; row 1 is the header; data begins at
+# row 2. Columns are at FIXED 0-indexed positions (labels are blank in gviz):
+#   A=eid  B=customer  C=segment  D=ARR  E=churn-month(date)  F=product
+#   G=region  J=CSM email  N=billing-status  O=category  S=reason
+#   T=regrettable/unregrettable  W=leader-approved
+# CSM email local-part → "First Last" display (anuj.tewatia → Anuj Tewatia).
+# On ANY fetch/parse failure we PRESERVE the existing embedded block (the
+# __CHURN_ANALYSIS__ line is left untouched) rather than wiping the tab.
+function Title-Token($t) {
+    if (-not $t) { return '' }
+    return $t.Substring(0,1).ToUpper() + $t.Substring(1).ToLower()
+}
+function Csm-Display($raw) {
+    $s = ([string]$raw).Trim()
+    if (-not $s) { return 'Unassigned' }
+    if ($s.Contains('@')) { $s = $s.Substring(0, $s.IndexOf('@')) }
+    $toks = $s -split '[._]+' | Where-Object { $_ -ne '' } | ForEach-Object { Title-Token $_ }
+    $disp = ($toks -join ' ').Trim()
+    if (-not $disp) { return 'Unassigned' }
+    return $disp
+}
+$churnJson = $null
+try {
+    $caTab  = Fetch-Gviz $urls.churn 50    # ~445 records typical
+    $caRecs = New-Object System.Collections.Generic.List[string]
+    foreach ($row in $caTab.rows) {
+        $c = $row.c
+        if (-not $c) { continue }
+        $eid = ([string](Gviz-Val $c[0])).Trim()
+        if (-not $eid) { continue }
+        if ($eid -eq 'New Enterprise ID') { continue }   # header row
+        if ($eid -match 'Do not shift')   { continue }   # note row
+        $monRaw = [string](Gviz-Date $c[4])
+        $mon = if ($monRaw -match '^(\d{4})-(\d{2})') { "$($matches[1])-$($matches[2])" } else { '' }
+        $rsnRaw = ([string](Gviz-Val $c[18])).Trim()
+        $rgrRaw = ([string](Gviz-Val $c[19])).Trim()
+        $parts = @(
+            '"eid":'  + (JsEscape $eid),
+            '"cust":' + (JsEscape ([string](Gviz-Val $c[1]))),
+            '"seg":'  + (JsEscape ([string](Gviz-Val $c[2]))),
+            '"arr":'  + ([string][double](Parse-Money (Gviz-Val $c[3]))),
+            '"mon":'  + (JsEscape $mon),
+            '"prod":' + (JsEscape ([string](Gviz-Val $c[5]))),
+            '"reg":'  + (JsEscape ([string](Gviz-Val $c[6]))),
+            '"csm":'  + (JsEscape (Csm-Display (Gviz-Val $c[9]))),
+            '"cat":'  + (JsEscape ([string](Gviz-Val $c[14]))),
+            '"rsn":'  + (JsEscape $(if ($rsnRaw) { $rsnRaw } else { 'Not Tagged' })),
+            '"rgr":'  + (JsEscape $(if ($rgrRaw) { $rgrRaw } else { 'Untagged' })),
+            '"appr":' + (JsEscape ([string](Gviz-Val $c[22]))),
+            '"bill":' + (JsEscape ([string](Gviz-Val $c[13])))
+        )
+        $caRecs.Add('{' + ($parts -join ',') + '}')
+    }
+    if ($caRecs.Count -gt 0) {
+        $churnJson = '[' + ($caRecs -join ',') + ']'
+        Write-Host "  churn_analysis: $($caRecs.Count) records"
+    } else {
+        Write-Host "  churn_analysis: WARNING — 0 records parsed; preserving existing block."
+    }
+} catch {
+    Write-Host "  churn_analysis: WARNING — fetch failed ($_). Preserving existing block."
+}
+if ($churnJson) {
+    $caIdx = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'window\.__CHURN_ANALYSIS__\s*=') { $caIdx = $i; break }
+    }
+    if ($caIdx -ge 0) {
+        $lines[$caIdx] = 'window.__CHURN_ANALYSIS__ = ' + $churnJson + ';'
+    } else {
+        Write-Host "  churn_analysis: WARNING — __CHURN_ANALYSIS__ line not found; skipping splice."
+    }
+}
 
 $prefix='window.__DASHBOARD_DATA__ = '
 $lines[$dlIdx] = $prefix + $json + ';'
