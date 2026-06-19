@@ -103,7 +103,7 @@ export default async function handler(req, res) {
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
       body: JSON.stringify({
         model: process.env.VISION_MODEL || DEFAULT_MODEL,
-        max_tokens: 1024,
+        max_tokens: 800,
         temperature: 0.4,
         messages: [{ role: 'system', content: system }, ...history],
       }),
