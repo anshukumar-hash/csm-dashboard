@@ -1,25 +1,24 @@
-// Vision chat — server-side proxy to the Anthropic Messages API.
+// Vision chat — server-side proxy to the Google Gemini API (free tier).
 //
 // WHY THIS EXISTS
-// The dashboard is a static, public HTML page. An Anthropic API key must NEVER
-// be embedded in it (anyone could read it via View Source). This serverless
-// function keeps the key on the server: the browser POSTs the question + a
-// compact snapshot of the dashboard data here, and this function adds the key
-// and forwards to Anthropic. The key is read from the ANTHROPIC_API_KEY env var.
+// The dashboard is a static, public HTML page. An API key must NEVER be embedded
+// in it (anyone could read it via View Source). This serverless function keeps
+// the key on the server: the browser POSTs the question + a compact snapshot of
+// the dashboard data here, and this function adds the key and forwards it to
+// Gemini. The key is read from the GEMINI_API_KEY env var.
 //
 // SETUP (the dashboard owner does this once — I cannot enter credentials):
-//   1. Get an API key from https://console.anthropic.com/  (Settings → API Keys).
+//   1. Get a FREE key at https://aistudio.google.com/apikey  (no credit card).
 //   2. In the Vercel project → Settings → Environment Variables, add:
-//        Name:  ANTHROPIC_API_KEY     Value: <your key>     (Production + Preview)
+//        Name:  GEMINI_API_KEY     Value: <your key>     (Production + Preview)
 //      Optionally:
-//        Name:  VISION_MODEL          Value: claude-3-5-sonnet-latest  (override)
+//        Name:  VISION_MODEL       Value: gemini-2.0-flash   (override)
 //   3. Redeploy. The "Vision" bubble then works on the Vercel URL.
 //
 // NOTE: GitHub Pages has no serverless runtime, so Vision only works on the
 // Vercel deployment. On other hosts the bubble shows a friendly setup notice.
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const DEFAULT_MODEL = 'claude-3-5-sonnet-latest';
+const DEFAULT_MODEL = 'gemini-2.0-flash';
 const MAX_CONTEXT_CHARS = 180000; // guard against oversized payloads
 
 const CORS = {
@@ -47,11 +46,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); res.end(); return; }
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST.' });
 
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) {
     return send(res, 503, {
-      error: 'Vision is not configured yet. Add an ANTHROPIC_API_KEY environment ' +
-             'variable to the Vercel project (Settings → Environment Variables) and redeploy.',
+      error: 'Vision is not configured yet. Add a GEMINI_API_KEY environment ' +
+             'variable to the Vercel project (Settings → Environment Variables) and redeploy. ' +
+             'Get a free key at https://aistudio.google.com/apikey',
     });
   }
 
@@ -86,41 +86,45 @@ export default async function handler(req, res) {
     '- Keep answers under ~200 words unless the user asks for a deep dive.\n\n' +
     'DASHBOARD SNAPSHOT (JSON):\n' + (contextStr || '(none provided)');
 
-  // Sanitize messages to the minimal {role, content} shape Anthropic expects.
-  const apiMessages = messages
+  // Map our {role:'user'|'assistant'} history to Gemini's {role:'user'|'model'} turns.
+  const contents = messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-    .map((m) => ({ role: m.role, content: m.content }))
-    .slice(-20); // keep the last 20 turns
+    .slice(-20)
+    .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
 
-  if (!apiMessages.length || apiMessages[apiMessages.length - 1].role !== 'user') {
+  if (!contents.length || contents[contents.length - 1].role !== 'user') {
     return send(res, 400, { error: 'Last message must be from the user.' });
   }
 
+  const model = process.env.VISION_MODEL || DEFAULT_MODEL;
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+    encodeURIComponent(model) + ':generateContent';
+
   try {
-    const upstream = await fetch(ANTHROPIC_URL, {
+    const upstream = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        model: process.env.VISION_MODEL || DEFAULT_MODEL,
-        max_tokens: 1024,
-        system,
-        messages: apiMessages,
+        systemInstruction: { parts: [{ text: system }] },
+        contents,
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.4 },
       }),
     });
 
     const data = await upstream.json().catch(() => ({}));
     if (!upstream.ok) {
       const detail = (data && data.error && data.error.message) || `HTTP ${upstream.status}`;
-      return send(res, 502, { error: 'Anthropic API error: ' + detail });
+      return send(res, 502, { error: 'Gemini API error: ' + detail });
     }
-    const reply = Array.isArray(data.content)
-      ? data.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim()
+    const cand = data && Array.isArray(data.candidates) ? data.candidates[0] : null;
+    const reply = cand && cand.content && Array.isArray(cand.content.parts)
+      ? cand.content.parts.map((p) => p.text || '').join('').trim()
       : '';
-    return send(res, 200, { reply: reply || '(no response)' });
+    if (!reply) {
+      const why = (cand && cand.finishReason) ? (' (' + cand.finishReason + ')') : '';
+      return send(res, 200, { reply: 'I could not generate a response for that' + why + '. Try rephrasing.' });
+    }
+    return send(res, 200, { reply });
   } catch (err) {
     return send(res, 500, { error: 'Upstream fetch failed: ' + String(err && err.message || err) });
   }
