@@ -1440,7 +1440,13 @@ try {
             '"appr":' + (JsEscape ([string](Gviz-Val $c[22]))),
             '"bill":' + (JsEscape ([string](Gviz-Val $c[13])))
         )
-        $caRecs.Add('{' + ($parts -join ',') + '}')
+        # Use [string]::Join on an explicitly-typed string[] (mirrors the working
+        # RowToJsArr List[string] path). The untyped `@(...) -join ','` form here
+        # was intermittently stringifying via $OFS (space) instead of commas,
+        # producing invalid JS like {"eid":"x" "cust":"y"} that broke the Churn
+        # tab AND Vision on every sync. The [string[]] cast forces each element to
+        # a flat string so the comma join is deterministic.
+        $caRecs.Add('{' + [string]::Join(',', [string[]]$parts) + '}')
     }
     if ($caRecs.Count -gt 0) {
         $churnJson = '[' + ($caRecs -join ',') + ']'
@@ -1457,7 +1463,13 @@ if ($churnJson) {
         if ($lines[$i] -match 'window\.__CHURN_ANALYSIS__\s*=') { $caIdx = $i; break }
     }
     if ($caIdx -ge 0) {
-        $lines[$caIdx] = 'window.__CHURN_ANALYSIS__ = ' + $churnJson + ';'
+        # Emit the churn array as a JS *string* that the page JSON.parses inside a
+        # try/catch, with a one-shot repair (whitespace-before-key -> comma) as a
+        # fallback. Belt-and-suspenders: even if the serializer ever regresses to
+        # space separators again, the browser self-heals instead of throwing a
+        # SyntaxError that kills the whole script block (Churn tab + Vision).
+        $churnLit = JsEscape $churnJson
+        $lines[$caIdx] = 'window.__CHURN_ANALYSIS__ = (function(){var s=' + $churnLit + ';try{return JSON.parse(s)}catch(e){try{return JSON.parse(s.replace(/\s+("\w+":)/g,",$1"))}catch(_){return[]}}})();'
     } else {
         Write-Host "  churn_analysis: WARNING — __CHURN_ANALYSIS__ line not found; skipping splice."
     }
