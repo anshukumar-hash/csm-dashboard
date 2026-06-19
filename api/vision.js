@@ -1,24 +1,25 @@
-// Vision chat — server-side proxy to the Google Gemini API (free tier).
+// Vision chat — server-side proxy to the Groq API (free, OpenAI-compatible).
 //
 // WHY THIS EXISTS
 // The dashboard is a static, public HTML page. An API key must NEVER be embedded
 // in it (anyone could read it via View Source). This serverless function keeps
 // the key on the server: the browser POSTs the question + a compact snapshot of
 // the dashboard data here, and this function adds the key and forwards it to
-// Gemini. The key is read from the GEMINI_API_KEY env var.
+// Groq. The key is read from the GROQ_API_KEY env var.
 //
 // SETUP (the dashboard owner does this once — I cannot enter credentials):
-//   1. Get a FREE key at https://aistudio.google.com/apikey  (no credit card).
+//   1. Get a FREE key at https://console.groq.com/keys  (no credit card).
 //   2. In the Vercel project → Settings → Environment Variables, add:
-//        Name:  GEMINI_API_KEY     Value: <your key>     (Production + Preview)
+//        Name:  GROQ_API_KEY     Value: <your key>     (Production + Preview)
 //      Optionally:
-//        Name:  VISION_MODEL       Value: gemini-2.0-flash   (override)
+//        Name:  VISION_MODEL     Value: llama-3.3-70b-versatile   (override)
 //   3. Redeploy. The "Vision" bubble then works on the Vercel URL.
 //
 // NOTE: GitHub Pages has no serverless runtime, so Vision only works on the
 // Vercel deployment. On other hosts the bubble shows a friendly setup notice.
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 const MAX_CONTEXT_CHARS = 180000; // guard against oversized payloads
 
 const CORS = {
@@ -46,12 +47,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); res.end(); return; }
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST.' });
 
-  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const key = process.env.GROQ_API_KEY;
   if (!key) {
     return send(res, 503, {
-      error: 'Vision is not configured yet. Add a GEMINI_API_KEY environment ' +
+      error: 'Vision is not configured yet. Add a GROQ_API_KEY environment ' +
              'variable to the Vercel project (Settings → Environment Variables) and redeploy. ' +
-             'Get a free key at https://aistudio.google.com/apikey',
+             'Get a free key at https://console.groq.com/keys',
     });
   }
 
@@ -86,45 +87,38 @@ export default async function handler(req, res) {
     '- Keep answers under ~200 words unless the user asks for a deep dive.\n\n' +
     'DASHBOARD SNAPSHOT (JSON):\n' + (contextStr || '(none provided)');
 
-  // Map our {role:'user'|'assistant'} history to Gemini's {role:'user'|'model'} turns.
-  const contents = messages
+  // Groq is OpenAI-compatible: a system message + our user/assistant history.
+  const history = messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-    .slice(-20)
-    .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+    .map((m) => ({ role: m.role, content: m.content }))
+    .slice(-20);
 
-  if (!contents.length || contents[contents.length - 1].role !== 'user') {
+  if (!history.length || history[history.length - 1].role !== 'user') {
     return send(res, 400, { error: 'Last message must be from the user.' });
   }
 
-  const model = process.env.VISION_MODEL || DEFAULT_MODEL;
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-    encodeURIComponent(model) + ':generateContent';
-
   try {
-    const upstream = await fetch(url, {
+    const upstream = await fetch(GROQ_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.4 },
+        model: process.env.VISION_MODEL || DEFAULT_MODEL,
+        max_tokens: 1024,
+        temperature: 0.4,
+        messages: [{ role: 'system', content: system }, ...history],
       }),
     });
 
     const data = await upstream.json().catch(() => ({}));
     if (!upstream.ok) {
       const detail = (data && data.error && data.error.message) || `HTTP ${upstream.status}`;
-      return send(res, 502, { error: 'Gemini API error: ' + detail });
+      return send(res, 502, { error: 'Groq API error: ' + detail });
     }
-    const cand = data && Array.isArray(data.candidates) ? data.candidates[0] : null;
-    const reply = cand && cand.content && Array.isArray(cand.content.parts)
-      ? cand.content.parts.map((p) => p.text || '').join('').trim()
+    const choice = data && Array.isArray(data.choices) ? data.choices[0] : null;
+    const reply = choice && choice.message && typeof choice.message.content === 'string'
+      ? choice.message.content.trim()
       : '';
-    if (!reply) {
-      const why = (cand && cand.finishReason) ? (' (' + cand.finishReason + ')') : '';
-      return send(res, 200, { reply: 'I could not generate a response for that' + why + '. Try rephrasing.' });
-    }
-    return send(res, 200, { reply });
+    return send(res, 200, { reply: reply || '(no response)' });
   } catch (err) {
     return send(res, 500, { error: 'Upstream fetch failed: ' + String(err && err.message || err) });
   }
