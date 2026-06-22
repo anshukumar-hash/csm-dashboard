@@ -1133,6 +1133,15 @@ foreach ($row in $studioTab.rows) {
 }
 Write-Host "  Studio: built $($sRows.Count) s_rows (MRR computed as ARR/12)"
 
+# Guard: never overwrite Studio data with an empty/near-empty fetch. gviz can
+# hand back an empty table even after Fetch-Gviz's retries (seen 2026-06-22),
+# which previously wiped all ~1400 rooftops to s_rows:[] and zeroed the Studio
+# tab. Abort the whole sync instead — the existing snapshot is preserved, the
+# next 15-min run retries, and a sustained failure shows up red in Actions.
+if ($sRows.Count -lt 100) {
+    throw "Studio s_rows came back as $($sRows.Count) (expected ~1400). Aborting sync to avoid wiping Studio data — the gid=603796861 gviz fetch returned empty/partial."
+}
+
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---
 function JsEscape($s) {
     if ($null -eq $s) { return 'null' }
