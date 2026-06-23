@@ -221,14 +221,26 @@ $payTab         = Fetch-Gviz $urls.payment    100    # payment master ~140 typic
 # into the identical {c,o,r,a,s,p} per-ticket schema below, so every downstream
 # ticket-bucket computation stays byte-identical.
 $ticketsApiUrl = 'https://dilipticket.vercel.app/api/tickets'
-$apiTix = $null
-try {
-    $apiTix = @(Invoke-RestMethod -Uri $ticketsApiUrl -TimeoutSec 120 -Headers @{ Accept = 'application/json' })
-} catch {
-    throw "Ticket API fetch failed ($ticketsApiUrl): $($_.Exception.Message). Aborting to avoid wiping ticket data."
+# The API fetches Freshdesk live; the first (cold) hit can come back partial
+# because Freshdesk rate-limits the burst — once warm it returns the full set
+# in <1s. Retry a few times until we get a healthy array, and only abort
+# (never wipe ticket data) if every attempt looks broken. Use Invoke-WebRequest
+# + ConvertFrom-Json (the same pattern as the coverage/tracking fetches) so a
+# top-level JSON array deserializes reliably into a real array.
+$apiTix = @()
+for ($attempt = 1; $attempt -le 4; $attempt++) {
+    try {
+        $resp = Invoke-WebRequest -Uri $ticketsApiUrl -UseBasicParsing -TimeoutSec 120 -Headers @{ Accept = 'application/json' }
+        $parsed = @($resp.Content | ConvertFrom-Json)
+        Write-Host "  tickets API attempt $attempt -> $($parsed.Count) rows"
+        if ($parsed.Count -ge 100) { $apiTix = $parsed; break }
+    } catch {
+        Write-Host "  tickets API attempt $attempt failed: $($_.Exception.Message)"
+    }
+    if ($attempt -lt 4) { Start-Sleep -Seconds 8 }
 }
 if ($apiTix.Count -lt 100) {
-    throw "Ticket API returned $($apiTix.Count) rows (<100) — looks broken. Aborting to avoid wiping ticket data."
+    throw "Ticket API returned $($apiTix.Count) rows after retries (<100) — looks broken. Aborting to avoid wiping ticket data."
 }
 Write-Host "  tickets API: $($apiTix.Count) tickets from $ticketsApiUrl"
 $studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
