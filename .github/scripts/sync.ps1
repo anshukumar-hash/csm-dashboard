@@ -32,6 +32,8 @@ $sheetId = '1kdGwx6rxBy8MWKq8WyR04xq4QgWSfnh1W4nHsOqj_HE'
 $urls = @{
     vini    = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1616842841&headers=2"
     payment = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=674556270"
+    # DEPRECATED: the ticket dump moved to the dilipticket Freshdesk API
+    # (see $ticketsApiUrl below). Kept here only for reference / rollback.
     tickets = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=832733618"
     studio  = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=603796861"
     # CSAT / Communication source: published Google Sheet, gid=179502765
@@ -211,7 +213,24 @@ Write-Host "=== Fetching 6 data sources ==="
 # typical fetch size so they only fire when something is clearly wrong.
 $viniTab        = Fetch-Gviz $urls.vini       2000   # daily, ~4700 typical
 $payTab         = Fetch-Gviz $urls.payment    100    # payment master ~140 typical
-$tixTab         = Fetch-Gviz $urls.tickets    500    # tickets ~1500 typical
+# Tickets now come from the dilipticket Freshdesk-backed API (the source behind
+# its CS_use tab), replacing the Google-Sheet ticket dump (gid=832733618). The
+# API returns a JSON array of tickets with clean field names + a resolved
+# 9-char Enterprise ID (same hash the rest of the dashboard keys on). CORS is
+# open and it caches 5 min on Vercel Edge. We still rebuild studio_tix/vini_tix
+# into the identical {c,o,r,a,s,p} per-ticket schema below, so every downstream
+# ticket-bucket computation stays byte-identical.
+$ticketsApiUrl = 'https://dilipticket.vercel.app/api/tickets'
+$apiTix = $null
+try {
+    $apiTix = @(Invoke-RestMethod -Uri $ticketsApiUrl -TimeoutSec 120 -Headers @{ Accept = 'application/json' })
+} catch {
+    throw "Ticket API fetch failed ($ticketsApiUrl): $($_.Exception.Message). Aborting to avoid wiping ticket data."
+}
+if ($apiTix.Count -lt 100) {
+    throw "Ticket API returned $($apiTix.Count) rows (<100) — looks broken. Aborting to avoid wiping ticket data."
+}
+Write-Host "  tickets API: $($apiTix.Count) tickets from $ticketsApiUrl"
 $studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
 $payPeriodsTab  = Fetch-Gviz $urls.payperiods 3000   # payment-periods ~6500 typical
 
@@ -274,7 +293,7 @@ try {
     $trackingFailed = $true
     $reportTracking = $null
 }
-Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatRows){$csatRows.Count}else{'FAIL'}) | tickets rows=$($tixTab.rows.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
+Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatRows){$csatRows.Count}else{'FAIL'}) | tickets(API)=$($apiTix.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
 
 # --- Payment-period DENSE_RANK from gid=1395015507 ---
 # For each enterprise (col V EnterprisesID), rank unique (start_date, end_date)
@@ -738,35 +757,16 @@ if ($csatBroken) {
     Write-Host "  CSAT: $($byEid.Count) by_eid | $($byName.Count) by_name | $($allByEid.Count) all_by_eid | $($allByName.Count) all_by_name"
 }
 
-# --- Build vini_tix from Ticket_Dump (gid=832733618) ---
-# Schema: Ticket ID | Status | Created time | Resolved time | Closed time |
-#         Last update time | Resolution time (in hrs) | Enterprise Name |
-#         Product (Studio/Vini) | Enterprise ID
+# --- Build vini_tix / studio_tix from the dilipticket API ($apiTix) ---
+# API field names (per ticket): Ticket ID | Status | Priority | Created time |
+#   Resolved time | Closed time | Resolution time (in hrs) | Resolution status |
+#   Product (Studio/Vini) | Enterprise Name | Enterprise ID | is_pending …
 #
-# Per enterprise (filtered to Product=Vini AND eid is in the LIVE set):
+# Per enterprise (filtered to product AND eid is in the LIVE set):
 #   cr  = total tickets   (count)
 #   op  = open tickets    (Status NOT IN Closed/Resolved)
 #   ota = avg ageing hrs  (now - Created) over open tickets
-#   res = avg resolution  (col G in hrs) over resolved/closed tickets
-$tCols = $tixTab.cols
-$ti = @{
-    status   = Find-Col $tCols @('Status')
-    # Priority (col C) — Urgent / High / Medium / Low. Drives the per-priority
-    # SLA-threshold Ticket RAG on the dashboard (user spec, SLA matrix from
-    # image2). Shipped per-row so the dashboard can grade each open ticket
-    # client-side and roll up to worst-of per enterprise.
-    priority = Find-Col $tCols @('Priority')
-    created  = Find-Col $tCols @('Created time','Created')
-    resolved = Find-Col $tCols @('Resolved time','Resolved')
-    closed   = Find-Col $tCols @('Closed time','Closed')
-    resHrs   = Find-Col $tCols @('Resolution time (in hrs)','Resolution time')
-    # Col I "Resolution status" — kept for legacy callers; the new RAG no
-    # longer depends on it.
-    resoStat = Find-Col $tCols @('Resolution status')
-    prod     = Find-Col $tCols @('Product (Studio/Vini)','Product')
-    eid      = Find-Col $tCols @('Enterprise ID')
-    enName   = Find-Col $tCols @('Enterprise Name','Enterrpise Name','Account Name','Account')
-}
+#   res = avg resolution  (Resolution time hrs) over resolved/closed tickets
 
 # Build the "live enterprise" set from the payment master. An enterprise is
 # "live" if at least one of its (rooftop × agent) contracts has stage != Churned.
@@ -780,35 +780,6 @@ foreach ($s in $viniStage) {
 }
 Write-Host "  Live enterprises: $($liveEids.Count) (filtering ticket dump to these)"
 
-# gviz encodes Date(y,mo,day,h,m,s) for created/resolved times. Parse to
-# a real [DateTime] so we can compute ageing for open tickets.
-function GvizToDate($cell) {
-    if (-not $cell) { return $null }
-    $v = $cell.v
-    if ($null -eq $v) { return $null }
-    $s = [string]$v
-    if ($s -match '^Date\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)') {
-        return [DateTime]::new(
-            [int]$matches[1], [int]$matches[2] + 1, [int]$matches[3],
-            [int]$matches[4], [int]$matches[5], [int]$matches[6])
-    }
-    if ($s -match '^Date\((\d+),(\d+),(\d+)') {
-        return [DateTime]::new([int]$matches[1], [int]$matches[2] + 1, [int]$matches[3])
-    }
-    return $null
-}
-# The "Resolution time (in hrs)" cell is formatted as [h]:mm:ss. The `f` field
-# carries the display string ("58:22:50" = 58.38 hrs); the `v` (Date encoding)
-# is unreliable for durations >24h. So parse the formatted string.
-function ParseHrs($cell) {
-    if (-not $cell) { return $null }
-    $f = [string]$cell.f
-    if (-not $f) { return $null }
-    if ($f -match '^(\d+):(\d+):(\d+)') {
-        return [double]$matches[1] + [double]$matches[2] / 60.0 + [double]$matches[3] / 3600.0
-    }
-    return $null
-}
 
 # Ship RAW per-ticket rows so the dashboard can apply its date-range filter
 # (MTD / Last Month / L2L / custom) at render time.
@@ -870,17 +841,23 @@ foreach ($row in $studioTab.rows) {
 }
 Write-Host "  Master sets: vini live=$($viniEidSet.Count) name-map=$($viniNameToEid.Count) | studio eid=$($studioEidSet.Count) name-map=$($studioNameToEid.Count)"
 
-# Single pass over the dump → dispatch by product, resolve EID via the
-# master sets (eid first, then name fallback).
+# Single pass over the API tickets → dispatch by product, resolve EID via the
+# master sets (eid first, then name fallback). Same resolution + same per-row
+# {c,o,r,a,s,p} schema as the old sheet path — only the source changed.
 $viniTix = @{}; $studioTix = @{}
 $nowUtc = [DateTime]::UtcNow
 $kept = @{ vini=0; studio=0 }; $skipped = @{ vini=0; studio=0; other=0 }
-foreach ($row in $tixTab.rows) {
-    $c = $row.c; if (-not $c) { continue }
-    $prod = [string](Gviz-Val $c[$ti.prod])
-    if (-not $prod) { continue }
-    $eidRaw = [string](Gviz-Val $c[$ti.eid]).Trim()
-    $nameKey = NormName ([string](Gviz-Val $c[$ti.enName]))
+foreach ($row in $apiTix) {
+    $prodRaw = [string]$row.'Product (Studio/Vini)'
+    if (-not $prodRaw) { $skipped.other++; continue }
+    # Classify: any 'studio*' → Studio, any '*vini*' → Vini (covers the API's
+    # 'Studio - ETA', 'Internal-Vini', 'Vini - ETA' variants). Spam/blank skip.
+    $prodL = $prodRaw.Trim().ToLower()
+    $prod = if ($prodL -like 'studio*') { 'Studio' } elseif ($prodL -like '*vini*') { 'Vini' } else { '' }
+    if (-not $prod) { $skipped.other++; continue }
+
+    $eidRaw = ([string]$row.'Enterprise ID').Trim()
+    $nameKey = NormName ([string]$row.'Enterprise Name')
 
     # Resolve to master EID per product
     $resolvedEid = $null
@@ -893,7 +870,7 @@ foreach ($row in $tixTab.rows) {
         }
         if (-not $resolvedEid) { $skipped.vini++; continue }
         $targetDict = $viniTix
-    } elseif ($prod -eq 'Studio') {
+    } else {
         if ($eidRaw -and $eidRaw -ne 'Not Required' -and $studioEidSet.Contains($eidRaw)) {
             $resolvedEid = $eidRaw
         } elseif ($nameKey -and $studioNameToEid.ContainsKey($nameKey)) {
@@ -901,45 +878,44 @@ foreach ($row in $tixTab.rows) {
         }
         if (-not $resolvedEid) { $skipped.studio++; continue }
         $targetDict = $studioTix
-    } else {
-        $skipped.other++; continue
     }
 
-    $created = GvizToDate $c[$ti.created]
+    # Created → YYYY-MM-DD (API ships ISO-8601 UTC, e.g. 2026-06-23T20:24:40Z).
+    $createdStr = [string]$row.'Created time'
+    $created = $null
+    if ($createdStr) {
+        try {
+            $created = [DateTime]::Parse($createdStr, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+        } catch { $created = $null }
+    }
     if (-not $created) {
         if ($prod -eq 'Vini') { $skipped.vini++ } else { $skipped.studio++ }
         continue
     }
     $createdIso = $created.ToString('yyyy-MM-dd')
 
-    $status = ([string](Gviz-Val $c[$ti.status])).ToLower().Trim()
-    # Updated user spec: "#Unresolved" = NOT IN ('closed','resolved'). So
-    # raw 'Open' AND any in-flight state (Pending / Waiting / On Hold) all
-    # count as unresolved. The previous version excluded raw 'Open' too —
-    # that filter was removed.
+    # #Unresolved = Status NOT IN ('closed','resolved') — raw 'Open' AND any
+    # in-flight state (Pending / Waiting / On Hold) all count as unresolved.
+    $status = ([string]$row.'Status').ToLower().Trim()
     $isOpen = ($status -ne 'closed' -and $status -ne 'resolved')
 
-    # SLA Violated flag (col I "Resolution status" = 'SLA Violated'). Kept
-    # for backwards compatibility — the new Ticket RAG is priority-based
-    # and no longer depends on this flag, but legacy snapshots still read it.
-    $resoStatVal = if ($ti.resoStat -ge 0) {
-        ([string](Gviz-Val $c[$ti.resoStat])).Trim().ToLower()
-    } else { '' }
-    $isSlaViolated = ($resoStatVal -eq 'sla violated')
+    # SLA Violated flag — API 'Resolution status' = 'Violated SLA'. Kept for
+    # backwards compatibility; the priority-based Ticket RAG no longer needs it.
+    $isSlaViolated = (([string]$row.'Resolution status').Trim().ToLower() -eq 'violated sla')
 
-    # Priority (col C). Lower-cased for stable client-side matching.
-    $priority = ''
-    if ($ti.priority -ge 0) {
-        $priority = ([string](Gviz-Val $c[$ti.priority])).Trim().ToLower()
-    }
+    # Priority — lower-cased ('low'|'medium'|'high'|'urgent') for client matching.
+    $priority = ([string]$row.'Priority').Trim().ToLower()
 
     $resHrs = 0.0; $ageHrs = 0.0
     if ($isOpen) {
         $ageHrs = ($nowUtc - $created).TotalHours
         if ($ageHrs -lt 0) { $ageHrs = 0.0 }
     } else {
-        $parsed = ParseHrs $c[$ti.resHrs]
-        if ($null -ne $parsed -and $parsed -gt 0) { $resHrs = $parsed }
+        # API ships 'Resolution time (in hrs)' as a plain decimal string.
+        $parsed = 0.0
+        if ([double]::TryParse([string]$row.'Resolution time (in hrs)', [ref]$parsed) -and $parsed -gt 0) {
+            $resHrs = $parsed
+        }
     }
 
     if (-not $targetDict.ContainsKey($resolvedEid)) {
