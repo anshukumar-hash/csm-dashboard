@@ -1383,9 +1383,25 @@ function NormalizeCsmName($email) {
     if ($local.ToLower() -eq 'greeva.mishra') { return 'Greeva' }
     return (($local -split '[._]' | Where-Object { $_ } | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) }) -join ' ')
 }
+# Signed Metabase embed (HS256 JWT). The secret comes from the
+# METABASE_SECRET_KEY Actions secret — NEVER hard-coded or shipped to the page.
+function New-MetabaseJwt($secret, $questionId) {
+    $enc = [System.Text.Encoding]::UTF8
+    $b64 = { param($bytes) [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_') }
+    $exp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 600
+    $h = & $b64 $enc.GetBytes('{"alg":"HS256","typ":"JWT"}')
+    $p = & $b64 $enc.GetBytes('{"resource":{"question":' + $questionId + '},"params":{},"exp":' + $exp + '}')
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256
+    $hmac.Key = $enc.GetBytes($secret)
+    $s = & $b64 $hmac.ComputeHash($enc.GetBytes("$h.$p"))
+    return "$h.$p.$s"
+}
 $accountStatusJson = $null
 try {
-    $metaCsv = Invoke-RestMethod -Uri 'https://metabase.spyne.ai/public/question/cac94916-677c-40d1-bd54-549fa39ac37d.csv' -MaximumRedirection 5 -TimeoutSec 90
+    $mbSecret = $env:METABASE_SECRET_KEY
+    if (-not $mbSecret) { throw "METABASE_SECRET_KEY env not set" }
+    $mbTok = New-MetabaseJwt $mbSecret 12436
+    $metaCsv = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/embed/card/$mbTok/query/csv" -TimeoutSec 90
     $asRows = $metaCsv | ConvertFrom-Csv
     if ($asRows.Count -lt 100) { throw "only $($asRows.Count) rows" }
     $byCsm = @{}

@@ -32,6 +32,8 @@ jobs:
 
       - name: Fetch all 3 tabs via gviz and update index.html
         shell: pwsh
+        env:
+          METABASE_SECRET_KEY: ${{ secrets.METABASE_SECRET_KEY }}
         run: ./.github/scripts/sync.ps1
 
       - name: Commit and push if data changed
