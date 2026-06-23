@@ -1373,10 +1373,49 @@ function StripKey($s, $key) {
     return $s.Substring(0,$stripStart) + $s.Substring($end+1)
 }
 
-$json=$origJson
-foreach ($k in 'v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking') {
-    $json=StripKey $json $k
+# --- Account status from Metabase (per-CSM stage buckets: Live / OB / Contracted) ---
+# Public CSV; the CSM dashboard can't fetch it client-side (no CORS), so we pull
+# it here every sync and embed window.__DASHBOARD_DATA__.account_status, keyed by
+# CSM display name ('__all__' = org). Contracted = Contract-Initiated|Contracted|New.
+function NormalizeCsmName($email) {
+    if (-not $email -or $email -notmatch '@') { return [string]$email }
+    $local = ($email -split '@')[0].Trim()
+    if ($local.ToLower() -eq 'greeva.mishra') { return 'Greeva' }
+    return (($local -split '[._]' | Where-Object { $_ } | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1) }) -join ' ')
 }
+$accountStatusJson = $null
+try {
+    $metaCsv = Invoke-RestMethod -Uri 'https://metabase.spyne.ai/public/question/cac94916-677c-40d1-bd54-549fa39ac37d.csv' -MaximumRedirection 5 -TimeoutSec 90
+    $asRows = $metaCsv | ConvertFrom-Csv
+    if ($asRows.Count -lt 100) { throw "only $($asRows.Count) rows" }
+    $byCsm = @{}
+    foreach ($r in $asRows) {
+        $st = ([string]$r.stage).Trim()
+        $b = if ($st -eq 'Live') {'live'} elseif ($st -eq 'Onboarding') {'ob'} elseif (@('Contract-Initiated','Contracted','New') -contains $st) {'contracted'} else {$null}
+        if (-not $b) { continue }
+        $csmName = NormalizeCsmName ([string]$r.cs_poc_email)
+        foreach ($key in @($csmName, '__all__')) {
+            if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ live=@{e=@{};t=@{}}; ob=@{e=@{};t=@{}}; contracted=@{e=@{};t=@{}} } }
+            if ($r.enterprise_id) { $byCsm[$key][$b].e[[string]$r.enterprise_id] = 1 }
+            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = 1 }
+        }
+    }
+    $asParts = New-Object System.Collections.Generic.List[string]
+    foreach ($k in $byCsm.Keys) {
+        $o = $byCsm[$k]
+        $cell = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + '}' }
+        $asParts.Add((JsEscape $k) + ':{"live":' + (& $cell $o.live) + ',"ob":' + (& $cell $o.ob) + ',"contracted":' + (& $cell $o.contracted) + '}')
+    }
+    $accountStatusJson = '{' + ($asParts -join ',') + '}'
+    Write-Host "  account_status: $($byCsm.Count) CSM keys from Metabase"
+} catch {
+    Write-Host "  account_status: WARNING — Metabase fetch/parse failed ($_). Preserving existing block."
+}
+
+$json=$origJson
+$asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
+if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
+foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
             ',"vini_stage":' + $jsonStage +
@@ -1390,6 +1429,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"s_schema":' + $jsonSSchema +
             ',"report_coverage":' + $jsonCoverage +
             ',"report_tracking":' + $jsonTracking
+if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
