@@ -52,8 +52,16 @@ jobs:
           git add index.html CSM_Dashboard.html vercel_deploy/index.html
           ts=$(date -u +'%Y-%m-%d %H:%M UTC')
           git commit -m "Auto-sync from Google Sheets ($ts) [skip ci]"
-          git push
-          echo "Pushed update to origin/main"
+          # Push with rebase-and-retry: the churn sync (sync-churn.yml) writes
+          # churn_data.json on its own schedule and can advance main between our
+          # commit and push, which used to reject this push (non-fast-forward).
+          # The two syncs touch disjoint files, so a rebase is always clean.
+          for attempt in 1 2 3 4 5; do
+            if git push; then echo "Pushed update to origin/main"; exit 0; fi
+            echo "push rejected (attempt $attempt) — rebasing on latest main and retrying"
+            git pull --rebase origin main
+          done
+          echo "Push still failing after retries"; exit 1
 
       - name: Ping Vercel deploy hook
         if: env.HOOK != ''
