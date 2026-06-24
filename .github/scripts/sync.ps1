@@ -933,7 +933,10 @@ foreach ($row in $apiTix) {
     if (-not $targetDict.ContainsKey($resolvedEid)) {
         $targetDict[$resolvedEid] = New-Object System.Collections.Generic.List[hashtable]
     }
-    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated; p = $priority })
+    # i = Freshdesk ticket id — shipped so the dashboard can deep-link each open
+    # ticket to https://spyne.freshdesk.com/a/tickets/<id> in the clickable list.
+    $ticketId = ([string]$row.'Ticket ID').Trim()
+    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated; p = $priority; i = $ticketId })
     if ($prod -eq 'Vini') { $kept.vini++ } else { $kept.studio++ }
 }
 Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets kept, $($skipped.vini) skipped"
@@ -1245,7 +1248,9 @@ function ViniTixToJson($dict) {
             # p = priority (lowercased) — drives the per-priority Ticket RAG
             # client-side (urgent/high/medium/low → distinct SLA thresholds).
             $pStr = if ($null -eq $r.p) { '""' } else { JsEscape $r.p }
-            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + ',"p":' + $pStr + '}')
+            # i = Freshdesk ticket id (string) for the clickable open-ticket list.
+            $iStr = if ($null -eq $r.i) { '""' } else { JsEscape $r.i }
+            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + ',"p":' + $pStr + ',"i":' + $iStr + '}')
         }
         $parts.Add((JsEscape $k) + ':{"rows":[' + ($items -join ',') + ']}')
     }
