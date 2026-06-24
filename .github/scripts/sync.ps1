@@ -945,7 +945,10 @@ foreach ($row in $apiTix) {
     # i = Freshdesk ticket id — shipped so the dashboard can deep-link each open
     # ticket to https://spyne.freshdesk.com/a/tickets/<id> in the clickable list.
     $ticketId = ([string]$row.'Ticket ID').Trim()
-    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated; p = $priority; i = $ticketId })
+    # fr = First response SLA status ('Within SLA' / 'Violated SLA' / '') — shown
+    # in the clickable ticket popup so CSMs can spot first-response breaches.
+    $frStatus = ([string]$row.'First response status').Trim()
+    $targetDict[$resolvedEid].Add(@{ c = $createdIso; o = $isOpen; r = $resHrs; a = $ageHrs; s = $isSlaViolated; p = $priority; i = $ticketId; fr = $frStatus })
     if ($prod -eq 'Vini') { $kept.vini++ } else { $kept.studio++ }
 }
 Write-Host "  vini_tix:   $($viniTix.Count) enterprises, $($kept.vini) tickets kept, $($skipped.vini) skipped"
@@ -1259,7 +1262,9 @@ function ViniTixToJson($dict) {
             $pStr = if ($null -eq $r.p) { '""' } else { JsEscape $r.p }
             # i = Freshdesk ticket id (string) for the clickable open-ticket list.
             $iStr = if ($null -eq $r.i) { '""' } else { JsEscape $r.i }
-            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + ',"p":' + $pStr + ',"i":' + $iStr + '}')
+            # fr = First response SLA status for the ticket popup column.
+            $frStr = if ($null -eq $r.fr) { '""' } else { JsEscape $r.fr }
+            $items.Add('{"c":' + (JsEscape $r.c) + ',"o":' + $oBool + ',"r":' + (JsNum $r.r) + ',"a":' + (JsNum $r.a) + ',"s":' + $sBool + ',"p":' + $pStr + ',"i":' + $iStr + ',"fr":' + $frStr + '}')
         }
         $parts.Add((JsEscape $k) + ':{"rows":[' + ($items -join ',') + ']}')
     }
