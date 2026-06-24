@@ -66,6 +66,10 @@ $urls = @{
     # /e/2PACX.. form) — NOT a gviz endpoint — so it's parsed via ConvertFrom-Csv
     # by header name below, not Fetch-Gviz.
     churn   = "https://docs.google.com/spreadsheets/d/e/2PACX-1vThFmDQitQOgcusYlhQW458fpNNq7xnTazx5YjPwOm3Bf90QcSpdSbhW7lsbMBENx6YB7AH4U7spC6G/pub?gid=1421999984&single=true&output=csv"
+    # Per-CSM book ARR by Stage (gid=1436275090, main $sheetId). One row per
+    # enterprise: Stage (D), CSM email (J), ARR (K). Feeds csm_grr (total ARR +
+    # Live ARR per CSM → GRR = Live / Total) shown in CSM Performance.
+    csmgrr  = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1436275090"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -1452,9 +1456,51 @@ try {
     Write-Host "  account_status: WARNING — Metabase fetch/parse failed ($_). Preserving existing block."
 }
 
+# --- GRR per CSM from gid=1436275090 ----------------------------------------
+# One row per enterprise: Stage (col D=3), CSM email (col J=9), ARR (col K=10).
+# Rows are filtered to those whose CSM cell contains '@' so the summary row
+# (col J empty) and the header row (col J = 'CSM Name_New') drop out. Per CSM:
+#   total = SUM ARR (whole book, all stages)   live = SUM ARR where Stage='Live'
+# Embedded as csm_grr keyed by CSM display name ('__all__' = org); the dashboard
+# shows GRR = live / total. Preserves the existing block on any failure.
+$csmGrrJson = $null
+try {
+    $grrTab = Fetch-Gviz $urls.csmgrr 200    # ~900 enterprise rows typical
+    $grr = @{}
+    foreach ($row in $grrTab.rows) {
+        $c = $row.c; if (-not $c) { continue }
+        $csmRaw = [string](Gviz-Val $c[9])
+        if (-not $csmRaw.Contains('@')) { continue }   # skips summary + header rows
+        $arr = [double](Parse-Money (Gviz-Val $c[10]))
+        $isLive = ((([string](Gviz-Val $c[3])).Trim()).ToLower() -eq 'live')
+        $csmName = NormalizeCsmName $csmRaw
+        if (-not $csmName) { $csmName = 'Unassigned' }
+        foreach ($key in @($csmName, '__all__')) {
+            if (-not $grr.ContainsKey($key)) { $grr[$key] = @{ total = 0.0; live = 0.0 } }
+            $grr[$key].total += $arr
+            if ($isLive) { $grr[$key].live += $arr }
+        }
+    }
+    if ($grr.Count -gt 1) {
+        $gParts = New-Object System.Collections.Generic.List[string]
+        foreach ($k in $grr.Keys) {
+            $o = $grr[$k]
+            $gParts.Add((JsEscape $k) + ':{"arr":' + ([string][double]$o.total) + ',"live":' + ([string][double]$o.live) + '}')
+        }
+        $csmGrrJson = '{' + ($gParts -join ',') + '}'
+        $allTot = if ($grr.ContainsKey('__all__')) { [math]::Round($grr['__all__'].total) } else { 0 }
+        Write-Host "  csm_grr: $($grr.Count) CSM keys (org book ARR $allTot)"
+    } else {
+        Write-Host "  csm_grr: WARNING — 0 rows parsed; preserving existing block."
+    }
+} catch {
+    Write-Host "  csm_grr: WARNING — fetch/parse failed ($_). Preserving existing block."
+}
+
 $json=$origJson
 $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
+if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we have a fresh value to replace it
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1470,6 +1516,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"report_coverage":' + $jsonCoverage +
             ',"report_tracking":' + $jsonTracking
 if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson }
+if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
