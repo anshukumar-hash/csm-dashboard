@@ -59,10 +59,13 @@ $urls = @{
     # Cols: E=customer_status, V=EnterprisesID, Y=Service_period_Start_date,
     # Z=Service_period_End_date.
     payperiods = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&gid=1395015507&headers=1"
-    # Churn-analysis source — a SEPARATE Spyne churn-tracker spreadsheet (NOT
-    # $sheetId), gid=646726928. Feeds window.__CHURN_ANALYSIS__ (the Churn
-    # Intelligence tab) independently of the main dashboard data above.
-    churn   = "https://docs.google.com/spreadsheets/d/1FZUApKKZ8jl3qflDJI_Ic7UxuJ72rU0ocrqiUax0wHU/gviz/tq?tqx=out:json&gid=646726928"
+    # Churn-analysis source — a SEPARATE Spyne churn tracker, now the
+    # published-to-web sheet (gid=1421999984) exported as CSV. Feeds
+    # window.__CHURN_ANALYSIS__ (the Churn Intelligence tab + the Churn ARR
+    # tile) independently of the main dashboard data above. Published CSV (the
+    # /e/2PACX.. form) — NOT a gviz endpoint — so it's parsed via ConvertFrom-Csv
+    # by header name below, not Fetch-Gviz.
+    churn   = "https://docs.google.com/spreadsheets/d/e/2PACX-1vThFmDQitQOgcusYlhQW458fpNNq7xnTazx5YjPwOm3Bf90QcSpdSbhW7lsbMBENx6YB7AH4U7spC6G/pub?gid=1421999984&single=true&output=csv"
 }
 
 # Use PowerShell Core's native ConvertFrom-Json (cross-platform, no .NET
@@ -1470,12 +1473,12 @@ if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
-# Source: the SEPARATE Spyne churn tracker (see $urls.churn, gid=646726928).
-# Row 0 is a "do not shift columns" note; row 1 is the header; data begins at
-# row 2. Columns are at FIXED 0-indexed positions (labels are blank in gviz):
-#   A=eid  B=customer  C=segment  D=ARR  E=churn-month(date)  F=product
-#   G=region  J=CSM email  N=billing-status  O=category  S=reason
-#   T=regrettable/unregrettable  W=leader-approved
+# Source: the SEPARATE Spyne churn tracker — published-to-web CSV, gid=1421999984
+# (see $urls.churn). Row 0 is a "do not shift columns" note; row 1 is the header;
+# data begins at row 2. We read by HEADER NAME (robust to reordering):
+#   New Enterprise ID, Customer, Customer Segment, ARR, Churn/Contraction Month,
+#   Product, Region, CSM Name, Billing Status, Category, Reason,
+#   Regretable/ Unregretable, Leader Approved
 # CSM email local-part → "First Last" display (anuj.tewatia → Anuj Tewatia).
 # On ANY fetch/parse failure we PRESERVE the existing embedded block (the
 # __CHURN_ANALYSIS__ line is left untouched) rather than wiping the tab.
@@ -1498,45 +1501,72 @@ function Csm-Display($raw) {
 }
 $churnJson = $null
 try {
-    $caTab  = Fetch-Gviz $urls.churn 50    # ~445 records typical
+    # The published sheet exports CSV. Row 0 is a "do not shift columns" note;
+    # row 1 is the real header; data begins at row 2. We drop the first physical
+    # line, then ConvertFrom-Csv (which honours quoted commas / embedded
+    # newlines) using the real header, and read each field BY NAME (robust to
+    # column reordering). Column layout matches the old gviz tab.
+    $churnText = $null
+    for ($att = 1; $att -le 5; $att++) {
+        try {
+            $sepc = if ($urls.churn.Contains('?')) { '&' } else { '?' }
+            $cu = "$($urls.churn)$sepc`_cb=" + [Guid]::NewGuid().ToString('N')
+            if ($att -gt 1) { Write-Host "  churn csv retry $att" }
+            $cr = Invoke-WebRequest -Uri $cu -UseBasicParsing -TimeoutSec 120 -Headers @{
+                'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+                'Accept'     = 'text/csv, text/plain, */*'
+            }
+            if ($cr.StatusCode -eq 200 -and $cr.Content -and $cr.Content.Length -gt 500) { $churnText = $cr.Content; break }
+        } catch { Write-Host "  churn csv attempt $att failed: $_" }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $churnText) { throw "no CSV content after retries" }
+    # Drop the leading "do not shift" note line so the real header is first.
+    $brk = $churnText.IndexOf("`n")
+    $body = if ($brk -ge 0) { $churnText.Substring($brk + 1) } else { $churnText }
+    $caRows = @($body | ConvertFrom-Csv)
+    if ($caRows.Count -lt 1) { throw "0 CSV rows after header" }
+    # Build a normalized-header -> actual-property-name map once, then read by
+    # candidate names (mirrors the gviz Find-Col approach).
+    $caMap = @{}
+    $caRows[0].PSObject.Properties | ForEach-Object { $caMap[(Norm-Lbl $_.Name)] = $_.Name }
+    function CaCol($rec, $names) {
+        foreach ($n in @($names)) { $k = Norm-Lbl $n; if ($caMap.ContainsKey($k)) { return [string]$rec.($caMap[$k]) } }
+        return ''
+    }
     $caRecs = New-Object System.Collections.Generic.List[string]
-    foreach ($row in $caTab.rows) {
-        $c = $row.c
-        if (-not $c) { continue }
-        $eid = ([string](Gviz-Val $c[0])).Trim()
+    foreach ($r in $caRows) {
+        $eid = (CaCol $r @('New Enterprise ID','Enterprise ID','EnterpriseID')).Trim()
         if (-not $eid) { continue }
-        if ($eid -eq 'New Enterprise ID') { continue }   # header row
-        if ($eid -match 'Do not shift')   { continue }   # note row
-        $monRaw = [string](Gviz-Date $c[4])
-        $mon = if ($monRaw -match '^(\d{4})-(\d{2})') { "$($matches[1])-$($matches[2])" } else { '' }
-        $rsnRaw = ([string](Gviz-Val $c[18])).Trim()
-        $rgrRaw = ([string](Gviz-Val $c[19])).Trim()
+        if ($eid -match 'Do not shift') { continue }
+        $monRaw = (CaCol $r @('Churn/Contraction Month','Churn Contraction Month','Churn Month')).Trim()
+        $mon = ''
+        if ($monRaw -match '^(\d{4})-(\d{2})') { $mon = "$($matches[1])-$($matches[2])" }
+        elseif ($monRaw) { try { $mon = ([datetime]$monRaw).ToString('yyyy-MM') } catch { $mon = '' } }
+        $rsnRaw = (CaCol $r @('Reason')).Trim()
+        $rgrRaw = (CaCol $r @('Regretable/ Unregretable','Regrettable/Unregrettable','Regretable Unregretable')).Trim()
         $parts = @(
             '"eid":'  + (JsEscape $eid),
-            '"cust":' + (JsEscape ([string](Gviz-Val $c[1]))),
-            '"seg":'  + (JsEscape ([string](Gviz-Val $c[2]))),
-            '"arr":'  + ([string][double](Parse-Money (Gviz-Val $c[3]))),
+            '"cust":' + (JsEscape (CaCol $r @('Customer'))),
+            '"seg":'  + (JsEscape (CaCol $r @('Customer Segment','Segment'))),
+            '"arr":'  + ([string][double](Parse-Money (CaCol $r @('ARR')))),
             '"mon":'  + (JsEscape $mon),
-            '"prod":' + (JsEscape ([string](Gviz-Val $c[5]))),
-            '"reg":'  + (JsEscape ([string](Gviz-Val $c[6]))),
-            '"csm":'  + (JsEscape (Csm-Display (Gviz-Val $c[9]))),
-            '"cat":'  + (JsEscape ([string](Gviz-Val $c[14]))),
+            '"prod":' + (JsEscape (CaCol $r @('Product'))),
+            '"reg":'  + (JsEscape (CaCol $r @('Region'))),
+            '"csm":'  + (JsEscape (Csm-Display (CaCol $r @('CSM Name','CSM')))),
+            '"cat":'  + (JsEscape (CaCol $r @('Category'))),
             '"rsn":'  + (JsEscape $(if ($rsnRaw) { $rsnRaw } else { 'Not Tagged' })),
             '"rgr":'  + (JsEscape $(if ($rgrRaw) { $rgrRaw } else { 'Untagged' })),
-            '"appr":' + (JsEscape ([string](Gviz-Val $c[22]))),
-            '"bill":' + (JsEscape ([string](Gviz-Val $c[13])))
+            '"appr":' + (JsEscape (CaCol $r @('Leader Approved'))),
+            '"bill":' + (JsEscape (CaCol $r @('Billing Status')))
         )
-        # Use [string]::Join on an explicitly-typed string[] (mirrors the working
-        # RowToJsArr List[string] path). The untyped `@(...) -join ','` form here
-        # was intermittently stringifying via $OFS (space) instead of commas,
-        # producing invalid JS like {"eid":"x" "cust":"y"} that broke the Churn
-        # tab AND Vision on every sync. The [string[]] cast forces each element to
-        # a flat string so the comma join is deterministic.
+        # [string[]] cast forces a deterministic comma join (see history: an
+        # untyped -join intermittently used $OFS space → invalid JS).
         $caRecs.Add('{' + [string]::Join(',', [string[]]$parts) + '}')
     }
     if ($caRecs.Count -gt 0) {
         $churnJson = '[' + ($caRecs -join ',') + ']'
-        Write-Host "  churn_analysis: $($caRecs.Count) records"
+        Write-Host "  churn_analysis: $($caRecs.Count) records (CSV gid=1421999984)"
     } else {
         Write-Host "  churn_analysis: WARNING — 0 records parsed; preserving existing block."
     }
