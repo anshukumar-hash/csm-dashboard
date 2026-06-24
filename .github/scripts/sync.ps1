@@ -1397,23 +1397,37 @@ try {
     $metaCsv = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/embed/card/$mbTok/query/csv" -TimeoutSec 90
     $asRows = $metaCsv | ConvertFrom-Csv
     if ($asRows.Count -lt 100) { throw "only $($asRows.Count) rows" }
+    # Detect name columns once (flexible — fall back to id when absent) so the
+    # OB / Contracted popups can show enterprise_name / team_name, not just ids.
+    $colNames = @($asRows[0].PSObject.Properties.Name)
+    $pick = { param($cands) foreach ($c in $cands) { if ($colNames -contains $c) { return $c } }; return $null }
+    $entNameCol  = & $pick @('enterprise_name','account_name','company_name','company','enterprise')
+    $teamNameCol = & $pick @('team_name','rooftop_name','dealership_name','rooftop','dealership')
+    Write-Host "  account_status name cols: enterprise='$entNameCol' team='$teamNameCol'"
+    # Each bucket holds e/t as ordered id->name maps (name '' falls back to id).
     $byCsm = @{}
     foreach ($r in $asRows) {
         $st = ([string]$r.stage).Trim()
         $b = if ($st -eq 'Live') {'live'} elseif ($st -eq 'Onboarding') {'ob'} elseif (@('Contract-Initiated','Contracted','New') -contains $st) {'contracted'} else {$null}
         if (-not $b) { continue }
         $csmName = NormalizeCsmName ([string]$r.cs_poc_email)
+        $enNm = if ($entNameCol)  { [string]$r.$entNameCol }  else { '' }
+        $tmNm = if ($teamNameCol) { [string]$r.$teamNameCol } else { '' }
         foreach ($key in @($csmName, '__all__')) {
-            if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ live=@{e=@{};t=@{}}; ob=@{e=@{};t=@{}}; contracted=@{e=@{};t=@{}} } }
-            if ($r.enterprise_id) { $byCsm[$key][$b].e[[string]$r.enterprise_id] = 1 }
-            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = 1 }
+            if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ live=@{e=[ordered]@{};t=[ordered]@{}}; ob=@{e=[ordered]@{};t=[ordered]@{}}; contracted=@{e=[ordered]@{};t=[ordered]@{}} } }
+            if ($r.enterprise_id) { $byCsm[$key][$b].e[[string]$r.enterprise_id] = $enNm }
+            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = $tmNm }
         }
     }
     $asParts = New-Object System.Collections.Generic.List[string]
+    # eL/tL = [{i:id, n:name}] lists. Emitted ONLY for ob/contracted (the red,
+    # clickable rows); live stays counts-only to keep the payload small.
+    $listJson = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value) { $_.Value } else { $_.Key })) + '}' }) -join ',') }
+    $cellCount = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + '}' }
+    $cellFull  = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + ',"eL":[' + (& $listJson $x.e) + '],"tL":[' + (& $listJson $x.t) + ']}' }
     foreach ($k in $byCsm.Keys) {
         $o = $byCsm[$k]
-        $cell = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + '}' }
-        $asParts.Add((JsEscape $k) + ':{"live":' + (& $cell $o.live) + ',"ob":' + (& $cell $o.ob) + ',"contracted":' + (& $cell $o.contracted) + '}')
+        $asParts.Add((JsEscape $k) + ':{"live":' + (& $cellCount $o.live) + ',"ob":' + (& $cellFull $o.ob) + ',"contracted":' + (& $cellFull $o.contracted) + '}')
     }
     $accountStatusJson = '{' + ($asParts -join ',') + '}'
     Write-Host "  account_status: $($byCsm.Count) CSM keys from Metabase"
