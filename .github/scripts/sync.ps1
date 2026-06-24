@@ -1437,15 +1437,19 @@ try {
         foreach ($key in @($csmName, '__all__')) {
             if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ live=@{e=[ordered]@{};t=[ordered]@{}}; ob=@{e=[ordered]@{};t=[ordered]@{}}; contracted=@{e=[ordered]@{};t=[ordered]@{}} } }
             if ($r.enterprise_id) { $byCsm[$key][$b].e[[string]$r.enterprise_id] = $enNm }
-            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = $tmNm }
+            # Teams store the enterprise_id alongside the name so the rooftop
+            # console deep-link can be enterprise_id + team_id.
+            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = @{ n = $tmNm; e = [string]$r.enterprise_id } }
         }
     }
     $asParts = New-Object System.Collections.Generic.List[string]
     # eL/tL = [{i:id, n:name}] lists. Emitted ONLY for ob/contracted (the red,
     # clickable rows); live stays counts-only to keep the payload small.
-    $listJson = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value) { $_.Value } else { $_.Key })) + '}' }) -join ',') }
+    # eL = enterprises [{i:id, n:name}]; tL = teams [{i:team_id, n:name, e:enterprise_id}].
+    $listJsonE = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value) { $_.Value } else { $_.Key })) + '}' }) -join ',') }
+    $listJsonT = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value.n) { $_.Value.n } else { $_.Key })) + ',"e":' + (JsEscape ([string]$_.Value.e)) + '}' }) -join ',') }
     $cellCount = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + '}' }
-    $cellFull  = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + ',"eL":[' + (& $listJson $x.e) + '],"tL":[' + (& $listJson $x.t) + ']}' }
+    $cellFull  = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + ',"eL":[' + (& $listJsonE $x.e) + '],"tL":[' + (& $listJsonT $x.t) + ']}' }
     foreach ($k in $byCsm.Keys) {
         $o = $byCsm[$k]
         $asParts.Add((JsEscape $k) + ':{"live":' + (& $cellCount $o.live) + ',"ob":' + (& $cellFull $o.ob) + ',"contracted":' + (& $cellFull $o.contracted) + '}')
