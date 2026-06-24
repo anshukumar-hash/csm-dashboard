@@ -455,6 +455,15 @@ foreach ($eid in $payByEid.Keys) {
     }
 }
 Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $payRanks.Count, $payPeriodsTab.rows.Count)
+# GUARD: gviz intermittently returns a truncated payment-periods body (seen 9 /
+# 12 / 22 rows vs the real ~6500). Fetch-Gviz retries but ultimately "proceeds
+# anyway" with the partial — which silently WIPES every enterprise's Payment RAG
+# (t1/t2/t3/prag/ps all blank). Normal is ~994 ranked enterprises; abort well
+# below that so the sync fails loudly and the last good payment data is
+# preserved (the next scheduled run almost always gets the full body).
+if ($payRanks.Count -lt 200) {
+    throw "Payment-periods ranked only $($payRanks.Count) enterprises from $($payPeriodsTab.rows.Count) rows (expected ~994 from ~6500). Truncated gviz fetch — aborting to preserve the last good payment data."
+}
 
 # --- Studio Customer Segment lookup (source of truth) -----------------------
 # gid=603796861 col G (Customer Segment) carries 'Resellers' which the Vini
