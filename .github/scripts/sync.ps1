@@ -1532,7 +1532,11 @@ function NA-LiveThisMonth($gid, $goCol, $isStudio) {
 $newAdditionJson = $null
 try {
     $naV = NA-LiveThisMonth 2053683245 16 $false
-    $naS = NA-LiveThisMonth 1134407178 37 $true
+    # Studio spans TWO tabs with different Live-Month columns: gid 1134407178
+    # (col 37) + gid 764039413 (col 40). Sum both.
+    $naS1 = NA-LiveThisMonth 1134407178 37 $true
+    $naS2 = NA-LiveThisMonth 764039413 40 $true
+    $naS = @{ arr = ($naS1.arr + $naS2.arr); rooftops = ($naS1.rooftops + $naS2.rooftops); ents = ($naS1.ents + $naS2.ents); n = ($naS1.n + $naS2.n) }
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
     $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
     Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))"
