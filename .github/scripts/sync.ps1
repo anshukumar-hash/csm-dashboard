@@ -1501,10 +1501,50 @@ try {
     Write-Host "  csm_grr: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
 
+# --- New-addition "Live This Month" ARR from the OB sheet --------------------
+# Sheet 1ioRroo… : Vini gid=2053683245 (Go-Live Date = col 16), Studio
+# gid=1134407178 (Live Month = col 37, 'YYYY-MM'). Per product: rows where
+# Stage='Live' AND the go-live month == the current month; sum ARR ($) (col 2).
+# Embedded as new_addition so the email snapshot uses real per-product values
+# (replacing the fragile onboarding-SPA scrape + hard-coded constant).
+$naSheet = '1ioRrooOvDSBxc7gjC2XUGjqHH_YBze_2HryOF8JWqL0'
+$naCurYM = (Get-Date).ToString('yyyy-MM')
+function NA-Money($v) { if ($null -eq $v -or $v -eq '') { return 0.0 }; $c = ([string]$v) -replace '[^0-9.\-]',''; try { return [double]$c } catch { return 0.0 } }
+function NA-LiveThisMonth($gid, $goCol, $isStudio) {
+    # ARR=col 2, Stage=col 4. Data starts at row 3 (rows 0-2 are total/note/header).
+    $tab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$naSheet/gviz/tq?tqx=out:json&gid=$gid" 50
+    $arr = 0.0; $n = 0
+    $roofs = New-Object System.Collections.Generic.HashSet[string]
+    $ents  = New-Object System.Collections.Generic.HashSet[string]
+    for ($ri = 3; $ri -lt $tab.rows.Count; $ri++) {
+        $c = $tab.rows[$ri].c; if (-not $c) { continue }
+        $acct = [string](Gviz-Val $c[0]); if (-not $acct) { continue }
+        if ((([string](Gviz-Val $c[4])).Trim().ToLower()) -ne 'live') { continue }
+        # go-live month: Studio = 'YYYY-MM' string; Vini = a date → YYYY-MM-DD.
+        $gm = if ($isStudio) { ([string](Gviz-Val $c[$goCol])).Trim() } else { [string](Gviz-Date $c[$goCol]) }
+        if (-not $gm.StartsWith($naCurYM)) { continue }
+        $arr += NA-Money (Gviz-Val $c[2]); $n++
+        $rn = [string](Gviz-Val $c[1]); if ($rn) { [void]$roofs.Add($rn) }
+        $eid = [string](Gviz-Val $c[$(if ($isStudio) {6} else {7})]); if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
+    }
+    return @{ arr = $arr; rooftops = $roofs.Count; ents = $ents.Count; n = $n }
+}
+$newAdditionJson = $null
+try {
+    $naV = NA-LiveThisMonth 2053683245 16 $false
+    $naS = NA-LiveThisMonth 1134407178 37 $true
+    $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
+    $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
+    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))"
+} catch {
+    Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
+}
+
 $json=$origJson
 $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
 if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we have a fresh value to replace it
+if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1521,6 +1561,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
             ',"report_tracking":' + $jsonTracking
 if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson }
 if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
+if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
