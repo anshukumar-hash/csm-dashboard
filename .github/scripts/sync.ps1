@@ -1531,15 +1531,62 @@ function NA-LiveThisMonth($gid, $goCol, $isStudio) {
 }
 $newAdditionJson = $null
 try {
-    $naV = NA-LiveThisMonth 2053683245 16 $false
-    # Studio spans TWO tabs with different Live-Month columns: gid 1134407178
-    # (col 37) + gid 764039413 (col 40). Sum both.
+    # VINI: read from the PERSISTENT payment master ($payTab, gid 674556270) —
+    # Stage='Live' AND Go-Live Date in the current month, deduped by rooftop
+    # (Team ID) so multi-agent rows don't double-count ARR. Unlike the onboarding
+    # tab this book retains live accounts, so the figure is stable/immediate.
+    if ($pi.go_live -ge 0 -and $pi.stage -ge 0) {
+        $naVArr = 0.0
+        $naVRoofs = New-Object System.Collections.Generic.HashSet[string]
+        $naVEnts  = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($row in $payTab.rows) {
+            $c = $row.c; if (-not $c) { continue }
+            if ((([string](Gviz-Val $c[$pi.stage])).Trim().ToLower()) -ne 'live') { continue }
+            $gm = [string](Gviz-Date $c[$pi.go_live])
+            if (-not $gm.StartsWith($naCurYM)) { continue }
+            $rid = [string](Gviz-Val $c[$pi.rid]); if (-not $rid) { $rid = [string](Gviz-Val $c[$pi.rn]) }
+            if ($rid -and $naVRoofs.Contains($rid)) { continue }   # one ARR per rooftop
+            if ($rid) { [void]$naVRoofs.Add($rid) }
+            $naVArr += NA-Money (Gviz-Val $c[$pi.arr])
+            $eid = [string](Gviz-Val $c[$pi.eid]); if ($eid) { [void]$naVEnts.Add($eid) }
+        }
+        $naV = @{ arr = $naVArr; rooftops = $naVRoofs.Count; ents = $naVEnts.Count; n = $naVRoofs.Count }
+    } else {
+        # Column lookup failed — fall back to the onboarding tab.
+        $naV = NA-LiveThisMonth 2053683245 16 $false
+    }
+    # STUDIO: the main book has no go-live column, so the only signal is the
+    # onboarding tabs (transient). Two tabs, different Live-Month columns:
+    # gid 1134407178 (col 37) + gid 764039413 (col 40). Sum both, then rely on
+    # the high-water mark below to bridge the gaps between live batches.
     $naS1 = NA-LiveThisMonth 1134407178 37 $true
     $naS2 = NA-LiveThisMonth 764039413 40 $true
     $naS = @{ arr = ($naS1.arr + $naS2.arr); rooftops = ($naS1.rooftops + $naS2.rooftops); ents = ($naS1.ents + $naS2.ents); n = ($naS1.n + $naS2.n) }
+
+    # MONOTONIC HIGH-WATER MARK (within the month).
+    # The onboarding tabs only hold an account in "Live" state transiently — a
+    # rooftop appears the moment it goes live, then moves to the main book — so a
+    # single snapshot under-counts and is often 0 (the main Studio book has no
+    # go-live column, so we can't read it from there). Carry forward the largest
+    # value seen this month so the metric never regresses to 0; it resets when
+    # the calendar month rolls over. Parse the previously-embedded block from the
+    # current file; any parse failure degrades safely to the fresh snapshot.
+    $prevMonth = ''
+    $mPrev = [regex]::Match($origJson, '"new_addition":(\{"month":"[^"]*","studio":\{[^}]*\},"vini":\{[^}]*\}\})')
+    if ($mPrev.Success) {
+        try {
+            $pv = $mPrev.Groups[1].Value | ConvertFrom-Json
+            $prevMonth = [string]$pv.month
+            if ($prevMonth -eq $naCurYM) {
+                if ([double]$pv.studio.arr -gt $naS.arr) { $naS = @{ arr=[double]$pv.studio.arr; rooftops=[int]$pv.studio.rooftops; ents=[int]$pv.studio.ents; n=$naS.n } }
+                if ([double]$pv.vini.arr   -gt $naV.arr) { $naV = @{ arr=[double]$pv.vini.arr;   rooftops=[int]$pv.vini.rooftops;   ents=[int]$pv.vini.ents;   n=$naV.n } }
+            }
+        } catch { Write-Host "  new_addition: prev-block parse skipped ($_)" }
+    }
+
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
     $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
-    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))"
+    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))  [hwm; prev month=$prevMonth]"
 } catch {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
