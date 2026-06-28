@@ -1516,6 +1516,7 @@ function NA-LiveThisMonth($gid, $goCol, $isStudio) {
     $arr = 0.0; $n = 0
     $roofs = New-Object System.Collections.Generic.HashSet[string]
     $ents  = New-Object System.Collections.Generic.HashSet[string]
+    $items = New-Object System.Collections.ArrayList   # per-rooftop {r=name; a=arr} for cross-sync union
     for ($ri = 3; $ri -lt $tab.rows.Count; $ri++) {
         $c = $tab.rows[$ri].c; if (-not $c) { continue }
         $acct = [string](Gviz-Val $c[0]); if (-not $acct) { continue }
@@ -1523,13 +1524,17 @@ function NA-LiveThisMonth($gid, $goCol, $isStudio) {
         # go-live month: Studio = 'YYYY-MM' string; Vini = a date → YYYY-MM-DD.
         $gm = if ($isStudio) { ([string](Gviz-Val $c[$goCol])).Trim() } else { [string](Gviz-Date $c[$goCol]) }
         if (-not $gm.StartsWith($naCurYM)) { continue }
-        $arr += NA-Money (Gviz-Val $c[2]); $n++
+        $a = NA-Money (Gviz-Val $c[2])
+        $arr += $a; $n++
         $rn = [string](Gviz-Val $c[1]); if ($rn) { [void]$roofs.Add($rn) }
         $eid = [string](Gviz-Val $c[$(if ($isStudio) {6} else {7})]); if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
+        $rkey = if ($rn) { $rn } else { $acct }
+        [void]$items.Add(@{ r = $rkey; a = $a })
     }
-    return @{ arr = $arr; rooftops = $roofs.Count; ents = $ents.Count; n = $n }
+    return @{ arr = $arr; rooftops = $roofs.Count; ents = $ents.Count; n = $n; items = $items }
 }
 $newAdditionJson = $null
+$newAdditionStudioAcctsJson = $null
 try {
     # VINI: read from the PERSISTENT payment master ($payTab, gid 674556270) —
     # Stage='Live' AND Go-Live Date in the current month, deduped by rooftop
@@ -1557,36 +1562,41 @@ try {
     }
     # STUDIO: the main book has no go-live column, so the only signal is the
     # onboarding tabs (transient). Two tabs, different Live-Month columns:
-    # gid 1134407178 (col 37) + gid 764039413 (col 40). Sum both, then rely on
-    # the high-water mark below to bridge the gaps between live batches.
+    # gid 1134407178 (col 37) + gid 764039413 (col 40).
     $naS1 = NA-LiveThisMonth 1134407178 37 $true
     $naS2 = NA-LiveThisMonth 764039413 40 $true
-    $naS = @{ arr = ($naS1.arr + $naS2.arr); rooftops = ($naS1.rooftops + $naS2.rooftops); ents = ($naS1.ents + $naS2.ents); n = ($naS1.n + $naS2.n) }
 
-    # MONOTONIC HIGH-WATER MARK (within the month).
-    # The onboarding tabs only hold an account in "Live" state transiently — a
-    # rooftop appears the moment it goes live, then moves to the main book — so a
-    # single snapshot under-counts and is often 0 (the main Studio book has no
-    # go-live column, so we can't read it from there). Carry forward the largest
-    # value seen this month so the metric never regresses to 0; it resets when
-    # the calendar month rolls over. Parse the previously-embedded block from the
-    # current file; any parse failure degrades safely to the fresh snapshot.
+    # CROSS-SYNC UNION (within the month).
+    # A rooftop sits in the onboarding tab in "Live" state only transiently
+    # before moving to the main book, so a single snapshot misses earlier
+    # batches. Accumulate a rooftop→ARR map across syncs: seed from the prior
+    # embedded map (same month only), then merge this sync's rooftops (fresh ARR
+    # wins). Persisted as the separate `new_addition_studio_accts` key. Resets
+    # when the calendar month rolls. Parse failure degrades to this snapshot.
     $prevMonth = ''
-    $mPrev = [regex]::Match($origJson, '"new_addition":(\{"month":"[^"]*","studio":\{[^}]*\},"vini":\{[^}]*\}\})')
-    if ($mPrev.Success) {
-        try {
-            $pv = $mPrev.Groups[1].Value | ConvertFrom-Json
-            $prevMonth = [string]$pv.month
-            if ($prevMonth -eq $naCurYM) {
-                if ([double]$pv.studio.arr -gt $naS.arr) { $naS = @{ arr=[double]$pv.studio.arr; rooftops=[int]$pv.studio.rooftops; ents=[int]$pv.studio.ents; n=$naS.n } }
-                if ([double]$pv.vini.arr   -gt $naV.arr) { $naV = @{ arr=[double]$pv.vini.arr;   rooftops=[int]$pv.vini.rooftops;   ents=[int]$pv.vini.ents;   n=$naV.n } }
-            }
-        } catch { Write-Host "  new_addition: prev-block parse skipped ($_)" }
+    $mMon = [regex]::Match($origJson, '"new_addition":\{"month":"([^"]*)"')
+    if ($mMon.Success) { $prevMonth = $mMon.Groups[1].Value }
+    $sMap = @{}
+    if ($prevMonth -eq $naCurYM) {
+        $mAccts = [regex]::Match($origJson, '"new_addition_studio_accts":\{([^{}]*)\}')
+        if ($mAccts.Success -and $mAccts.Groups[1].Value.Trim()) {
+            try {
+                $obj = ('{' + $mAccts.Groups[1].Value + '}') | ConvertFrom-Json
+                foreach ($p in $obj.PSObject.Properties) { $sMap[[string]$p.Name] = [double]$p.Value }
+            } catch { Write-Host "  new_addition: prior accts parse skipped ($_)" }
+        }
     }
+    foreach ($it in (@($naS1.items) + @($naS2.items))) {
+        $rk = [string]$it.r; if (-not $rk) { continue }
+        $sMap[$rk] = [double]$it.a   # fresh ARR overrides any prior value for this rooftop
+    }
+    $sArrU = 0.0; foreach ($k in $sMap.Keys) { $sArrU += [double]$sMap[$k] }
+    $naS = @{ arr = $sArrU; rooftops = $sMap.Count; ents = ($naS1.ents + $naS2.ents) }
+    $newAdditionStudioAcctsJson = '{' + (($sMap.Keys | ForEach-Object { (JsEscape $_) + ':' + ([string][double]$sMap[$_]) }) -join ',') + '}'
 
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
     $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
-    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))  [hwm; prev month=$prevMonth]"
+    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt union) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))  [prev month=$prevMonth]"
 } catch {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
@@ -1596,6 +1606,7 @@ $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid'
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
 if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we have a fresh value to replace it
 if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
+if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1613,6 +1624,7 @@ $inserted = ',"v_rows":' + $jsonVRows +
 if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson }
 if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
+if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
