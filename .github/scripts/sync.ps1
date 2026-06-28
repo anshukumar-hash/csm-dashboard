@@ -1560,43 +1560,65 @@ try {
         # Column lookup failed — fall back to the onboarding tab.
         $naV = NA-LiveThisMonth 2053683245 16 $false
     }
-    # STUDIO: the main book has no go-live column, so the only signal is the
-    # onboarding tabs (transient). Two tabs, different Live-Month columns:
-    # gid 1134407178 (col 37) + gid 764039413 (col 40).
-    $naS1 = NA-LiveThisMonth 1134407178 37 $true
-    $naS2 = NA-LiveThisMonth 764039413 40 $true
-
-    # CROSS-SYNC UNION (within the month).
-    # A rooftop sits in the onboarding tab in "Live" state only transiently
-    # before moving to the main book, so a single snapshot misses earlier
-    # batches. Accumulate a rooftop→ARR map across syncs: seed from the prior
-    # embedded map (same month only), then merge this sync's rooftops (fresh ARR
-    # wins). Persisted as the separate `new_addition_studio_accts` key. Resets
-    # when the calendar month rolls. Parse failure degrades to this snapshot.
-    $prevMonth = ''
-    $mMon = [regex]::Match($origJson, '"new_addition":\{"month":"([^"]*)"')
-    if ($mMon.Success) { $prevMonth = $mMon.Groups[1].Value }
-    $sMap = @{}
-    if ($prevMonth -eq $naCurYM) {
-        $mAccts = [regex]::Match($origJson, '"new_addition_studio_accts":\{([^{}]*)\}')
-        if ($mAccts.Success -and $mAccts.Groups[1].Value.Trim()) {
-            try {
-                $obj = ('{' + $mAccts.Groups[1].Value + '}') | ConvertFrom-Json
-                foreach ($p in $obj.PSObject.Properties) { $sMap[[string]$p.Name] = [double]$p.Value }
-            } catch { Write-Host "  new_addition: prior accts parse skipped ($_)" }
+    # STUDIO new-addition.
+    # PREFERRED source: a go-live / live-month column on the MAIN Studio book
+    # (gid 603796861, the s_rows source). That book RETAINS every live account,
+    # so it's accurate for the whole month. Looked up by header name — add one of
+    # these columns to that sheet to activate it (Stage filter not needed: all
+    # rows there are live). Go-live month: a real date OR a 'YYYY-MM' string.
+    $studioSrc = ''
+    $sGoCol = Find-Col $sCols @('Go-Live Date','Go Live Date','GoLive Date','Live Month','Live Date','Activation Date','Go Live Month')
+    if ($sGoCol -ge 0) {
+        $sArrM = 0.0
+        $sRoofM = New-Object System.Collections.Generic.HashSet[string]
+        $sEntM  = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($row in $studioTab.rows) {
+            $c = $row.c; if (-not $c) { continue }
+            $rid = [string](Gviz-Val $c[$si.rid]); if (-not $rid) { continue }
+            $gm = [string](Gviz-Date $c[$sGoCol]); if (-not $gm) { $gm = ([string](Gviz-Val $c[$sGoCol])).Trim() }
+            if (-not $gm.StartsWith($naCurYM)) { continue }
+            if ($sRoofM.Contains($rid)) { continue }
+            [void]$sRoofM.Add($rid)
+            $sArrM += NA-Money (Gviz-Val $c[$si.arr])
+            $eid = [string](Gviz-Val $c[$si.eid]); if ($eid) { [void]$sEntM.Add($eid) }
         }
+        $naS = @{ arr = $sArrM; rooftops = $sRoofM.Count; ents = $sEntM.Count }
+        $newAdditionStudioAcctsJson = '{}'   # authoritative source; cross-sync union not needed
+        $studioSrc = "MAIN book col $sGoCol"
+    } else {
+        # FALLBACK: onboarding tabs (gid 1134407178 col 37 + gid 764039413 col 40).
+        # Rows are dropped once an account goes live, so accumulate a rooftop→ARR
+        # map across syncs within the month: seed from the prior embedded map
+        # (same month), merge this sync's rooftops (fresh ARR wins). Resets on
+        # month roll; parse failure degrades to this snapshot.
+        $naS1 = NA-LiveThisMonth 1134407178 37 $true
+        $naS2 = NA-LiveThisMonth 764039413 40 $true
+        $prevMonth = ''
+        $mMon = [regex]::Match($origJson, '"new_addition":\{"month":"([^"]*)"')
+        if ($mMon.Success) { $prevMonth = $mMon.Groups[1].Value }
+        $sMap = @{}
+        if ($prevMonth -eq $naCurYM) {
+            $mAccts = [regex]::Match($origJson, '"new_addition_studio_accts":\{([^{}]*)\}')
+            if ($mAccts.Success -and $mAccts.Groups[1].Value.Trim()) {
+                try {
+                    $obj = ('{' + $mAccts.Groups[1].Value + '}') | ConvertFrom-Json
+                    foreach ($p in $obj.PSObject.Properties) { $sMap[[string]$p.Name] = [double]$p.Value }
+                } catch { Write-Host "  new_addition: prior accts parse skipped ($_)" }
+            }
+        }
+        foreach ($it in (@($naS1.items) + @($naS2.items))) {
+            $rk = [string]$it.r; if (-not $rk) { continue }
+            $sMap[$rk] = [double]$it.a   # fresh ARR overrides any prior value for this rooftop
+        }
+        $sArrU = 0.0; foreach ($k in $sMap.Keys) { $sArrU += [double]$sMap[$k] }
+        $naS = @{ arr = $sArrU; rooftops = $sMap.Count; ents = ($naS1.ents + $naS2.ents) }
+        $newAdditionStudioAcctsJson = '{' + (($sMap.Keys | ForEach-Object { (JsEscape $_) + ':' + ([string][double]$sMap[$_]) }) -join ',') + '}'
+        $studioSrc = "onboarding union"
     }
-    foreach ($it in (@($naS1.items) + @($naS2.items))) {
-        $rk = [string]$it.r; if (-not $rk) { continue }
-        $sMap[$rk] = [double]$it.a   # fresh ARR overrides any prior value for this rooftop
-    }
-    $sArrU = 0.0; foreach ($k in $sMap.Keys) { $sArrU += [double]$sMap[$k] }
-    $naS = @{ arr = $sArrU; rooftops = $sMap.Count; ents = ($naS1.ents + $naS2.ents) }
-    $newAdditionStudioAcctsJson = '{' + (($sMap.Keys | ForEach-Object { (JsEscape $_) + ':' + ([string][double]$sMap[$_]) }) -join ',') + '}'
 
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
     $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
-    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt union) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))  [prev month=$prevMonth]"
+    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt, $studioSrc) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))"
 } catch {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
