@@ -1510,33 +1510,24 @@ try {
 $naSheet = '1ioRrooOvDSBxc7gjC2XUGjqHH_YBze_2HryOF8JWqL0'
 $naCurYM = (Get-Date).ToString('yyyy-MM')
 function NA-Money($v) { if ($null -eq $v -or $v -eq '') { return 0.0 }; $c = ([string]$v) -replace '[^0-9.\-]',''; try { return [double]$c } catch { return 0.0 } }
-function NA-LiveThisMonth($gid, $goCol, $isStudio, $allRows = $false) {
-    # ARR=col 2, Stage=col 4. Data starts at row 3 (rows 0-2 are total/note/header).
-    # $allRows = $true → count EVERY account in the tab (no Stage / go-live-month
-    # filter); used for Studio, where the whole onboarding workbook is the
-    # new-business cohort ("AMER + APAC/EMEA = studio ARR").
-    $tab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$naSheet/gviz/tq?tqx=out:json&gid=$gid" 50
+function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
+    # Count accounts with Stage='Live' (col 4 / column E) AND a Go-Live Date
+    # ($goCol) in the current month; sum ARR (col 2 / column C). Data starts at
+    # row 3 (rows 0-2 are total/note/header). $entCol = Enterprise ID column.
+    # $goCol handles both a real date and a 'YYYY-MM' string.
+    $tab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$naSheet/gviz/tq?tqx=out:json&gid=$gid" $minRows
     $arr = 0.0; $n = 0
-    $roofs = New-Object System.Collections.Generic.HashSet[string]
     $ents  = New-Object System.Collections.Generic.HashSet[string]
-    $items = New-Object System.Collections.ArrayList   # per-rooftop {r=name; a=arr} for cross-sync union
     for ($ri = 3; $ri -lt $tab.rows.Count; $ri++) {
         $c = $tab.rows[$ri].c; if (-not $c) { continue }
         $acct = [string](Gviz-Val $c[0]); if (-not $acct) { continue }
-        if (-not $allRows) {
-            if ((([string](Gviz-Val $c[4])).Trim().ToLower()) -ne 'live') { continue }
-            # go-live month: Studio = 'YYYY-MM' string; Vini = a date → YYYY-MM-DD.
-            $gm = if ($isStudio) { ([string](Gviz-Val $c[$goCol])).Trim() } else { [string](Gviz-Date $c[$goCol]) }
-            if (-not $gm.StartsWith($naCurYM)) { continue }
-        }
-        $a = NA-Money (Gviz-Val $c[2])
-        $arr += $a; $n++
-        $rn = [string](Gviz-Val $c[1]); if ($rn) { [void]$roofs.Add($rn) }
-        $eid = [string](Gviz-Val $c[$(if ($isStudio) {6} else {7})]); if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
-        $rkey = if ($rn) { $rn } else { $acct }
-        [void]$items.Add(@{ r = $rkey; a = $a })
+        if ((([string](Gviz-Val $c[4])).Trim().ToLower()) -ne 'live') { continue }
+        $gm = [string](Gviz-Date $c[$goCol]); if (-not $gm) { $gm = ([string](Gviz-Val $c[$goCol])).Trim() }
+        if (-not $gm.StartsWith($naCurYM)) { continue }
+        $arr += NA-Money (Gviz-Val $c[2]); $n++
+        $eid = [string](Gviz-Val $c[$entCol]); if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
     }
-    return @{ arr = $arr; rooftops = $roofs.Count; ents = $ents.Count; n = $n; items = $items }
+    return @{ arr = $arr; rooftops = $n; ents = $ents.Count; n = $n }
 }
 $newAdditionJson = $null
 $newAdditionStudioAcctsJson = $null
@@ -1562,18 +1553,19 @@ try {
         }
         $naV = @{ arr = $naVArr; rooftops = $naVRoofs.Count; ents = $naVEnts.Count; n = $naVRoofs.Count }
     } else {
-        # Column lookup failed — fall back to the onboarding tab.
-        $naV = NA-LiveThisMonth 2053683245 16 $false
+        # Column lookup failed — fall back to the onboarding tab (Go-Live col 16,
+        # Enterprise ID col 7).
+        $naV = NA-LiveThisMonth 2053683245 16 7
     }
     # STUDIO new-addition = AMER tab + APAC/EMEA tab, per spec
-    # "AMER + APAC/EMEA = studio ARR". Sum EVERY account in both onboarding tabs
-    # (no Stage / go-live-month filter — the whole workbook is the new-business
-    # cohort). ARR = col 2; rooftops = row count; ents = unique Enterprise IDs.
-    $naS1 = NA-LiveThisMonth 1134407178 37 $true $true
-    $naS2 = NA-LiveThisMonth 764039413 40 $true $true
+    # "AMER + APAC/EMEA = studio ARR": Stage='Live' (col E/4) AND Go-Live Date in
+    # the current month, summing ARR (col C/2). Go-Live Date column differs per
+    # tab — AMER = column P (15), APAC/EMEA = col 21. Enterprise ID = col 6.
+    $naS1 = NA-LiveThisMonth 1134407178 15 6 100   # AMER (~700 rows; min-rows guards partials)
+    $naS2 = NA-LiveThisMonth 764039413 21 6 1      # APAC/EMEA (small tab)
     $naS = @{ arr = ($naS1.arr + $naS2.arr); rooftops = ($naS1.n + $naS2.n); ents = ($naS1.ents + $naS2.ents) }
-    $newAdditionStudioAcctsJson = '{}'   # cross-sync union no longer used
-    $studioSrc = "AMER+APAC/EMEA tabs"
+    $newAdditionStudioAcctsJson = '{}'   # no cross-sync state needed
+    $studioSrc = "AMER+APAC/EMEA Live·go-live"
 
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
     $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
