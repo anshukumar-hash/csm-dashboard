@@ -1532,31 +1532,10 @@ function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
 $newAdditionJson = $null
 $newAdditionStudioAcctsJson = $null
 try {
-    # VINI: read from the PERSISTENT payment master ($payTab, gid 674556270) —
-    # Stage='Live' AND Go-Live Date in the current month, deduped by rooftop
-    # (Team ID) so multi-agent rows don't double-count ARR. Unlike the onboarding
-    # tab this book retains live accounts, so the figure is stable/immediate.
-    if ($pi.go_live -ge 0 -and $pi.stage -ge 0) {
-        $naVArr = 0.0
-        $naVRoofs = New-Object System.Collections.Generic.HashSet[string]
-        $naVEnts  = New-Object System.Collections.Generic.HashSet[string]
-        foreach ($row in $payTab.rows) {
-            $c = $row.c; if (-not $c) { continue }
-            if ((([string](Gviz-Val $c[$pi.stage])).Trim().ToLower()) -ne 'live') { continue }
-            $gm = [string](Gviz-Date $c[$pi.go_live])
-            if (-not $gm.StartsWith($naCurYM)) { continue }
-            $rid = [string](Gviz-Val $c[$pi.rid]); if (-not $rid) { $rid = [string](Gviz-Val $c[$pi.rn]) }
-            if ($rid -and $naVRoofs.Contains($rid)) { continue }   # one ARR per rooftop
-            if ($rid) { [void]$naVRoofs.Add($rid) }
-            $naVArr += NA-Money (Gviz-Val $c[$pi.arr])
-            $eid = [string](Gviz-Val $c[$pi.eid]); if ($eid) { [void]$naVEnts.Add($eid) }
-        }
-        $naV = @{ arr = $naVArr; rooftops = $naVRoofs.Count; ents = $naVEnts.Count; n = $naVRoofs.Count }
-    } else {
-        # Column lookup failed — fall back to the onboarding tab (Go-Live col 16,
-        # Enterprise ID col 7).
-        $naV = NA-LiveThisMonth 2053683245 16 7
-    }
+    # VINI new-addition = onboarding tab (gid 2053683245): Stage='Live' (col E/4)
+    # AND Go-Live Date (col Q/16) in the current month; sum ARR (col C/2).
+    # Enterprise ID = col 7. One row per rooftop (no agent-level dup).
+    $naV = NA-LiveThisMonth 2053683245 16 7 30
     # STUDIO new-addition = AMER tab + APAC/EMEA tab, per spec
     # "AMER + APAC/EMEA = studio ARR": Stage='Live' (col E/4) AND Go-Live Date in
     # the current month, summing ARR (col C/2). Go-Live Date column differs per
