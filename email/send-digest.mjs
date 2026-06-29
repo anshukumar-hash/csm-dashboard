@@ -3,17 +3,25 @@
 // Required env (GitHub Actions secrets):
 //   SENDGRID_API_KEY   — SendGrid API key with "Mail Send" permission
 //   DIGEST_FROM        — verified sender address (e.g. anshu.kumar@spyne.ai)
-//   DIGEST_RECIPIENTS  — comma-separated To: addresses (e.g. reports@spyne.ai)
-//   DIGEST_CC          — optional comma-separated CC: addresses
+//   DIGEST_RECIPIENTS  — To: addresses, with an OPTIONAL " | " separating CC:
+//                        addresses, e.g.
+//                          reports@spyne.ai | saurabh.shah@spyne.ai, rupesh.rawat@spyne.ai
+//                        (the "| CC" form avoids needing a separate workflow env
+//                         var; addresses within each side are comma/semicolon-sep)
+//   DIGEST_CC          — optional extra CC: addresses (merged with the above)
 import fs from 'fs';
 
 const html = fs.readFileSync(new URL('./daily-digest.html', import.meta.url), 'utf8');
 const key = process.env.SENDGRID_API_KEY;
 const from = process.env.DIGEST_FROM;
-const splitList = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
-const recipients = splitList(process.env.DIGEST_RECIPIENTS);
-// CC, de-duped against the To: list (SendGrid rejects an address in both).
-const cc = splitList(process.env.DIGEST_CC).filter((e) => !recipients.includes(e));
+const splitList = (v) => (v || '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+// DIGEST_RECIPIENTS = "To… | CC…"; everything after the first '|' is CC.
+const [toRaw, ccRaw = ''] = (process.env.DIGEST_RECIPIENTS || '').split('|');
+const recipients = splitList(toRaw);
+// CC = the "| CC" part + any DIGEST_CC, de-duped and never overlapping To:
+// (SendGrid rejects an address that appears in both).
+const cc = [...splitList(ccRaw), ...splitList(process.env.DIGEST_CC)]
+  .filter((e, i, a) => a.indexOf(e) === i && !recipients.includes(e));
 
 if (!key || !from || !recipients.length) {
   console.error('Missing one of SENDGRID_API_KEY / DIGEST_FROM / DIGEST_RECIPIENTS');
