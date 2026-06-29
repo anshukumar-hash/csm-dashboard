@@ -1,0 +1,36 @@
+name: Daily Supabase Snapshot
+
+on:
+  schedule:
+    # 18:30 UTC = 12:00 AM IST (end-of-day snapshot, after the data has settled).
+    - cron: '30 18 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: supabase-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies + Chromium
+        working-directory: email
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Snapshot dashboard → Supabase
+        working-directory: email
+        run: node supabase-snapshot.mjs
