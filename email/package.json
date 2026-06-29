@@ -6,9 +6,11 @@
   "type": "module",
   "scripts": {
     "generate": "node generate-digest.mjs",
-    "send": "node send-digest.mjs"
+    "send": "node send-digest.mjs",
+    "shoot": "node shoot-and-send.mjs"
   },
   "dependencies": {
+    "nodemailer": "^6.9.14",
     "playwright": "^1.60.0"
   }
 }

@@ -1,0 +1,37 @@
+name: Daily CS Report Screenshot
+
+on:
+  schedule:
+    # 03:30 UTC = 09:00 AM IST (IST = UTC+5:30).
+    - cron: '30 3 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: cs-report-screenshot
+  cancel-in-progress: false
+
+jobs:
+  shoot:
+    runs-on: ubuntu-latest
+    env:
+      DIGEST_FROM:        ${{ secrets.DIGEST_FROM }}
+      DIGEST_RECIPIENTS:  ${{ secrets.DIGEST_RECIPIENTS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies + Chromium
+        working-directory: email
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Screenshot the Email View and send
+        working-directory: email
+        run: node shoot-and-send.mjs
