@@ -78,6 +78,15 @@ $urls = @{
 function Parse-Json($s) { return $s | ConvertFrom-Json -AsHashtable -Depth 100 }
 
 function Fetch-Gviz($url, $expectedMinRows = 0) {
+    # IGNORE ANY BASIC FILTER ON THE SOURCE SHEET. By default gviz returns only
+    # the rows VISIBLE under a sheet's active basic filter — so if someone leaves
+    # a filter applied, the dashboard silently loses rows. Passing an explicit
+    # `range` makes gviz return the raw cell range regardless of the filter. The
+    # range is intentionally huge (104 cols × 300k rows) to cover every sheet.
+    if ($url -match '/gviz/tq' -and $url -notmatch '[?&]range=') {
+        $rsep = if ($url.Contains('?')) { '&' } else { '?' }
+        $url  = "$url${rsep}range=A1:CZ300000"
+    }
     # Retry on partial responses. gviz occasionally returns a tiny subset
     # of rows for the same URL on consecutive fetches (seen 9 / 22 / 6497
     # for payment-periods). Two defenses:
