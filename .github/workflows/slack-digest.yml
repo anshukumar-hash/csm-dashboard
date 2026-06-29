@@ -1,0 +1,36 @@
+name: Daily CS Report to Slack
+
+on:
+  schedule:
+    # 04:00 UTC = 09:30 AM IST (IST = UTC+5:30).
+    - cron: '0 4 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: cs-report-slack
+  cancel-in-progress: false
+
+jobs:
+  slack:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL:   ${{ secrets.SLACK_CHANNEL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies + Chromium
+        working-directory: email
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Screenshot the Email View and post to Slack
+        working-directory: email
+        run: node shoot-and-slack.mjs

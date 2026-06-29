@@ -7,7 +7,8 @@
   "scripts": {
     "generate": "node generate-digest.mjs",
     "send": "node send-digest.mjs",
-    "shoot": "node shoot-and-send.mjs"
+    "shoot": "node shoot-and-send.mjs",
+    "slack": "node shoot-and-slack.mjs"
   },
   "dependencies": {
     "nodemailer": "^6.9.14",
