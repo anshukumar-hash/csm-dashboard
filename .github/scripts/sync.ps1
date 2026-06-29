@@ -1553,12 +1553,39 @@ try {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
 
+# ---- Reseller new-addition + churn (Studio) ------------------------------
+# Sheet 1kvvDbn…, gid 135115178. Column R (idx 17) = monthly revenue Delta:
+# positive = new addition, negative = churn/contraction. ARR = Delta × 12.
+# Studio-product rows only; skip summary/blank rows (no Partner). Embedded as
+# `reseller` and folded into the Studio + Overall new-addition / churn client-side.
+$resellerJson = $null
+try {
+    $resSheet = '1kvvDbnpUAodPnmnLEVAWejLAzTwEflkzLSkXiAeOkB4'
+    $resTab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$resSheet/gviz/tq?tqx=out:json&gid=135115178" 20
+    $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
+    for ($ri = 0; $ri -lt $resTab.rows.Count; $ri++) {
+        $c = $resTab.rows[$ri].c; if (-not $c) { continue }
+        $partner = [string](Gviz-Val $c[0]); if (-not $partner) { continue }
+        if ((([string](Gviz-Val $c[4])).Trim()) -ne 'Studio') { continue }   # Studio resellers only
+        $dRaw = Gviz-Val $c[17]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
+        $d = 0.0; try { $d = [double]$dRaw } catch { continue }
+        if ($d -eq 0) { continue }
+        $arr = $d * 12.0
+        if ($arr -gt 0) { $resNew += $arr; $resNewN++ } else { $resChurn += [math]::Abs($arr); $resChurnN++ }
+    }
+    $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + '}'
+    Write-Host "  reseller (Studio): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
+} catch {
+    Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
+}
+
 $json=$origJson
 $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
 if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we have a fresh value to replace it
 if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
 if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
+if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-add + churn
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1577,6 +1604,7 @@ if ($accountStatusJson) { $inserted += ',"account_status":' + $accountStatusJson
 if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
+if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
