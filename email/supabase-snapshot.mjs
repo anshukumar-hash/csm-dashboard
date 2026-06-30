@@ -110,14 +110,26 @@ try {
         arali_signals: sig != null ? sig : null,
       };
     });
-    return { studio, vini, churn, metrics };
+    // ---- CSM action items per segment (date × CSM × segment) ----
+    const csm_actions = [];
+    const pushActions = (csmLabel, counts) => {
+      Object.keys(counts).forEach(segment => csm_actions.push({
+        snapshot_date: date, csm: csmLabel, segment, action_count: counts[segment],
+      }));
+    };
+    pushActions('__all__', csmActionCounts(null));
+    (typeof csmReportRoster === 'function' ? csmReportRoster() : []).forEach(c => {
+      try { pushActions(c, csmActionCounts(c)); } catch (e) {}
+    });
+
+    return { studio, vini, churn, metrics, csm_actions };
   }, today);
 } finally {
   await browser.close();
   server.close();
 }
 
-console.log(`Snapshot ${today}: studio=${data.studio.length} vini=${data.vini.length} churn=${data.churn.length} metrics=${data.metrics.length}`);
+console.log(`Snapshot ${today}: studio=${data.studio.length} vini=${data.vini.length} churn=${data.churn.length} metrics=${data.metrics.length} csm_actions=${data.csm_actions.length}`);
 
 if (!SUPA_KEY || !SUPA_URL) { console.log('SUPABASE_URL/SUPABASE_SERVICE_KEY not set — extracted only, no write (no-op).'); process.exit(0); }
 
@@ -146,10 +158,11 @@ async function clearDay(table) {
     method: 'DELETE', headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, Prefer: 'return=minimal' },
   });
 }
-for (const t of ['studio_snapshots', 'vini_snapshots', 'churn_snapshots', 'metric_snapshots']) await clearDay(t);
+for (const t of ['studio_snapshots', 'vini_snapshots', 'churn_snapshots', 'metric_snapshots', 'csm_action_snapshots']) await clearDay(t);
 await upsert('studio_snapshots', data.studio, 'snapshot_date,rooftop_id');
 await upsert('vini_snapshots', data.vini, 'snapshot_date,rid,agent');
 await upsert('churn_snapshots', data.churn, 'snapshot_date,row_idx');
 await upsert('metric_snapshots', data.metrics, 'snapshot_date,scope');
+await upsert('csm_action_snapshots', data.csm_actions, 'snapshot_date,csm,segment');
 console.log(`Supabase snapshot complete for ${today}.`);
 process.exit(0);
