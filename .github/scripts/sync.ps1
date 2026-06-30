@@ -1554,20 +1554,28 @@ try {
 }
 
 # ---- Reseller new-addition + churn (Studio) ------------------------------
-# Sheet 1kvvDbn…, gid 135115178. Column R (idx 17) = monthly revenue Delta:
-# positive = new addition, negative = churn/contraction. ARR = Delta × 12.
-# Studio-product rows only; skip summary/blank rows (no Partner). Embedded as
-# `reseller` and folded into the Studio + Overall new-addition / churn client-side.
+# Sheet 1kvvDbn…, gid 135115178. Column "Delta (M-2 to M-1)" = the month-over-
+# month revenue delta (positive = new addition, negative = churn/contraction).
+# ARR = Delta × 12. Resolved BY HEADER NAME (not a hardcoded index) so an
+# inserted column can't silently shift it onto "Delta (M-1 to M)" etc. Studio-
+# product rows only; skip summary/blank rows. Embedded as `reseller` and folded
+# into the Studio + Overall new-addition / churn client-side.
 $resellerJson = $null
 try {
     $resSheet = '1kvvDbnpUAodPnmnLEVAWejLAzTwEflkzLSkXiAeOkB4'
     $resTab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$resSheet/gviz/tq?tqx=out:json&gid=135115178" 20
+    $resCols = $resTab.cols
+    $resDeltaIdx = Find-Col $resCols @('Delta (M-2 to M-1)')
+    if ($resDeltaIdx -lt 0) { $resDeltaIdx = 17 }   # positional fallback = column R
+    $resProdIdx  = Find-Col $resCols @('Product')
+    if ($resProdIdx -lt 0) { $resProdIdx = 4 }
+    Write-Host "  reseller cols: 'Delta (M-2 to M-1)' idx=$resDeltaIdx, Product idx=$resProdIdx"
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
     for ($ri = 0; $ri -lt $resTab.rows.Count; $ri++) {
         $c = $resTab.rows[$ri].c; if (-not $c) { continue }
         $partner = [string](Gviz-Val $c[0]); if (-not $partner) { continue }
-        if ((([string](Gviz-Val $c[4])).Trim()) -ne 'Studio') { continue }   # Studio resellers only
-        $dRaw = Gviz-Val $c[17]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
+        if ((([string](Gviz-Val $c[$resProdIdx])).Trim()) -ne 'Studio') { continue }   # Studio resellers only
+        $dRaw = Gviz-Val $c[$resDeltaIdx]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
         $d = 0.0; try { $d = [double]$dRaw } catch { continue }
         if ($d -eq 0) { continue }
         $arr = $d * 12.0
