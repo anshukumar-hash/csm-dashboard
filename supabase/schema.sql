@@ -100,14 +100,22 @@ create table if not exists metric_snapshots (
   primary key (snapshot_date, scope)
 );
 
--- CSM action items per segment (date × CSM × segment → count).
--- csm = '__all__' is the whole-book row. Long format for easy trend queries.
+-- CSM action items (date × CSM → one column per segment).
+-- csm = '__all__' is the whole-book row. Wide format: each segment is a column.
 create table if not exists csm_action_snapshots (
   snapshot_date date not null,
   csm           text not null,
-  segment       text not null,   -- health|account|report|payment|communication|usage_studio|usage_vini|signals|tickets
-  action_count  int,
-  primary key (snapshot_date, csm, segment)
+  health        int,
+  account       int,
+  report        int,
+  payment       int,
+  communication int,
+  usage_studio  int,
+  usage_vini    int,
+  signals       int,
+  tickets       int,
+  total         int,
+  primary key (snapshot_date, csm)
 );
 
 -- Handy trend indexes
@@ -116,4 +124,3 @@ create index if not exists idx_vini_snap_date    on vini_snapshots(snapshot_date
 create index if not exists idx_churn_snap_date   on churn_snapshots(snapshot_date);
 create index if not exists idx_metric_snap_scope on metric_snapshots(scope, snapshot_date);
 create index if not exists idx_csmact_csm        on csm_action_snapshots(csm, snapshot_date);
-create index if not exists idx_csmact_segment    on csm_action_snapshots(segment, snapshot_date);

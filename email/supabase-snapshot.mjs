@@ -110,12 +110,11 @@ try {
         arali_signals: sig != null ? sig : null,
       };
     });
-    // ---- CSM action items per segment (date × CSM × segment) ----
+    // ---- CSM action items (date × CSM, one column per segment) ----
     const csm_actions = [];
     const pushActions = (csmLabel, counts) => {
-      Object.keys(counts).forEach(segment => csm_actions.push({
-        snapshot_date: date, csm: csmLabel, segment, action_count: counts[segment],
-      }));
+      const total = Object.keys(counts).reduce((s, k) => s + (counts[k] || 0), 0);
+      csm_actions.push({ snapshot_date: date, csm: csmLabel, ...counts, total });
     };
     pushActions('__all__', csmActionCounts(null));
     (typeof csmReportRoster === 'function' ? csmReportRoster() : []).forEach(c => {
@@ -163,6 +162,6 @@ await upsert('studio_snapshots', data.studio, 'snapshot_date,rooftop_id');
 await upsert('vini_snapshots', data.vini, 'snapshot_date,rid,agent');
 await upsert('churn_snapshots', data.churn, 'snapshot_date,row_idx');
 await upsert('metric_snapshots', data.metrics, 'snapshot_date,scope');
-await upsert('csm_action_snapshots', data.csm_actions, 'snapshot_date,csm,segment');
+await upsert('csm_action_snapshots', data.csm_actions, 'snapshot_date,csm');
 console.log(`Supabase snapshot complete for ${today}.`);
 process.exit(0);
