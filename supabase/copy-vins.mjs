@@ -22,9 +22,23 @@ const ident = s => '"' + String(s).replace(/"/g, '""') + '"';
 const src = new Client({ connectionString: SRC, ssl: { rejectUnauthorized: false } });
 const dst = new Client({ connectionString: DST, ssl: { rejectUnauthorized: false } });
 
+// Diagnostics — confirm each URL parses to the right host/user/db and that a
+// password is actually present (length only — never the value).
+function diag(label, url) {
+  try {
+    const u = new URL(url);
+    console.log(`${label}: host=${u.hostname} port=${u.port || '(none)'} user=${decodeURIComponent(u.username)} db=${u.pathname.slice(1) || '(none)'} passwordLength=${u.password.length}`);
+    if (u.hostname.includes('...') || u.password.length === 0) console.log(`  ^ ${label} looks INVALID (placeholder host or empty password)`);
+  } catch (e) { console.log(`${label}: UNPARSEABLE connection string (${e.message})`); }
+}
+diag('source(VINS_SOURCE_DB_URL)', SRC);
+diag('dest(CSM_DEST_DB_URL)', DST);
+
 try {
-  await src.connect();
-  await dst.connect();
+  try { await src.connect(); console.log('✓ source connected'); }
+  catch (e) { console.error('✗ SOURCE connect failed:', e.message); throw e; }
+  try { await dst.connect(); console.log('✓ dest connected'); }
+  catch (e) { console.error('✗ DEST connect failed:', e.message); throw e; }
 
   // 1) Source column definitions (preserve types; fall back to text for exotic ones).
   const colsRes = await src.query(
