@@ -1,0 +1,9 @@
+{
+  "name": "csm-supabase-jobs",
+  "private": true,
+  "type": "module",
+  "description": "Supabase maintenance jobs (vins copy).",
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
