@@ -55,6 +55,13 @@ try {
     return { name: c.column_name, type };
   });
   const colNames = cols.map(c => c.name);
+  console.log('vins columns:', colNames.join(', '));
+  // Detect the rooftop-identifier column (the dashboard keys on team_id == rid).
+  const teamCol = ['team_id', 'rooftop_id', 'dealer_id', 'rid', 'store_id'].find(c => colNames.includes(c))
+    || colNames.find(c => /team|rooftop|dealer|store/i.test(c)) || null;
+  const filterCols = ['output_processing_spin', 'status', 'spin_reason_bucket'];
+  const missingFilters = filterCols.filter(c => !colNames.includes(c));
+  console.log(`rooftop-id column -> ${teamCol || '(none found)'}; missing filter cols: ${missingFilters.join(', ') || 'none'}`);
 
   // 2) All source rows.
   const rows = (await src.query(`select * from ${ident(SCHEMA)}.${ident(TABLE)}`)).rows;
@@ -73,20 +80,25 @@ try {
     const tuples = batch.map(r => '(' + colNames.map(cn => { params.push(r[cn]); return '$' + params.length; }).join(',') + ')');
     await dst.query(`insert into ${ident(SCHEMA)}.${ident(TABLE)} (${colNames.map(ident).join(',')}) values ${tuples.join(',')}`, params);
   }
-  // Read-only "360 Pending" aggregate per team_id, exposed to the anon role so
+  // Read-only "360 Pending" aggregate per rooftop, exposed to the anon role so
   // the dashboard can fetch it via REST (raw vins stays inaccessible to anon).
-  await dst.query(`create or replace view ${ident(SCHEMA)}.vins_360_pending as
-    select team_id, count(*)::int as pending
-    from ${ident(SCHEMA)}.${ident(TABLE)}
-    where output_processing_spin = 1 and status = 'Not Delivered'
-      and spin_reason_bucket = 'Insufficient Images' and team_id is not null
-    group by team_id`);
-  await dst.query(`grant usage on schema ${ident(SCHEMA)} to anon`).catch(() => {});
-  await dst.query(`grant select on ${ident(SCHEMA)}.vins_360_pending to anon`).catch(() => {});
-  const v360 = (await dst.query(`select count(*)::int as teams, coalesce(sum(pending),0)::int as total from ${ident(SCHEMA)}.vins_360_pending`)).rows[0];
-  // Let the REST/PostgREST schema cache pick up the new table + view.
-  await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
-  console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols → ${SCHEMA}.${TABLE}. 360 Pending: ${v360.total} across ${v360.teams} teams.`);
+  // The view always exposes the rooftop id as "team_id" (aliased from teamCol).
+  if (teamCol && !missingFilters.length) {
+    await dst.query(`create or replace view ${ident(SCHEMA)}.vins_360_pending as
+      select ${ident(teamCol)} as team_id, count(*)::int as pending
+      from ${ident(SCHEMA)}.${ident(TABLE)}
+      where output_processing_spin = 1 and status = 'Not Delivered'
+        and spin_reason_bucket = 'Insufficient Images' and ${ident(teamCol)} is not null
+      group by ${ident(teamCol)}`);
+    await dst.query(`grant usage on schema ${ident(SCHEMA)} to anon`).catch(() => {});
+    await dst.query(`grant select on ${ident(SCHEMA)}.vins_360_pending to anon`).catch(() => {});
+    const v360 = (await dst.query(`select count(*)::int as teams, coalesce(sum(pending),0)::int as total from ${ident(SCHEMA)}.vins_360_pending`)).rows[0];
+    await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
+    console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols. 360 Pending: ${v360.total} across ${v360.teams} rooftops (key=${teamCol}).`);
+  } else {
+    await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
+    console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols. 360 view SKIPPED (teamCol=${teamCol}, missing=${missingFilters.join(',')||'none'}).`);
+  }
 } finally {
   await src.end().catch(() => {});
   await dst.end().catch(() => {});
