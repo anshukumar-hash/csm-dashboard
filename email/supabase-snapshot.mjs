@@ -169,12 +169,25 @@ async function clearDay(table) {
     method: 'DELETE', headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, Prefer: 'return=minimal' },
   });
 }
-for (const t of ['studio_snapshots', 'vini_snapshots', 'churn_snapshots', 'metric_snapshots', 'csm_action_snapshots', 'csm_metric_snapshots']) await clearDay(t);
-await upsert('studio_snapshots', data.studio, 'snapshot_date,rooftop_id');
-await upsert('vini_snapshots', data.vini, 'snapshot_date,rid,agent');
-await upsert('churn_snapshots', data.churn, 'snapshot_date,row_idx');
-await upsert('metric_snapshots', data.metrics, 'snapshot_date,scope');
-await upsert('csm_action_snapshots', data.csm_actions, 'snapshot_date,csm');
-await upsert('csm_metric_snapshots', data.csm_metrics, 'snapshot_date,csm');
+// Each table saves independently — a missing/locked table is logged and skipped
+// so it never blocks the others (resilient save).
+const targets = [
+  ['studio_snapshots',      data.studio,      'snapshot_date,rooftop_id'],
+  ['vini_snapshots',        data.vini,        'snapshot_date,rid,agent'],
+  ['churn_snapshots',       data.churn,       'snapshot_date,row_idx'],
+  ['metric_snapshots',      data.metrics,     'snapshot_date,scope'],
+  ['csm_action_snapshots',  data.csm_actions, 'snapshot_date,csm'],
+  ['csm_metric_snapshots',  data.csm_metrics, 'snapshot_date,csm'],
+];
+const failures = [];
+for (const [t] of targets) { try { await clearDay(t); } catch (e) {} }
+for (const [t, rows, oc] of targets) {
+  try { await upsert(t, rows, oc); }
+  catch (e) { failures.push(t); console.error(`  ${t}: SKIPPED — ${String(e.message).slice(0, 180)}`); }
+}
+if (failures.length) {
+  console.error(`Snapshot saved ${targets.length - failures.length}/${targets.length} tables for ${today}. Missing: ${failures.join(', ')} (create them in Supabase).`);
+  process.exit(1);
+}
 console.log(`Supabase snapshot complete for ${today}.`);
 process.exit(0);
