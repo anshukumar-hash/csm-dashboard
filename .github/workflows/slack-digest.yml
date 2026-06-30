@@ -2,8 +2,10 @@ name: Daily CS Report to Slack
 
 on:
   schedule:
-    # 04:00 UTC = 09:30 AM IST (IST = UTC+5:30).
-    - cron: '0 4 * * *'
+    # Target ~9:30 AM IST, ~30 min after the email. Fire EARLY on an odd minute
+    # to absorb GitHub's best-effort cron delay (queue is busiest at :00/:30).
+    # 03:37 UTC = 9:07 AM IST (IST = UTC+5:30).
+    - cron: '37 3 * * *'
   workflow_dispatch: {}
 
 concurrency:
