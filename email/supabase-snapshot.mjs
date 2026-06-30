@@ -39,7 +39,11 @@ try {
   const page = await browser.newPage();
   await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForFunction(() => typeof getStudio === 'function' && typeof computeOverview === 'function', { timeout: 30000 });
-  await page.waitForTimeout(3500); // let churn/signals load for the metrics rows
+  // Kick off the Arali signal feed so signal-based metrics (arali_open_signals,
+  // action 'signals') reflect real counts instead of 0, then wait for it.
+  await page.evaluate(() => { try { if (typeof loadChurn === 'function' && typeof _churnState !== 'undefined' && _churnState === 'idle') loadChurn(); } catch (e) {} });
+  await page.waitForFunction(() => typeof _churnState === 'undefined' || _churnState === 'ready' || _churnState === 'error', { timeout: 25000 }).catch(() => {});
+  await page.waitForTimeout(2000); // settle other async (usage/tickets)
   data = await page.evaluate((date) => {
     const num = v => { const n = Number(v); return isFinite(n) ? n : null; };
     // ---- raw Studio rooftops (with computed RAGs, via ovStudioAcct) ----
@@ -121,14 +125,22 @@ try {
       try { pushActions(c, csmActionCounts(c)); } catch (e) {}
     });
 
-    return { studio, vini, churn, metrics, csm_actions };
+    // ---- CSM scorecard tile metrics (date × CSM, one column per tile) ----
+    const csm_metrics = [];
+    const pushMetrics = (csmLabel, vals) => csm_metrics.push({ snapshot_date: date, csm: csmLabel, ...vals });
+    pushMetrics('__all__', csmScorecardData(null));
+    (typeof csmReportRoster === 'function' ? csmReportRoster() : []).forEach(c => {
+      try { pushMetrics(c, csmScorecardData(c)); } catch (e) {}
+    });
+
+    return { studio, vini, churn, metrics, csm_actions, csm_metrics };
   }, today);
 } finally {
   await browser.close();
   server.close();
 }
 
-console.log(`Snapshot ${today}: studio=${data.studio.length} vini=${data.vini.length} churn=${data.churn.length} metrics=${data.metrics.length} csm_actions=${data.csm_actions.length}`);
+console.log(`Snapshot ${today}: studio=${data.studio.length} vini=${data.vini.length} churn=${data.churn.length} metrics=${data.metrics.length} csm_actions=${data.csm_actions.length} csm_metrics=${data.csm_metrics.length}`);
 
 if (!SUPA_KEY || !SUPA_URL) { console.log('SUPABASE_URL/SUPABASE_SERVICE_KEY not set — extracted only, no write (no-op).'); process.exit(0); }
 
@@ -157,11 +169,12 @@ async function clearDay(table) {
     method: 'DELETE', headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, Prefer: 'return=minimal' },
   });
 }
-for (const t of ['studio_snapshots', 'vini_snapshots', 'churn_snapshots', 'metric_snapshots', 'csm_action_snapshots']) await clearDay(t);
+for (const t of ['studio_snapshots', 'vini_snapshots', 'churn_snapshots', 'metric_snapshots', 'csm_action_snapshots', 'csm_metric_snapshots']) await clearDay(t);
 await upsert('studio_snapshots', data.studio, 'snapshot_date,rooftop_id');
 await upsert('vini_snapshots', data.vini, 'snapshot_date,rid,agent');
 await upsert('churn_snapshots', data.churn, 'snapshot_date,row_idx');
 await upsert('metric_snapshots', data.metrics, 'snapshot_date,scope');
 await upsert('csm_action_snapshots', data.csm_actions, 'snapshot_date,csm');
+await upsert('csm_metric_snapshots', data.csm_metrics, 'snapshot_date,csm');
 console.log(`Supabase snapshot complete for ${today}.`);
 process.exit(0);

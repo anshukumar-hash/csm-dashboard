@@ -118,9 +118,39 @@ create table if not exists csm_action_snapshots (
   primary key (snapshot_date, csm)
 );
 
+-- CSM scorecard tile metrics (date × CSM → one column per header card).
+-- csm = '__all__' is the whole-book row. new_addition / nrr are org-only (null per CSM).
+create table if not exists csm_metric_snapshots (
+  snapshot_date         date not null,
+  csm                   text not null,
+  live_arr              numeric,
+  rooftops              int,
+  enterprises           int,
+  new_addition          numeric,
+  churn_arr             numeric,
+  churn_accounts        int,
+  comm_pct              numeric,
+  report_sent_sent      int,
+  report_sent_attempted int,
+  report_sent_pct       numeric,
+  studio_usage          numeric,
+  tickets_unresolved    int,
+  payment_green         int,
+  payment_amber         int,
+  payment_red           int,
+  payment_green_pct     numeric,
+  vin_pendency          numeric,
+  grr                   numeric,
+  nrr                   numeric,
+  vini_roi              numeric,
+  arali_open_signals    int,
+  primary key (snapshot_date, csm)
+);
+
 -- Handy trend indexes
 create index if not exists idx_studio_snap_date  on studio_snapshots(snapshot_date);
 create index if not exists idx_vini_snap_date    on vini_snapshots(snapshot_date);
 create index if not exists idx_churn_snap_date   on churn_snapshots(snapshot_date);
 create index if not exists idx_metric_snap_scope on metric_snapshots(scope, snapshot_date);
 create index if not exists idx_csmact_csm        on csm_action_snapshots(csm, snapshot_date);
+create index if not exists idx_csmmet_csm        on csm_metric_snapshots(csm, snapshot_date);
