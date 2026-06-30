@@ -10,6 +10,9 @@ concurrency:
   group: vins-copy
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   copy:
     runs-on: ubuntu-latest
@@ -29,6 +32,21 @@ jobs:
         working-directory: supabase
         run: npm install
 
-      - name: Copy vins → CSM Supabase
+      - name: Copy vins → CSM Supabase (writes vins360.json)
         working-directory: supabase
         run: node copy-vins.mjs
+
+      - name: Commit vins360.json + redeploy if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain vins360.json vercel_deploy/vins360.json)" ]]; then
+            git add vins360.json vercel_deploy/vins360.json
+            git commit -m "Update vins360.json (360 Pending) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+            if [[ -n "${{ secrets.VERCEL_DEPLOY_HOOK }}" ]]; then curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}" >/dev/null && echo "deploy hook pinged"; fi
+          else
+            echo "vins360.json unchanged — no commit"
+          fi

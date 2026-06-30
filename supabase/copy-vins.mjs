@@ -9,7 +9,11 @@
 // Both must allow normal SQL (use the Session pooler :5432 or Direct connection,
 // NOT the transaction pooler :6543).
 import pg from 'pg';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 const { Client } = pg;
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SRC = process.env.VINS_SOURCE_DB_URL;
 const DST = process.env.CSM_DEST_DB_URL;
@@ -92,10 +96,16 @@ try {
       group by ${ident(teamCol)}`);
     await dst.query(`grant usage on schema ${ident(SCHEMA)} to anon`).catch(() => {});
     await dst.query(`grant select on ${ident(SCHEMA)}.vins_360_pending to anon`).catch(() => {});
-    const v360 = (await dst.query(`select count(*)::int as teams, coalesce(sum(pending),0)::int as total from ${ident(SCHEMA)}.vins_360_pending`)).rows[0];
+    // Write a small same-origin file the dashboard fetches: { rooftop_id: count }.
+    const map360 = {};
+    (await dst.query(`select team_id, pending from ${ident(SCHEMA)}.vins_360_pending`)).rows
+      .forEach(r => { if (r.team_id != null) map360[String(r.team_id)] = Number(r.pending) || 0; });
+    const json = JSON.stringify(map360);
+    for (const p of [path.join(REPO, 'vins360.json'), path.join(REPO, 'vercel_deploy', 'vins360.json')]) fs.writeFileSync(p, json);
     await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
-    console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols. 360 Pending: ${v360.total} across ${v360.teams} rooftops (key=${teamCol}).`);
+    console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols. 360 Pending: ${Object.values(map360).reduce((a,b)=>a+b,0)} across ${Object.keys(map360).length} rooftops (key=${teamCol}). Wrote vins360.json.`);
   } else {
+    for (const p of [path.join(REPO, 'vins360.json'), path.join(REPO, 'vercel_deploy', 'vins360.json')]) { if (!fs.existsSync(p)) fs.writeFileSync(p, '{}'); }
     await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
     console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols. 360 view SKIPPED (teamCol=${teamCol}, missing=${missingFilters.join(',')||'none'}).`);
   }
