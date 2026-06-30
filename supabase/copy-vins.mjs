@@ -60,7 +60,7 @@ try {
   const rows = (await src.query(`select * from ${ident(SCHEMA)}.${ident(TABLE)}`)).rows;
 
   // 3) Recreate the destination table to mirror the source schema.
-  const ddl = `drop table if exists ${ident(SCHEMA)}.${ident(TABLE)};\n`
+  const ddl = `drop table if exists ${ident(SCHEMA)}.${ident(TABLE)} cascade;\n`
     + `create table ${ident(SCHEMA)}.${ident(TABLE)} (\n  `
     + cols.map(c => `${ident(c.name)} ${c.type}`).join(',\n  ') + `\n);`;
   await dst.query(ddl);
@@ -73,9 +73,20 @@ try {
     const tuples = batch.map(r => '(' + colNames.map(cn => { params.push(r[cn]); return '$' + params.length; }).join(',') + ')');
     await dst.query(`insert into ${ident(SCHEMA)}.${ident(TABLE)} (${colNames.map(ident).join(',')}) values ${tuples.join(',')}`, params);
   }
-  // Let the REST/PostgREST schema cache pick up the new table.
+  // Read-only "360 Pending" aggregate per team_id, exposed to the anon role so
+  // the dashboard can fetch it via REST (raw vins stays inaccessible to anon).
+  await dst.query(`create or replace view ${ident(SCHEMA)}.vins_360_pending as
+    select team_id, count(*)::int as pending
+    from ${ident(SCHEMA)}.${ident(TABLE)}
+    where output_processing_spin = 1 and status = 'Not Delivered'
+      and spin_reason_bucket = 'Insufficient Images' and team_id is not null
+    group by team_id`);
+  await dst.query(`grant usage on schema ${ident(SCHEMA)} to anon`).catch(() => {});
+  await dst.query(`grant select on ${ident(SCHEMA)}.vins_360_pending to anon`).catch(() => {});
+  const v360 = (await dst.query(`select count(*)::int as teams, coalesce(sum(pending),0)::int as total from ${ident(SCHEMA)}.vins_360_pending`)).rows[0];
+  // Let the REST/PostgREST schema cache pick up the new table + view.
   await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
-  console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols → ${SCHEMA}.${TABLE} (destination).`);
+  console.log(`vins copy complete: ${rows.length} rows × ${cols.length} cols → ${SCHEMA}.${TABLE}. 360 Pending: ${v360.total} across ${v360.teams} teams.`);
 } finally {
   await src.end().catch(() => {});
   await dst.end().catch(() => {});
