@@ -124,6 +124,18 @@ try {
     br.forEach(r => { bmap[String(r.rooftop_id)] = { e: r.enterprise_id, ii:+r.ii, qch:+r.qch, qcp:+r.qcp, pp:+r.pp, up:+r.up, sold:+r.sold, inf:+r.inf, total:+r.total }; });
     for (const p of [path.join(REPO, 'vins_buckets.json'), path.join(REPO, 'vercel_deploy', 'vins_buckets.json')]) fs.writeFileSync(p, JSON.stringify(bmap));
     console.log(`  wrote vins_buckets.json: ${Object.keys(bmap).length} rooftops`);
+    // Per-VIN detail (for the modal CSV download): r=rooftop_id e=enterprise_id
+    // d=dealer_vin_id v=vin b=bucketKey. Not-Delivered spins only.
+    const dr = (await dst.query(`
+      select rooftop_id as r, enterprise_id as e, dealer_vin_id as d, vin as v,
+        case spin_reason_bucket
+          when 'Insufficient Images' then 'ii' when 'QC Hold' then 'qch' when 'QC Pending' then 'qcp'
+          when 'Processing Pending' then 'pp' when 'Upload Pending' then 'up' when 'Sold' then 'sold'
+          when 'Others' then 'inf' else 'other' end as b
+      from public.vins
+      where output_processing_spin=1 and spin_status='Not Delivered' and rooftop_id is not null`)).rows;
+    for (const p of [path.join(REPO, 'vins_360_detail.json'), path.join(REPO, 'vercel_deploy', 'vins_360_detail.json')]) fs.writeFileSync(p, JSON.stringify(dr));
+    console.log(`  wrote vins_360_detail.json: ${dr.length} VIN rows`);
   }
 
   // ---- 2) Adoption.Rooftop_adoption ----
@@ -142,7 +154,7 @@ try {
     const truthy = v => { if (v === true || v === 1) return true; const s = String(v == null ? '' : v).trim().toLowerCase(); return ['true','t','yes','y','1','enabled','adopted','live','active','on'].includes(s); };
     const ad = (await dst.query(`select * from public.rooftop_adoption where team_id is not null`)).rows;
     const amap = {};
-    ad.forEach(r => { amap[String(r.team_id)] = { n: r.team_name, e: r.enterprise_id, app: truthy(r.app_adoption), vdp: truthy(r.smartview_vdp_enabled), vlp: truthy(r.smartview_vlp_enabled), camp: truthy(r.smart_campaign_adoption), active: truthy(r.active) }; });
+    ad.forEach(r => { amap[String(r.team_id)] = { n: r.team_name, en: r.enterprise_name, e: r.enterprise_id, app: truthy(r.app_adoption), vdp: truthy(r.smartview_vdp_enabled), vlp: truthy(r.smartview_vlp_enabled), camp: truthy(r.smart_campaign_adoption), active: truthy(r.active) }; });
     for (const p of [path.join(REPO, 'rooftop_adoption.json'), path.join(REPO, 'vercel_deploy', 'rooftop_adoption.json')]) fs.writeFileSync(p, JSON.stringify(amap));
     console.log(`  wrote rooftop_adoption.json: ${Object.keys(amap).length} rooftops`);
   } else {

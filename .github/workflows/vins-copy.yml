@@ -40,7 +40,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          FILES="vins360.json vercel_deploy/vins360.json vins_buckets.json vercel_deploy/vins_buckets.json rooftop_adoption.json vercel_deploy/rooftop_adoption.json"
+          FILES="vins360.json vercel_deploy/vins360.json vins_buckets.json vercel_deploy/vins_buckets.json rooftop_adoption.json vercel_deploy/rooftop_adoption.json vins_360_detail.json vercel_deploy/vins_360_detail.json"
           if [[ -n "$(git status --porcelain $FILES)" ]]; then
             git add $FILES
             git commit -m "Update vins360 / vins_buckets / rooftop_adoption data [skip ci]"
