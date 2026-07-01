@@ -988,7 +988,7 @@ Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) ticke
 $sStudioSchema = @(
     'rid','rn','en',
     'mrr','arr',
-    'u_jan','u_feb','u_mar','u_apr','u_may','u_mtd',
+    'u_jan','u_feb','u_mar','u_apr','u_may','u_jun','u_mtd',
     'pen','ws','ws_link',
     't1','t2','t3','prag',
     'unr','cr','ota','res','trag',
@@ -1017,6 +1017,7 @@ $si = @{
     u_mar   = Find-Col $sCols @("Mar'26","Mar26")
     u_apr   = Find-Col $sCols @("Apr'26","Apr26")
     u_may   = Find-Col $sCols @("May'26","May26")
+    u_jun   = Find-Col $sCols @("Jun'26","Jun26")
     u_mtd   = Find-Col $sCols @('mtd_vins','MTD VINs','MTD Vins','MTD')
     arr     = Find-Col $sCols @('ARR')
     t1      = Find-Col $sCols @('Payment T1','T1')
@@ -1039,7 +1040,8 @@ if ($si.u_feb -lt 0) { $si.u_feb = 13 }
 if ($si.u_mar -lt 0) { $si.u_mar = 14 }
 if ($si.u_apr -lt 0) { $si.u_apr = 15 }
 if ($si.u_may -lt 0) { $si.u_may = 16 }
-if ($si.u_mtd -lt 0) { $si.u_mtd = 17 }
+if ($si.u_jun -lt 0) { $si.u_jun = 17 }   # column R = Jun'26 (added when June closed)
+if ($si.u_mtd -lt 0) { $si.u_mtd = 18 }   # column S = MTD Vins (shifted right by the new Jun'26 col)
 
 # Resolution time column is `[h]:mm:ss` formatted — extract from the
 # Gviz cell.f (display string) rather than .v (broken Date encoding).
@@ -1088,6 +1090,7 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['u_mar']]   = Gviz-Val $c[$si.u_mar]
     $r[$idx['u_apr']]   = Gviz-Val $c[$si.u_apr]
     $r[$idx['u_may']]   = Gviz-Val $c[$si.u_may]
+    $r[$idx['u_jun']]   = Gviz-Val $c[$si.u_jun]
     $r[$idx['u_mtd']]   = Gviz-Val $c[$si.u_mtd]
     $r[$idx['pen']]     = Gviz-Val $c[$si.pen]
     $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
