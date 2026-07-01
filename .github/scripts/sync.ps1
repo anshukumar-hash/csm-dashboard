@@ -1508,7 +1508,15 @@ try {
 # Embedded as new_addition so the email snapshot uses real per-product values
 # (replacing the fragile onboarding-SPA scrape + hard-coded constant).
 $naSheet = '1ioRrooOvDSBxc7gjC2XUGjqHH_YBze_2HryOF8JWqL0'
-$naCurYM = (Get-Date).ToString('yyyy-MM')
+# Reporting month for new-addition + reseller. On the 1st–3rd of a new calendar
+# month the just-started month has ~no go-lives, so report the just-closed month
+# (e.g. on Jul 1–3 report June); auto-reverts from the 4th. This also drives
+# ovCurMonth() client-side, so New Addition, Overview churn, GRR and the email
+# all stay on the same (June) month during the rollover.
+$naNow   = Get-Date
+$naRef   = if ($naNow.Day -le 3) { $naNow.AddMonths(-1) } else { $naNow }
+$naCurYM = $naRef.ToString('yyyy-MM')
+Write-Host "  new_addition/reseller reporting month = $naCurYM (calendar $($naNow.ToString('yyyy-MM')), day $($naNow.Day))"
 function NA-Money($v) { if ($null -eq $v -or $v -eq '') { return 0.0 }; $c = ([string]$v) -replace '[^0-9.\-]',''; try { return [double]$c } catch { return 0.0 } }
 function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
     # Count accounts with Stage='Live' (col 4 / column E) AND a Go-Live Date
