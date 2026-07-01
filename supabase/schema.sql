@@ -103,18 +103,20 @@ create table if not exists metric_snapshots (
 -- CSM action items (date × CSM → one column per segment).
 -- csm = '__all__' is the whole-book row. Wide format: each segment is a column.
 create table if not exists csm_action_snapshots (
-  snapshot_date date not null,
-  csm           text not null,
-  health        int,
-  account       int,
-  report        int,
-  payment       int,
-  communication int,
-  usage_studio  int,
-  usage_vini    int,
-  signals       int,
-  tickets       int,
-  total         int,
+  snapshot_date    date not null,
+  csm              text not null,
+  health           int,
+  account          int,
+  report           int,
+  payment          int,
+  communication    int,
+  usage_studio     int,
+  feature_adoption int,
+  pendency_360     int,
+  usage_vini       int,
+  signals          int,
+  tickets          int,
+  total            int,
   primary key (snapshot_date, csm)
 );
 

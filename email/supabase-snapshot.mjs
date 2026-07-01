@@ -43,6 +43,8 @@ try {
   // action 'signals') reflect real counts instead of 0, then wait for it.
   await page.evaluate(() => { try { if (typeof loadChurn === 'function' && typeof _churnState !== 'undefined' && _churnState === 'idle') loadChurn(); } catch (e) {} });
   await page.waitForFunction(() => typeof _churnState === 'undefined' || _churnState === 'ready' || _churnState === 'error', { timeout: 25000 }).catch(() => {});
+  // Wait for the adoption + 360-bucket feeds so feature_adoption / pendency_360 actions aren't 0.
+  await page.waitForFunction(() => (typeof ROOFTOP_ADOPTION === 'undefined' || Object.keys(ROOFTOP_ADOPTION).length > 0) && (typeof VINS_BUCKETS === 'undefined' || Object.keys(VINS_BUCKETS).length > 0), { timeout: 20000 }).catch(() => {});
   await page.waitForTimeout(2000); // settle other async (usage/tickets)
   data = await page.evaluate((date) => {
     const num = v => { const n = Number(v); return isFinite(n) ? n : null; };
