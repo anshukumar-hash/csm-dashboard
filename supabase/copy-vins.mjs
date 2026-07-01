@@ -63,7 +63,7 @@ try {
   // Detect the rooftop-identifier column (the dashboard keys on team_id == rid).
   const teamCol = ['team_id', 'rooftop_id', 'dealer_id', 'rid', 'store_id'].find(c => colNames.includes(c))
     || colNames.find(c => /team|rooftop|dealer|store/i.test(c)) || null;
-  const filterCols = ['output_processing_spin', 'status', 'spin_reason_bucket'];
+  const filterCols = ['output_processing_spin', 'spin_status', 'spin_reason_bucket'];
   const missingFilters = filterCols.filter(c => !colNames.includes(c));
   console.log(`rooftop-id column -> ${teamCol || '(none found)'}; missing filter cols: ${missingFilters.join(', ') || 'none'}`);
 
@@ -91,7 +91,7 @@ try {
     await dst.query(`create or replace view ${ident(SCHEMA)}.vins_360_pending as
       select ${ident(teamCol)} as team_id, count(*)::int as pending
       from ${ident(SCHEMA)}.${ident(TABLE)}
-      where output_processing_spin = 1 and status = 'Not Delivered'
+      where output_processing_spin = 1 and spin_status = 'Not Delivered'
         and spin_reason_bucket = 'Insufficient Images' and ${ident(teamCol)} is not null
       group by ${ident(teamCol)}`);
     await dst.query(`grant usage on schema ${ident(SCHEMA)} to anon`).catch(() => {});
