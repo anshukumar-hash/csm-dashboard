@@ -2,8 +2,8 @@ name: Copy vins to CSM Supabase
 
 on:
   schedule:
-    # Every 6 hours on an odd minute (avoids GitHub's congested :00).
-    - cron: '17 */6 * * *'
+    # Every 4 hours on an odd minute (avoids GitHub's congested :00).
+    - cron: '17 */4 * * *'
   workflow_dispatch: {}
 
 concurrency:
