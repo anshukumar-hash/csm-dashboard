@@ -2,8 +2,14 @@ name: Daily Supabase Snapshot
 
 on:
   schedule:
-    # 18:30 UTC = 12:00 AM IST (end-of-day snapshot, after the data has settled).
-    - cron: '30 18 * * *'
+    # End-of-(IST)-day snapshot. Three windows so GitHub's best-effort scheduler
+    # can't skip the day; the write is idempotent on snapshot_date (clears +
+    # re-upserts), so extra runs just overwrite — the last one of the day wins.
+    # 16:47 / 18:17 / 20:17 UTC = 10:17 PM / 11:47 PM / 1:47 AM IST (all same UTC
+    # day, so snapshot_date stays correct even under delay).
+    - cron: '47 16 * * *'
+    - cron: '17 18 * * *'
+    - cron: '17 20 * * *'
   workflow_dispatch: {}
 
 concurrency:
