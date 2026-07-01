@@ -105,6 +105,27 @@ try {
     console.log(`  360 view SKIPPED (teamCol=${teamCol}, missing=${missingFilters.join(',') || 'none'}).`);
   }
 
+  // Per-rooftop spin_reason_bucket breakdown (360 Pendency detail) -> vins_buckets.json
+  if (colNames.includes('spin_reason_bucket') && colNames.includes('rooftop_id')) {
+    const br = (await dst.query(`
+      select rooftop_id, max(enterprise_id) as enterprise_id,
+        count(*) filter (where spin_reason_bucket='Insufficient Images') as ii,
+        count(*) filter (where spin_reason_bucket='QC Hold')            as qch,
+        count(*) filter (where spin_reason_bucket='QC Pending')         as qcp,
+        count(*) filter (where spin_reason_bucket='Processing Pending') as pp,
+        count(*) filter (where spin_reason_bucket='Upload Pending')     as up,
+        count(*) filter (where spin_reason_bucket='Sold')              as sold,
+        count(*) filter (where spin_reason_bucket='Others')            as inf,
+        count(*) as total
+      from public.vins
+      where output_processing_spin=1 and spin_status='Not Delivered' and rooftop_id is not null
+      group by rooftop_id`)).rows;
+    const bmap = {};
+    br.forEach(r => { bmap[String(r.rooftop_id)] = { e: r.enterprise_id, ii:+r.ii, qch:+r.qch, qcp:+r.qcp, pp:+r.pp, up:+r.up, sold:+r.sold, inf:+r.inf, total:+r.total }; });
+    for (const p of [path.join(REPO, 'vins_buckets.json'), path.join(REPO, 'vercel_deploy', 'vins_buckets.json')]) fs.writeFileSync(p, JSON.stringify(bmap));
+    console.log(`  wrote vins_buckets.json: ${Object.keys(bmap).length} rooftops`);
+  }
+
   // ---- 2) Adoption.Rooftop_adoption ----
   // Discover the exact schema/table (case-sensitive in Postgres), then mirror it.
   const adoptFound = (await src.query(
@@ -116,6 +137,14 @@ try {
     const a = adoptFound.find(r => /rooftop/i.test(r.table_name)) || adoptFound[0];
     await mirrorTable(a.table_schema, a.table_name, 'rooftop_adoption');
     await dst.query(`grant select on public.rooftop_adoption to anon`).catch(() => {});
+    // Per-rooftop feature-adoption map -> rooftop_adoption.json for the dashboard.
+    console.log('  rooftop_adoption sample:', JSON.stringify((await dst.query(`select team_id, app_adoption, smartview_vdp_enabled, smartview_vlp_enabled, smart_campaign_adoption, active from public.rooftop_adoption limit 3`)).rows));
+    const truthy = v => { if (v === true || v === 1) return true; const s = String(v == null ? '' : v).trim().toLowerCase(); return ['true','t','yes','y','1','enabled','adopted','live','active','on'].includes(s); };
+    const ad = (await dst.query(`select * from public.rooftop_adoption where team_id is not null`)).rows;
+    const amap = {};
+    ad.forEach(r => { amap[String(r.team_id)] = { n: r.team_name, e: r.enterprise_id, app: truthy(r.app_adoption), vdp: truthy(r.smartview_vdp_enabled), vlp: truthy(r.smartview_vlp_enabled), camp: truthy(r.smart_campaign_adoption), active: truthy(r.active) }; });
+    for (const p of [path.join(REPO, 'rooftop_adoption.json'), path.join(REPO, 'vercel_deploy', 'rooftop_adoption.json')]) fs.writeFileSync(p, JSON.stringify(amap));
+    console.log(`  wrote rooftop_adoption.json: ${Object.keys(amap).length} rooftops`);
   } else {
     console.log('  Rooftop_adoption: no matching table found in source.');
   }

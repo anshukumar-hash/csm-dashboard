@@ -40,9 +40,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [[ -n "$(git status --porcelain vins360.json vercel_deploy/vins360.json)" ]]; then
-            git add vins360.json vercel_deploy/vins360.json
-            git commit -m "Update vins360.json (360 Pending) [skip ci]"
+          FILES="vins360.json vercel_deploy/vins360.json vins_buckets.json vercel_deploy/vins_buckets.json rooftop_adoption.json vercel_deploy/rooftop_adoption.json"
+          if [[ -n "$(git status --porcelain $FILES)" ]]; then
+            git add $FILES
+            git commit -m "Update vins360 / vins_buckets / rooftop_adoption data [skip ci]"
             for i in 1 2 3; do
               git pull --rebase origin main && git push origin main && break || sleep 5
             done
