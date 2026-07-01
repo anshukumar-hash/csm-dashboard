@@ -161,6 +161,20 @@ try {
     console.log('  Rooftop_adoption: no matching table found in source.');
   }
 
+  // ---- 3) CSM action-item 7-day trend (from csm_action_snapshots) ----
+  // -> csm_action_trend.json { csm: [{d:'YYYY-MM-DD', t:total}, ...] }
+  try {
+    const tr = (await dst.query(`
+      select csm, snapshot_date::text as d, total
+      from public.csm_action_snapshots
+      where snapshot_date >= (current_date - interval '6 days')
+      order by csm, snapshot_date`)).rows;
+    const trend = {};
+    tr.forEach(r => { (trend[r.csm] = trend[r.csm] || []).push({ d: r.d, t: Number(r.total) || 0 }); });
+    for (const p of [path.join(REPO, 'csm_action_trend.json'), path.join(REPO, 'vercel_deploy', 'csm_action_trend.json')]) fs.writeFileSync(p, JSON.stringify(trend));
+    console.log(`  wrote csm_action_trend.json: ${Object.keys(trend).length} CSMs`);
+  } catch (e) { console.log('  csm_action_trend skipped:', String(e.message).slice(0, 140)); }
+
   await dst.query(`notify pgrst, 'reload schema'`).catch(() => {});
   console.log('copy complete.');
 } finally {
