@@ -1585,7 +1585,8 @@ try {
     for ($ri = 0; $ri -lt $resTab.rows.Count; $ri++) {
         $c = $resTab.rows[$ri].c; if (-not $c) { continue }
         $partner = [string](Gviz-Val $c[0]); if (-not $partner) { continue }
-        if ((([string](Gviz-Val $c[$resProdIdx])).Trim()) -ne 'Studio') { continue }   # Studio resellers only
+        # ALL products (Studio + Vini + blank) — the partnership new-addition is the
+        # full positive Delta (M-2 to M-1) across the channel, not Studio-only.
         $dRaw = Gviz-Val $c[$resDeltaIdx]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
         $d = 0.0; try { $d = [double]$dRaw } catch { continue }
         if ($d -eq 0) { continue }
@@ -1593,7 +1594,7 @@ try {
         if ($arr -gt 0) { $resNew += $arr; $resNewN++ } else { $resChurn += [math]::Abs($arr); $resChurnN++ }
     }
     $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + '}'
-    Write-Host "  reseller (Studio): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
+    Write-Host "  reseller (all products): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
 } catch {
     Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
 }
