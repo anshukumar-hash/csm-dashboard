@@ -20,11 +20,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SECRET   = process.env.METABASE_EMBED_SECRET || '';
+const SECRET   = process.env.METABASE_SECRET_KEY || process.env.METABASE_EMBED_SECRET || '';
 const BASE     = (process.env.METABASE_URL || 'https://metabase.arali.ai').replace(/\/+$/, '');
 const QUESTION = Number(process.env.METABASE_COMM_QUESTION || 358);
 
-if (!SECRET) { console.error('ERROR: METABASE_EMBED_SECRET is not set.'); process.exit(1); }
+if (!SECRET) { console.error('ERROR: METABASE_SECRET_KEY (or METABASE_EMBED_SECRET) is not set.'); process.exit(1); }
 
 // ---- 1) mint the signed embed JWT (HS256) ----
 const b64url = buf => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

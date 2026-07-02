@@ -17,6 +17,7 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     env:
+      METABASE_SECRET_KEY:    ${{ secrets.METABASE_SECRET_KEY }}
       METABASE_EMBED_SECRET:  ${{ secrets.METABASE_EMBED_SECRET }}
       METABASE_URL:           ${{ secrets.METABASE_URL }}
       METABASE_COMM_QUESTION: ${{ secrets.METABASE_COMM_QUESTION }}
@@ -31,8 +32,8 @@ jobs:
 
       - name: Guard — require the embedding secret
         run: |
-          if [ -z "${METABASE_EMBED_SECRET}" ]; then
-            echo "::error::METABASE_EMBED_SECRET is not set. Add it under Settings → Secrets and variables → Actions."
+          if [ -z "${METABASE_SECRET_KEY}" ] && [ -z "${METABASE_EMBED_SECRET}" ]; then
+            echo "::error::Neither METABASE_SECRET_KEY nor METABASE_EMBED_SECRET is set. Add it under Settings → Secrets and variables → Actions."
             exit 1
           fi
 
