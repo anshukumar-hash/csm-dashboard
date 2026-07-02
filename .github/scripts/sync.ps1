@@ -1511,13 +1511,14 @@ try {
 # Embedded as new_addition so the email snapshot uses real per-product values
 # (replacing the fragile onboarding-SPA scrape + hard-coded constant).
 $naSheet = '1ioRrooOvDSBxc7gjC2XUGjqHH_YBze_2HryOF8JWqL0'
-# Reporting month for new-addition + reseller. On the 1st–3rd of a new calendar
-# month the just-started month has ~no go-lives, so report the just-closed month
-# (e.g. on Jul 1–3 report June); auto-reverts from the 4th. This also drives
-# ovCurMonth() client-side, so New Addition, Overview churn, GRR and the email
-# all stay on the same (June) month during the rollover.
+# Reporting month for new-addition + reseller = the CURRENT calendar month.
+# The base (EM_LARR_BASE) is rolled forward manually each month to the prior
+# month-end book, so from the 1st we report the current month's live go-lives
+# and churn on top of that base (early in the month new-adds are still filling
+# in while churn is already populated). This drives ovCurMonth() client-side, so
+# New Addition, Overview churn and the email all stay on the same month.
 $naNow   = Get-Date
-$naRef   = if ($naNow.Day -le 3) { $naNow.AddMonths(-1) } else { $naNow }
+$naRef   = $naNow
 $naCurYM = $naRef.ToString('yyyy-MM')
 Write-Host "  new_addition/reseller reporting month = $naCurYM (calendar $($naNow.ToString('yyyy-MM')), day $($naNow.Day))"
 function NA-Money($v) { if ($null -eq $v -or $v -eq '') { return 0.0 }; $c = ([string]$v) -replace '[^0-9.\-]',''; try { return [double]$c } catch { return 0.0 } }
@@ -1565,28 +1566,31 @@ try {
 }
 
 # ---- Reseller new-addition + churn (Studio) ------------------------------
-# Sheet 1kvvDbn…, gid 135115178. Column "Delta (M-2 to M-1)" = the month-over-
-# month revenue delta (positive = new addition, negative = churn/contraction).
-# ARR = Delta × 12. Resolved BY HEADER NAME (not a hardcoded index) so an
-# inserted column can't silently shift it onto "Delta (M-1 to M)" etc. Studio-
-# product rows only; skip summary/blank rows. Embedded as `reseller` and folded
-# into the Studio + Overall new-addition / churn client-side.
+# Sheet 1kvvDbn…, gid 135115178. Column "Delta (M-1 to M)" (column S) = the
+# CURRENT-month revenue delta vs last month (positive = new addition/expansion,
+# negative = churn/contraction). ARR = Delta × 12. Resolved BY HEADER NAME (not a
+# hardcoded index) so an inserted column can't silently shift it. The blank-name
+# guard below skips the sheet's summary/total artifact row (e.g. the stray
+# 115,644 delta on a row with no Partner). Embedded as `reseller` and folded into
+# the Studio + Overall new-addition / churn client-side.
 $resellerJson = $null
 try {
     $resSheet = '1kvvDbnpUAodPnmnLEVAWejLAzTwEflkzLSkXiAeOkB4'
     $resTab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$resSheet/gviz/tq?tqx=out:json&gid=135115178" 20
     $resCols = $resTab.cols
-    $resDeltaIdx = Find-Col $resCols @('Delta (M-2 to M-1)')
-    if ($resDeltaIdx -lt 0) { $resDeltaIdx = 17 }   # positional fallback = column R
+    $resDeltaIdx = Find-Col $resCols @('Delta (M-1 to M)')
+    if ($resDeltaIdx -lt 0) { $resDeltaIdx = 18 }   # positional fallback = column S
     $resProdIdx  = Find-Col $resCols @('Product')
     if ($resProdIdx -lt 0) { $resProdIdx = 4 }
-    Write-Host "  reseller cols: 'Delta (M-2 to M-1)' idx=$resDeltaIdx, Product idx=$resProdIdx"
+    Write-Host "  reseller cols: 'Delta (M-1 to M)' idx=$resDeltaIdx, Product idx=$resProdIdx"
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
     for ($ri = 0; $ri -lt $resTab.rows.Count; $ri++) {
         $c = $resTab.rows[$ri].c; if (-not $c) { continue }
         $partner = [string](Gviz-Val $c[0]); if (-not $partner) { continue }
         # ALL products (Studio + Vini + blank) — the partnership new-addition is the
-        # full positive Delta (M-2 to M-1) across the channel, not Studio-only.
+        # full positive Delta (M-1 to M) across the channel, not Studio-only.
+        # (Blank-Partner rows — including the sheet's 115,644 total artifact — are
+        # skipped by the guard above.)
         $dRaw = Gviz-Val $c[$resDeltaIdx]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
         $d = 0.0; try { $d = [double]$dRaw } catch { continue }
         if ($d -eq 0) { continue }
