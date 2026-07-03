@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SECRET   = process.env.METABASE_SECRET_KEY || process.env.METABASE_EMBED_SECRET || '';
+const SECRET   = (process.env.METABASE_SECRET_KEY || process.env.METABASE_EMBED_SECRET || '').trim();
 const BASE     = (process.env.METABASE_URL || 'https://metabase.arali.ai').replace(/\/+$/, '');
 const QUESTION = Number(process.env.METABASE_COMM_QUESTION || 358);
 
