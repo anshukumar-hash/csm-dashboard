@@ -1605,29 +1605,41 @@ try {
 $resellerJson = $null
 try {
     $resSheet = '1kvvDbnpUAodPnmnLEVAWejLAzTwEflkzLSkXiAeOkB4'
-    $resTab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$resSheet/gviz/tq?tqx=out:json&gid=135115178" 20
-    $resCols = $resTab.cols
-    $resDeltaIdx = Find-Col $resCols @('Delta (M-1 to M)')
+    # CSV EXPORT (not gviz): a basic FILTER on the reseller tab hid ~55 rows from
+    # gviz (78 vs 133), INCLUDING a churning partner — understating partnership
+    # churn. /export ignores filters. Row 0 = header; data from row 1. Numeric
+    # headers (c0,c1,…) avoid ConvertFrom-Csv's duplicate/empty-header error, and
+    # we resolve the Delta column BY NAME from the header row (robust to moves).
+    $resUrl = "https://docs.google.com/spreadsheets/d/$resSheet/export?format=csv&gid=135115178"
+    $resRaw = $null
+    for ($att = 1; $att -le 5; $att++) {
+        try {
+            $u = "$resUrl&_cb=" + [Guid]::NewGuid().ToString('N')
+            $rr = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'Mozilla/5.0'; 'Accept' = 'text/csv, */*' }
+            if ($rr.StatusCode -eq 200 -and $rr.Content -and $rr.Content.Length -gt 100) { $resRaw = $rr.Content; break }
+        } catch { Write-Host "  reseller csv attempt $att failed: $_" }
+        Start-Sleep -Seconds 4
+    }
+    if (-not $resRaw) { throw "reseller csv fetch empty" }
+    $rhdr = 0..59 | ForEach-Object { "c$_" }
+    $resRecs = @($resRaw | ConvertFrom-Csv -Header $rhdr)
+    if ($resRecs.Count -lt 5) { throw "reseller csv too few rows ($($resRecs.Count))" }
+    # Find the 'Delta (M-1 to M)' column by scanning the header row (row 0).
+    $resDeltaIdx = -1
+    for ($ci = 0; $ci -lt 60; $ci++) { if ((Norm-Lbl ([string]$resRecs[0]."c$ci")) -eq (Norm-Lbl 'Delta (M-1 to M)')) { $resDeltaIdx = $ci; break } }
     if ($resDeltaIdx -lt 0) { $resDeltaIdx = 18 }   # positional fallback = column S
-    $resProdIdx  = Find-Col $resCols @('Product')
-    if ($resProdIdx -lt 0) { $resProdIdx = 4 }
-    Write-Host "  reseller cols: 'Delta (M-1 to M)' idx=$resDeltaIdx, Product idx=$resProdIdx"
+    Write-Host "  reseller cols (csv): 'Delta (M-1 to M)' idx=$resDeltaIdx, rows=$($resRecs.Count)"
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
-    for ($ri = 0; $ri -lt $resTab.rows.Count; $ri++) {
-        $c = $resTab.rows[$ri].c; if (-not $c) { continue }
-        $partner = [string](Gviz-Val $c[0]); if (-not $partner) { continue }
-        # ALL products (Studio + Vini + blank) — the partnership new-addition is the
-        # full positive Delta (M-1 to M) across the channel, not Studio-only.
-        # (Blank-Partner rows — including the sheet's 115,644 total artifact — are
-        # skipped by the guard above.)
-        $dRaw = Gviz-Val $c[$resDeltaIdx]; if ($null -eq $dRaw -or $dRaw -eq '') { continue }
-        $d = 0.0; try { $d = [double]$dRaw } catch { continue }
-        if ($d -eq 0) { continue }
+    for ($ri = 1; $ri -lt $resRecs.Count; $ri++) {   # row 0 = header; data from row 1
+        $row = $resRecs[$ri]
+        $partner = ([string]$row."c0").Trim(); if (-not $partner) { continue }   # skips blank-name 115,644 artifact
+        $dRaw = [string]$row."c$resDeltaIdx"; if (-not $dRaw) { continue }
+        $d = NA-Money $dRaw; if ($d -eq 0) { continue }
         $arr = $d * 12.0
         if ($arr -gt 0) { $resNew += $arr; $resNewN++ } else { $resChurn += [math]::Abs($arr); $resChurnN++ }
     }
     $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + '}'
-    Write-Host "  reseller (all products): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
+    Write-Host "  reseller (all products, csv): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
 } catch {
     Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
 }
