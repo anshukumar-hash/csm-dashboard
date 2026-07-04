@@ -1522,22 +1522,51 @@ $naRef   = $naNow
 $naCurYM = $naRef.ToString('yyyy-MM')
 Write-Host "  new_addition/reseller reporting month = $naCurYM (calendar $($naNow.ToString('yyyy-MM')), day $($naNow.Day))"
 function NA-Money($v) { if ($null -eq $v -or $v -eq '') { return 0.0 }; $c = ([string]$v) -replace '[^0-9.\-]',''; try { return [double]$c } catch { return 0.0 } }
+# Parse a Go-Live Date cell → 'yyyy-MM'. Handles the CSV export's 'DD-MMM-YYYY'
+# (e.g. 04-Jul-2026), an ISO 'yyyy-MM[-dd]' prefix, or any other .NET-parseable date.
+function NA-DateYM($raw) {
+    $s = ([string]$raw).Trim(); if (-not $s) { return '' }
+    if ($s -match '^(\d{4})-(\d{2})') { return "$($matches[1])-$($matches[2])" }
+    try { return ([datetime]::Parse($s, [System.Globalization.CultureInfo]::InvariantCulture)).ToString('yyyy-MM') } catch {}
+    try { return ([datetime]$s).ToString('yyyy-MM') } catch {}
+    return ''
+}
 function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
     # Count accounts with Stage='Live' (col 4 / column E) AND a Go-Live Date
-    # ($goCol) in the current month; sum ARR (col 2 / column C). Data starts at
-    # row 3 (rows 0-2 are total/note/header). $entCol = Enterprise ID column.
-    # $goCol handles both a real date and a 'YYYY-MM' string.
-    $tab = Fetch-Gviz "https://docs.google.com/spreadsheets/d/$naSheet/gviz/tq?tqx=out:json&gid=$gid" $minRows
+    # ($goCol) in the current month; sum ARR (col 2 / column C). $entCol = Ent ID col.
+    #
+    # Fetched via the CSV EXPORT endpoint (/export?format=csv), NOT gviz: a basic
+    # FILTER applied on the source tab hides rows from gviz (it returned only the
+    # ~30 visible AMER rows), but /export ignores filters and returns the full grid.
+    # CSV rows: 0=totals, 1=subheader, 2=real header, data from row 3. We keep
+    # index-based column access via generated numeric headers (c0,c1,…).
+    $csvUrl = "https://docs.google.com/spreadsheets/d/$naSheet/export?format=csv&gid=$gid"
+    $raw = $null
+    for ($att = 1; $att -le 5; $att++) {
+        try {
+            $u = "$csvUrl&_cb=" + [Guid]::NewGuid().ToString('N')
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers @{
+                'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36'
+                'Accept'     = 'text/csv, */*'
+            }
+            if ($resp.StatusCode -eq 200 -and $resp.Content -and $resp.Content.Length -gt 200) { $raw = $resp.Content; break }
+        } catch { Write-Host "  na csv gid=$gid attempt $att failed: $_" }
+        Start-Sleep -Seconds 4
+    }
+    if (-not $raw) { throw "na csv fetch empty gid=$gid" }
+    $hdr = 0..79 | ForEach-Object { "c$_" }
+    $recs = @($raw | ConvertFrom-Csv -Header $hdr)
+    if ($recs.Count -lt ($minRows + 3)) { throw "na csv too few rows gid=$gid ($($recs.Count) < $($minRows+3))" }
     $arr = 0.0; $n = 0
-    $ents  = New-Object System.Collections.Generic.HashSet[string]
-    for ($ri = 3; $ri -lt $tab.rows.Count; $ri++) {
-        $c = $tab.rows[$ri].c; if (-not $c) { continue }
-        $acct = [string](Gviz-Val $c[0]); if (-not $acct) { continue }
-        if ((([string](Gviz-Val $c[4])).Trim().ToLower()) -ne 'live') { continue }
-        $gm = [string](Gviz-Date $c[$goCol]); if (-not $gm) { $gm = ([string](Gviz-Val $c[$goCol])).Trim() }
+    $ents = New-Object System.Collections.Generic.HashSet[string]
+    for ($ri = 3; $ri -lt $recs.Count; $ri++) {
+        $row = $recs[$ri]
+        $acct = [string]$row."c0"; if (-not $acct) { continue }
+        if ((([string]$row."c4").Trim().ToLower()) -ne 'live') { continue }
+        $gm = NA-DateYM ($row."c$goCol")
         if (-not $gm.StartsWith($naCurYM)) { continue }
-        $arr += NA-Money (Gviz-Val $c[2]); $n++
-        $eid = [string](Gviz-Val $c[$entCol]); if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
+        $arr += NA-Money ($row."c2"); $n++
+        $eid = [string]$row."c$entCol"; if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
     }
     return @{ arr = $arr; rooftops = $n; ents = $ents.Count; n = $n }
 }
