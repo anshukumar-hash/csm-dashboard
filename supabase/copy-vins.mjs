@@ -138,6 +138,41 @@ try {
     console.log(`  wrote vins_360_detail.json: ${dr.length} VIN rows`);
   }
 
+  // Image Pendency (CATALOG) — per-rooftop reason_bucket breakdown + per-VIN detail.
+  // Filter: output_processing_catalog=1 AND status='Not Delivered' AND has_photos=1.
+  // Same shape/keys as the spin 360 feeds, published to vins_image_*.json.
+  if (['reason_bucket', 'rooftop_id', 'output_processing_catalog', 'status', 'has_photos'].every(c => colNames.includes(c))) {
+    const ib = (await dst.query(`
+      select rooftop_id, max(enterprise_id) as enterprise_id,
+        count(*) filter (where reason_bucket='Insufficient Images') as ii,
+        count(*) filter (where reason_bucket='QC Hold')            as qch,
+        count(*) filter (where reason_bucket='QC Pending')         as qcp,
+        count(*) filter (where reason_bucket='Processing Pending') as pp,
+        count(*) filter (where reason_bucket='Upload Pending')     as up,
+        count(*) filter (where reason_bucket='Sold')              as sold,
+        count(*) filter (where reason_bucket='Others')            as inf,
+        count(*) as total
+      from public.vins
+      where output_processing_catalog=1 and status='Not Delivered' and has_photos=1 and rooftop_id is not null
+      group by rooftop_id`)).rows;
+    const imap = {};
+    ib.forEach(r => { imap[String(r.rooftop_id)] = { e: r.enterprise_id, ii:+r.ii, qch:+r.qch, qcp:+r.qcp, pp:+r.pp, up:+r.up, sold:+r.sold, inf:+r.inf, total:+r.total }; });
+    for (const p of [path.join(REPO, 'vins_image_buckets.json'), path.join(REPO, 'vercel_deploy', 'vins_image_buckets.json')]) fs.writeFileSync(p, JSON.stringify(imap));
+    console.log(`  wrote vins_image_buckets.json: ${Object.keys(imap).length} rooftops`);
+    const idr = (await dst.query(`
+      select rooftop_id as r, enterprise_id as e, dealer_vin_id as d, vin as v,
+        case reason_bucket
+          when 'Insufficient Images' then 'ii' when 'QC Hold' then 'qch' when 'QC Pending' then 'qcp'
+          when 'Processing Pending' then 'pp' when 'Upload Pending' then 'up' when 'Sold' then 'sold'
+          when 'Others' then 'inf' else 'other' end as b
+      from public.vins
+      where output_processing_catalog=1 and status='Not Delivered' and has_photos=1 and rooftop_id is not null`)).rows;
+    for (const p of [path.join(REPO, 'vins_image_detail.json'), path.join(REPO, 'vercel_deploy', 'vins_image_detail.json')]) fs.writeFileSync(p, JSON.stringify(idr));
+    console.log(`  wrote vins_image_detail.json: ${idr.length} VIN rows`);
+  } else {
+    console.log('  Image Pendency SKIPPED (missing catalog/status/has_photos/reason_bucket cols).');
+  }
+
   // ---- 2) Adoption.Rooftop_adoption ----
   // Discover the exact schema/table (case-sensitive in Postgres), then mirror it.
   const adoptFound = (await src.query(
