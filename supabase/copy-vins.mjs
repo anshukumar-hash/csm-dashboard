@@ -201,12 +201,18 @@ try {
   // -> csm_action_trend.json { csm: [{d:'YYYY-MM-DD', t:total}, ...] }
   try {
     const tr = (await dst.query(`
-      select csm, snapshot_date::text as d, total
+      select csm, snapshot_date::text as d, total,
+        health, account, report, payment, communication, usage_studio,
+        feature_adoption, pendency_360, usage_vini, signals, tickets
       from public.csm_action_snapshots
       where snapshot_date >= (current_date - interval '6 days')
       order by csm, snapshot_date`)).rows;
     const trend = {};
-    tr.forEach(r => { (trend[r.csm] = trend[r.csm] || []).push({ d: r.d, t: Number(r.total) || 0 }); });
+    tr.forEach(r => { (trend[r.csm] = trend[r.csm] || []).push({
+      d: r.d, t: +r.total || 0,
+      health:+r.health||0, account:+r.account||0, report:+r.report||0, payment:+r.payment||0,
+      communication:+r.communication||0, usage_studio:+r.usage_studio||0, feature_adoption:+r.feature_adoption||0,
+      pendency_360:+r.pendency_360||0, usage_vini:+r.usage_vini||0, signals:+r.signals||0, tickets:+r.tickets||0 }); });
     for (const p of [path.join(REPO, 'csm_action_trend.json'), path.join(REPO, 'vercel_deploy', 'csm_action_trend.json')]) fs.writeFileSync(p, JSON.stringify(trend));
     console.log(`  wrote csm_action_trend.json: ${Object.keys(trend).length} CSMs`);
   } catch (e) { console.log('  csm_action_trend skipped:', String(e.message).slice(0, 140)); }
