@@ -144,27 +144,28 @@ try {
   if (['reason_bucket', 'rooftop_id', 'output_processing_catalog', 'status', 'has_photos'].every(c => colNames.includes(c))) {
     const ib = (await dst.query(`
       select rooftop_id, max(enterprise_id) as enterprise_id,
-        count(*) filter (where reason_bucket='Insufficient Images') as ii,
-        count(*) filter (where reason_bucket='QC Hold')            as qch,
-        count(*) filter (where reason_bucket='QC Pending')         as qcp,
-        count(*) filter (where reason_bucket='Processing Pending') as pp,
-        count(*) filter (where reason_bucket='Upload Pending')     as up,
-        count(*) filter (where reason_bucket='Sold')              as sold,
-        count(*) filter (where reason_bucket='Others')            as inf,
+        count(*) filter (where reason_bucket='Missing VIN Name')    as mvn,
+        count(*) filter (where reason_bucket='Processing Pending')  as pp,
+        count(*) filter (where reason_bucket='QC Pending')          as qcp,
+        count(*) filter (where reason_bucket='QC Hold')             as qch,
+        count(*) filter (where reason_bucket='Scheduled Push')      as sp,
+        count(*) filter (where reason_bucket='Sold')                as sold,
+        count(*) filter (where reason_bucket='Upload Pending')      as up,
+        count(*) filter (where reason_bucket='Others')              as inf,
         count(*) as total
       from public.vins
       where output_processing_catalog=1 and status='Not Delivered' and has_photos=1 and rooftop_id is not null
       group by rooftop_id`)).rows;
     const imap = {};
-    ib.forEach(r => { imap[String(r.rooftop_id)] = { e: r.enterprise_id, ii:+r.ii, qch:+r.qch, qcp:+r.qcp, pp:+r.pp, up:+r.up, sold:+r.sold, inf:+r.inf, total:+r.total }; });
+    ib.forEach(r => { imap[String(r.rooftop_id)] = { e: r.enterprise_id, mvn:+r.mvn, pp:+r.pp, qcp:+r.qcp, qch:+r.qch, sp:+r.sp, sold:+r.sold, up:+r.up, inf:+r.inf, total:+r.total }; });
     for (const p of [path.join(REPO, 'vins_image_buckets.json'), path.join(REPO, 'vercel_deploy', 'vins_image_buckets.json')]) fs.writeFileSync(p, JSON.stringify(imap));
     console.log(`  wrote vins_image_buckets.json: ${Object.keys(imap).length} rooftops`);
     const idr = (await dst.query(`
       select rooftop_id as r, enterprise_id as e, dealer_vin_id as d, vin as v,
         case reason_bucket
-          when 'Insufficient Images' then 'ii' when 'QC Hold' then 'qch' when 'QC Pending' then 'qcp'
-          when 'Processing Pending' then 'pp' when 'Upload Pending' then 'up' when 'Sold' then 'sold'
-          when 'Others' then 'inf' else 'other' end as b
+          when 'Missing VIN Name' then 'mvn' when 'Processing Pending' then 'pp' when 'QC Pending' then 'qcp'
+          when 'QC Hold' then 'qch' when 'Scheduled Push' then 'sp' when 'Sold' then 'sold'
+          when 'Upload Pending' then 'up' when 'Others' then 'inf' else 'other' end as b
       from public.vins
       where output_processing_catalog=1 and status='Not Delivered' and has_photos=1 and rooftop_id is not null`)).rows;
     for (const p of [path.join(REPO, 'vins_image_detail.json'), path.join(REPO, 'vercel_deploy', 'vins_image_detail.json')]) fs.writeFileSync(p, JSON.stringify(idr));
