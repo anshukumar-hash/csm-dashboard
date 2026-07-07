@@ -8396,11 +8396,12 @@ function csmPerfData(csm){
     setPay(row[VC.eid], row[VC.en]||row[VC.rn]||'', row[VC.ps]); });
   const payEnt={Green:[],Amber:[],Red:[]};
   Object.keys(payByEid).forEach(eid=>{ const o=payByEid[eid]; const k=o.rag==='red'?'Red':o.rag==='amber'?'Amber':o.rag==='green'?'Green':null; if(k) payEnt[k].push({id:eid,name:o.name}); });
-  // Cross-intelligence: rooftops that belong to a ≥3-overdue account AND are
-  // usage-declining OR had 0 usage in the last completed month (~30 days).
+  // Cross-intelligence: rooftops that belong to a ≥3-overdue account AND had
+  // ZERO usage in the last completed month (~30 days). Per user spec: genuine
+  // no-usage only — a declining-but-still-active rooftop is NOT counted here.
   const _odEids = new Set(vMissed3.map(x=>x.eid).filter(Boolean));
   const _riskRt = {};
-  [...sUsageTrend.declining, ...usage0_1mo].forEach(x=>{ if(x.eid && _odEids.has(x.eid) && x.rid && !_riskRt[x.rid]) _riskRt[x.rid]=x; });
+  usage0_1mo.forEach(x=>{ if(x.eid && _odEids.has(x.eid) && x.rid && !_riskRt[x.rid]) _riskRt[x.rid]=x; });
   const overdueUsageRisk = Object.values(_riskRt);
 
   return { no7:sNo7.concat(vNo7), no3:sNo3.concat(vNo3), sNo7, sNo3, vNo7, vNo3, sSeries, vSeries, vOverdue, vMissed3, noComm, commTotal, commEngaged, tixAccts, summary,
@@ -8618,7 +8619,7 @@ function buildCsmPerfHtml(csm, scopeLabel){
     + `<div class="csmp-insight">${payAction}${payCsmLine} <span style="color:var(--text-4)">(${payT} unique enterprises across Studio + Vini — click a count for the list)</span><br>`
     + `• <b>${p.vOverdue.length}</b> accounts overdue — missed ≥1 invoice ${listLink('view accounts','Overdue accounts — missed ≥1 invoice',p.vOverdue)}<br>`
     + `• <b>${p.vMissed3.length}</b> accounts with ≥3 invoices overdue ${listLink('view accounts','Accounts with ≥3 overdue invoices',p.vMissed3)}<br>`
-    + `<span style="color:#B45309">↳ of those, <b>${p.overdueUsageRisk.length}</b> rooftops are usage-declining / 0-usage (30d) ${listLink('view rooftops','Rooftops in ≥3-overdue accounts — declining or 0-usage',p.overdueUsageRisk)}</span></div>`
+    + `<span style="color:#B45309">↳ of those, <b>${p.overdueUsageRisk.length}</b> rooftops had 0 usage last month ${listLink('view rooftops','Rooftops in ≥3-overdue accounts — 0 usage last month',p.overdueUsageRisk)}</span></div>`
     + `</div></div>`,
     PAL[4], true, act.payment, 'payment');
 
