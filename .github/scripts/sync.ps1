@@ -492,7 +492,9 @@ try {
     $poEntries = New-Object System.Collections.Generic.List[string]
     foreach ($eid in $payRanks.Keys) {
         $od = 0; try { $od = [int]$payRanks[$eid].od } catch { $od = 0 }
-        if ($od -gt 0) { $poEntries.Add((JsEscape ([string]$eid)) + ':' + $od) }
+        # eids are clean hex ids — safe to quote directly (JsEscape isn't defined this early).
+        $eidC = ([string]$eid) -replace '["\\]',''
+        if ($od -gt 0 -and $eidC) { $poEntries.Add('"' + $eidC + '":' + $od) }
     }
     $payOverdueJson = '{' + [string]::Join(',', [string[]]$poEntries) + '}'
     $po3 = @($payRanks.Keys | Where-Object { [int]$payRanks[$_].od -ge 3 }).Count
