@@ -423,6 +423,17 @@ foreach ($eid in $payByEid.Keys) {
         $s -and $s -ne 'sent' -and $s -ne 'draft'
     })
     $sorted = @($closed | Sort-Object @{Expression={[string]$_.start};Descending=$true}, @{Expression={[string]$_.end};Descending=$true})
+    # Total OVERDUE invoice periods across the enterprise's FULL closed history
+    # (uncapped, grouped by unique (start,end) with worst-wins). Powers the
+    # ">= 3 invoices overdue" flag (independent of the T-1/T-2/T-3 window below).
+    $odByPeriod = @{}
+    foreach ($pr in $sorted) {
+        $pk = "$($pr.start)|$($pr.end)"
+        if (-not $odByPeriod.ContainsKey($pk)) { $odByPeriod[$pk] = New-Object System.Collections.Generic.List[string] }
+        $odByPeriod[$pk].Add([string]$pr.status)
+    }
+    $odTotal = 0
+    foreach ($pk in $odByPeriod.Keys) { if ((Get-CanonicalPayStatus $odByPeriod[$pk]) -eq 'overdue') { $odTotal++ } }
     $byRank = @{}
     $billByRank = @{}
     $rank = 0
@@ -451,6 +462,7 @@ foreach ($eid in $payByEid.Keys) {
             t1 = if ($byRank.ContainsKey(1)) { Get-CanonicalPayStatus $byRank[1] } else { '' }
             t2 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
             t3 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
+            od = $odTotal
         }
     } else {
         $payRanks[$eid] = @{
@@ -458,6 +470,7 @@ foreach ($eid in $payByEid.Keys) {
             t1 = if ($byRank.ContainsKey(2)) { Get-CanonicalPayStatus $byRank[2] } else { '' }
             t2 = if ($byRank.ContainsKey(3)) { Get-CanonicalPayStatus $byRank[3] } else { '' }
             t3 = if ($byRank.ContainsKey(4)) { Get-CanonicalPayStatus $byRank[4] } else { '' }
+            od = $odTotal
         }
     }
 }
@@ -471,6 +484,20 @@ Write-Host ("  payperiods: {0} enterprises ranked from {1} invoice rows" -f $pay
 if ($payRanks.Count -lt 200) {
     throw "Payment-periods ranked only $($payRanks.Count) enterprises from $($payPeriodsTab.rows.Count) rows (expected ~994 from ~6500). Truncated gviz fetch — aborting to preserve the last good payment data."
 }
+
+# Per-enterprise total overdue-invoice count (full closed history) → embedded as
+# `pay_overdue` ({eid:count}). Drives the ">= 3 invoices overdue" flag client-side.
+$payOverdueJson = $null
+try {
+    $poEntries = New-Object System.Collections.Generic.List[string]
+    foreach ($eid in $payRanks.Keys) {
+        $od = 0; try { $od = [int]$payRanks[$eid].od } catch { $od = 0 }
+        if ($od -gt 0) { $poEntries.Add((JsEscape ([string]$eid)) + ':' + $od) }
+    }
+    $payOverdueJson = '{' + [string]::Join(',', [string[]]$poEntries) + '}'
+    $po3 = @($payRanks.Keys | Where-Object { [int]$payRanks[$_].od -ge 3 }).Count
+    Write-Host "  pay_overdue: $($poEntries.Count) enterprises with >=1 overdue | $po3 with >=3"
+} catch { Write-Host "  pay_overdue: WARNING $_" }
 
 # --- Studio Customer Segment lookup (source of truth) -----------------------
 # gid=603796861 col G (Customer Segment) carries 'Resellers' which the Vini
@@ -1651,6 +1678,7 @@ if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we h
 if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
 if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
 if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-add + churn
+if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1670,6 +1698,7 @@ if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
 if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
+if ($payOverdueJson)    { $inserted += ',"pay_overdue":' + $payOverdueJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
