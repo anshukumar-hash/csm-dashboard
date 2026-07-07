@@ -8692,8 +8692,8 @@ function buildCsmPerfHtml(csm, scopeLabel){
   // Usage — two SEPARATE buckets (Studio monthly VINs, Vini ROI factor).
   const usageStudio = bucket('Usage · Studio',
     `<div class="csmp-2col"><div class="c-chart">`
-    + `<div class="h">Studio · monthly VINs (Jan→Jun proj.)</div>`
-    + csmpLineChart(['Jan','Feb','Mar','Apr','May','Jun*'], [{label:'VINs',color:'#1D4ED8',data:p.sVin}], {fmt:fmtNum, w:540, h:300, maxW:0})
+    + `<div class="h">Studio · monthly VINs (Jan→Jul proj.)</div>`
+    + csmpLineChart(['Jan','Feb','Mar','Apr','May','Jun','Jul*'], [{label:'VINs',color:'#1D4ED8',data:[...p.sVin, (S.sUProj!=null?S.sUProj:null)]}], {fmt:fmtNum, w:540, h:300, maxW:0})
     + `<div class="csmp-insight" style="margin-top:2px">MTD <b>${fmtNum(S.sMtdVins)}</b> → projected <b>${fmtNum(S.sUProj)}</b> ${deltaTag}</div>`
     + `</div><div class="c-ins">`
     + `<div class="h">Studio · rooftop usage trend</div>`

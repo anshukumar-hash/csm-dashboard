@@ -314,6 +314,14 @@ try {
 }
 Write-Host "  vini rows=$($viniTab.rows.Count) | payment rows=$($payTab.rows.Count) | csat rows=$(if($csatRows){$csatRows.Count}else{'FAIL'}) | tickets(API)=$($apiTix.Count) | payperiods rows=$($payPeriodsTab.rows.Count)"
 
+# GUARD: the Vini daily tab (gid=1616842841) intermittently collapses to a handful
+# of rows (its upstream QUERY breaks); embedding that empties v_rows and zeroes ALL
+# Vini ROI. Abort to preserve the last-good data — same defense as the Studio s_rows
+# guard below. Typical ~4700 rows; a healthy fetch is always well over 1000.
+if ($viniTab.rows.Count -lt 1000) {
+    throw "Vini daily rows came back as $($viniTab.rows.Count) (expected ~4700). Aborting sync to avoid wiping Vini ROI data — the gid=1616842841 fetch returned empty/partial."
+}
+
 # --- Payment-period DENSE_RANK from gid=1395015507 ---
 # For each enterprise (col V EnterprisesID), rank unique (start_date, end_date)
 # periods DESC, so rank 1 = current period (T), rank 2 = T-1, rank 3 = T-2,
