@@ -1,12 +1,13 @@
 name: Sync churn from Metabase
 
 # Triggers:
-#  - schedule: every 15 minutes (cron is UTC, "best-effort" — GH may delay
-#    by 5-15 min on busy queues; that's normal)
+#  - schedule: every 30 minutes (cron is UTC, "best-effort" — GH may delay
+#    by 5-15 min on busy queues; that's normal). Deploy is gated on actual
+#    churn-data change to stay under Vercel's 100/day free cap.
 #  - workflow_dispatch: manual "Run workflow" button in the Actions tab
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 # Concurrency: only one churn sync runs at a time. If a new run is queued
@@ -38,13 +39,15 @@ jobs:
         run: node ./.github/scripts/sync-churn.mjs
 
       - name: Commit and push if data changed
+        id: commit
         run: |
           # Show what changed (for the workflow log)
           git status --short
           # Both copies must move together: churn_data.json is the source,
           # vercel_deploy/churn_data.json is what Vercel actually serves.
           if [[ -z "$(git status --porcelain churn_data.json vercel_deploy/churn_data.json)" ]]; then
-            echo "No changes — churn data is identical to repo. Skipping commit."
+            echo "No changes — churn data is identical to repo. Skipping commit + deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # Configure the bot identity
@@ -55,9 +58,12 @@ jobs:
           git commit -m "Auto-sync churn from Metabase ($ts) [skip ci]"
           git push
           echo "Pushed update to origin/main"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      # Deploy ONLY when churn data actually changed (was firing every 15 min
+      # regardless — a major contributor to the free-tier 100-deploys/day cap).
       - name: Ping Vercel deploy hook
-        if: env.HOOK != ''
+        if: env.HOOK != '' && steps.commit.outputs.changed == 'true'
         run: |
           # Vercel deploy hook fires a redeploy so the freshly-committed
           # churn_data.json is served. Same hook the dashboard sync uses.

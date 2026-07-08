@@ -1,12 +1,13 @@
 name: Sync dashboard from Google Sheets
 
 # Triggers:
-#  - schedule: every 15 minutes (cron is UTC, "best-effort" — GH may delay
-#    by 5-15 min on busy queues; that's normal)
+#  - schedule: every 30 minutes (cron is UTC, "best-effort" — GH may delay
+#    by 5-15 min on busy queues; that's normal). Deploys are gated on actual
+#    data change (see the Ping step) to stay under Vercel's 100/day free cap.
 #  - workflow_dispatch: manual "Run workflow" button in the Actions tab
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 # Concurrency: only one sync runs at a time. If a new run is queued while
@@ -37,6 +38,7 @@ jobs:
         run: ./.github/scripts/sync.ps1
 
       - name: Commit and push if data changed
+        id: commit
         run: |
           # Show what changed (for the workflow log)
           git status --short
@@ -45,7 +47,8 @@ jobs:
           # vercel_deploy/index.html is what Vercel actually serves. sync.ps1
           # writes to all three; this step commits all three.
           if [[ -z "$(git status --porcelain index.html CSM_Dashboard.html vercel_deploy/index.html)" ]]; then
-            echo "No changes — sheets data is identical to repo. Skipping commit."
+            echo "No changes — sheets data is identical to repo. Skipping commit + deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # Configure the bot identity
@@ -59,14 +62,17 @@ jobs:
           # commit and push, which used to reject this push (non-fast-forward).
           # The two syncs touch disjoint files, so a rebase is always clean.
           for attempt in 1 2 3 4 5; do
-            if git push; then echo "Pushed update to origin/main"; exit 0; fi
+            if git push; then echo "Pushed update to origin/main"; echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
             echo "push rejected (attempt $attempt) — rebasing on latest main and retrying"
             git pull --rebase origin main
           done
           echo "Push still failing after retries"; exit 1
 
+      # Deploy ONLY when new data was committed. Previously this fired every run
+      # (every 15 min) regardless of change, burning ~96 Vercel deploys/day and
+      # exhausting the free-tier 100/day cap. Now gated on steps.commit.
       - name: Ping Vercel deploy hook
-        if: env.HOOK != ''
+        if: env.HOOK != '' && steps.commit.outputs.changed == 'true'
         run: |
           # Vercel deploy hook = a URL you generate in:
           #   Vercel dashboard → Project Settings → Git → Deploy Hooks
