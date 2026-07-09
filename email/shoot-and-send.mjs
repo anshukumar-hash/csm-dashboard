@@ -47,7 +47,15 @@ let png;
 try {
   const page = await browser.newPage({ viewport: { width: 860, height: 1500 }, deviceScaleFactor: 2 });
   await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'networkidle', timeout: 60000 });
-  await page.click('.top-tab[data-view="email"]');
+  // Email View is now nested under the "Views" tab group — open the group first,
+  // then pick the Email sub-tab. Falls back to the old top-level tab if present.
+  if (await page.$('.top-tab[data-view="viewgroup"]')) {
+    await page.click('.top-tab[data-view="viewgroup"]');
+    await page.waitForTimeout(400);
+    await page.click('.view-subtab[data-view="email"]');
+  } else {
+    await page.click('.top-tab[data-view="email"]');
+  }
   await page.waitForSelector('#email-snapshot', { timeout: 30000 });
   await page.waitForTimeout(3500); // let the snapshot render + Arali Signals load
   const el = (await page.$('#email-snapshot > div')) || (await page.$('#email-snapshot'));
