@@ -1751,6 +1751,43 @@ try {
     Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
 }
 
+# ---- Revenue Loss (D2D churn/contraction this month) for the LARR ----------
+# D2D loss = the churn tracker tab's OWN ARR total (sheet 1H5cBuW…, gid 1421999984,
+# row 0 of the ARR column). That total reflects the sheet owner's exact current-
+# month filter (~$191,170); replicating the literal "exclude Prevented/Revival/
+# Deferred" filter over the raw export lands a bit higher because the tab carries
+# extra New/Future-Churn rows the total excludes — so we read the maintained total.
+# Partner loss = the reseller sheet churn (D.reseller.churnArr), read client-side.
+# Embedded as `revenue_loss`; LARR = base + live-this-month − D2D loss − partner loss.
+$revenueLossJson = $null
+try {
+    $rlSheet = '1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A'
+    $rlUrl = "https://docs.google.com/spreadsheets/d/$rlSheet/export?format=csv&gid=1421999984"
+    $rlRaw = $null
+    for ($att = 1; $att -le 5; $att++) {
+        try {
+            $u = "$rlUrl&_cb=" + [Guid]::NewGuid().ToString('N')
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'Mozilla/5.0'; 'Accept' = 'text/csv, */*' }
+            if ($resp.StatusCode -eq 200 -and $resp.Content -and $resp.Content.Length -gt 200) { $rlRaw = $resp.Content; break }
+        } catch { Write-Host "  revenue_loss attempt $att failed: $_" }
+        Start-Sleep -Seconds 4
+    }
+    if (-not $rlRaw) { throw "revenue_loss fetch empty" }
+    $rlHdr = 0..79 | ForEach-Object { "c$_" }
+    $rlRecs = @($rlRaw | ConvertFrom-Csv -Header $rlHdr)
+    if ($rlRecs.Count -lt 3) { throw "revenue_loss too few rows" }
+    # Row 1 = header; locate the 'ARR' column; row 0 = the maintained total.
+    $arrCol = -1
+    for ($ci = 0; $ci -lt 40; $ci++) { if ((([string]$rlRecs[1]."c$ci").Trim()) -eq 'ARR') { $arrCol = $ci; break } }
+    if ($arrCol -lt 0) { throw "revenue_loss ARR column not found" }
+    $d2dLoss = [math]::Round( (NA-Money $rlRecs[0]."c$arrCol") )
+    if ($d2dLoss -le 0) { throw "revenue_loss ARR total parsed as 0" }
+    $revenueLossJson = '{"month":' + (JsEscape $naCurYM) + ',"d2d":' + ([string]$d2dLoss) + '}'
+    Write-Host "  revenue_loss ($naCurYM): D2D `$$d2dLoss (churn-tracker ARR total, col $arrCol)"
+} catch {
+    Write-Host "  revenue_loss: WARNING — fetch/parse failed ($_). Preserving existing block."
+}
+
 $json=$origJson
 $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
@@ -1759,6 +1796,7 @@ if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we h
 if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
 if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-add + churn
 if ($expansionJson)     { $asKeys += 'expansion' }        # existing-customer upsell ARR (NRR)
+if ($revenueLossJson)   { $asKeys += 'revenue_loss' }     # D2D churn/contraction total for the LARR
 if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
@@ -1780,6 +1818,7 @@ if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
 if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
 if ($expansionJson)     { $inserted += ',"expansion":' + $expansionJson }
+if ($revenueLossJson)   { $inserted += ',"revenue_loss":' + $revenueLossJson }
 if ($payOverdueJson)    { $inserted += ',"pay_overdue":' + $payOverdueJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
