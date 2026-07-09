@@ -1694,8 +1694,9 @@ try {
     $exV  = NA-ExpansionThisMonth 2053683245 13 15 7   # Vini
     $expArr = $exS1.arr + $exS2.arr + $exV.arr
     $expN   = $exS1.n + $exS2.n + $exV.n
-    $expansionJson = '{"month":' + (JsEscape $naCurYM) + ',"arr":' + ([string][math]::Round($expArr)) + ',"n":' + $expN + ',"base":8187394}'
-    Write-Host "  expansion ($naCurYM): Studio `$$([math]::Round($exS1.arr + $exS2.arr)) | Vini `$$([math]::Round($exV.arr)) | Total `$$([math]::Round($expArr)) ($expN rows)"
+    $expStudioArr = [math]::Round($exS1.arr + $exS2.arr); $expViniArr = [math]::Round($exV.arr)
+    $expansionJson = '{"month":' + (JsEscape $naCurYM) + ',"arr":' + ([string][math]::Round($expArr)) + ',"n":' + $expN + ',"base":8187394,"studio":' + ([string]$expStudioArr) + ',"vini":' + ([string]$expViniArr) + ',"studioN":' + ([string]($exS1.n + $exS2.n)) + ',"viniN":' + ([string]$exV.n) + '}'
+    Write-Host "  expansion ($naCurYM): Studio `$$expStudioArr | Vini `$$expViniArr | Total `$$([math]::Round($expArr)) ($expN rows)"
 } catch {
     Write-Host "  expansion: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
