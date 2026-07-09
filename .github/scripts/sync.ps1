@@ -1631,6 +1631,75 @@ try {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
 
+# ---- Expansion (existing customers, upsell going live this month) ----------
+# EXISTING enterprises (master Live-Accounts sheet 1H5cBuW…, gid 1341638818, col A)
+# that have a rooftop/agent OB-initiated + confirmed + projected-live THIS month
+# in the onboarding tabs = expansion ARR. Per user spec, per tab:
+#   Stage (E) = 'OB initiated', Current-Month Confirmations = 'Confirmed',
+#   Projected Live Date = current month, AND Enterprise ID ∈ the master list.
+# Confirmation / Projected-Live columns differ per tab (Studio M/N=12/13,
+# Vini N/P=13/15); Enterprise ID = Studio G=6, Vini H=7; ARR = C=2. Embedded as
+# `expansion` and folded into the NRR scorecard client-side.
+$expansionJson = $null
+try {
+    $expEidSet = New-Object System.Collections.Generic.HashSet[string]
+    $expSheet = '1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A'
+    $expUrl = "https://docs.google.com/spreadsheets/d/$expSheet/export?format=csv&gid=1341638818"
+    $expRaw = $null
+    for ($att = 1; $att -le 5; $att++) {
+        try {
+            $u = "$expUrl&_cb=" + [Guid]::NewGuid().ToString('N')
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'Mozilla/5.0'; 'Accept' = 'text/csv, */*' }
+            if ($resp.StatusCode -eq 200 -and $resp.Content -and $resp.Content.Length -gt 200) { $expRaw = $resp.Content; break }
+        } catch { Write-Host "  expansion sheet1 attempt $att failed: $_" }
+        Start-Sleep -Seconds 4
+    }
+    if (-not $expRaw) { throw "expansion sheet1 fetch empty" }
+    $eHdr = 0..79 | ForEach-Object { "c$_" }
+    $eRecs = @($expRaw | ConvertFrom-Csv -Header $eHdr)
+    if ($eRecs.Count -lt 50) { throw "expansion sheet1 too few rows ($($eRecs.Count))" }
+    # Master list: header on row 1, enterprise IDs in column A from row 2.
+    for ($ri = 2; $ri -lt $eRecs.Count; $ri++) {
+        $eid = ([string]$eRecs[$ri]."c0").Trim().ToLower(); if ($eid) { [void]$expEidSet.Add($eid) }
+    }
+    Write-Host "  expansion: master enterprise ids = $($expEidSet.Count)"
+    function NA-ExpansionThisMonth($gid, $confCol, $projCol, $entCol) {
+        $csvUrl = "https://docs.google.com/spreadsheets/d/$naSheet/export?format=csv&gid=$gid"
+        $raw = $null
+        for ($att = 1; $att -le 5; $att++) {
+            try {
+                $u = "$csvUrl&_cb=" + [Guid]::NewGuid().ToString('N')
+                $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'Mozilla/5.0'; 'Accept' = 'text/csv, */*' }
+                if ($resp.StatusCode -eq 200 -and $resp.Content -and $resp.Content.Length -gt 200) { $raw = $resp.Content; break }
+            } catch { Write-Host "  exp csv gid=$gid attempt $att failed: $_" }
+            Start-Sleep -Seconds 4
+        }
+        if (-not $raw) { throw "exp csv fetch empty gid=$gid" }
+        $hdr = 0..79 | ForEach-Object { "c$_" }
+        $recs = @($raw | ConvertFrom-Csv -Header $hdr)
+        $arr = 0.0; $n = 0
+        for ($ri = 3; $ri -lt $recs.Count; $ri++) {
+            $row = $recs[$ri]
+            $acct = [string]$row."c0"; if (-not $acct) { continue }
+            if ((([string]$row."c4").Trim().ToLower()) -ne 'ob initiated') { continue }
+            if ((([string]$row."c$confCol").Trim().ToLower()) -ne 'confirmed') { continue }
+            $pm = NA-DateYM ($row."c$projCol"); if (-not $pm.StartsWith($naCurYM)) { continue }
+            $eid = ([string]$row."c$entCol").Trim().ToLower(); if (-not $expEidSet.Contains($eid)) { continue }
+            $arr += NA-Money ($row."c2"); $n++
+        }
+        return @{ arr = $arr; n = $n }
+    }
+    $exS1 = NA-ExpansionThisMonth 1134407178 12 13 6   # Studio AMER
+    $exS2 = NA-ExpansionThisMonth 764039413 12 13 6    # Studio APAC/EMEA
+    $exV  = NA-ExpansionThisMonth 2053683245 13 15 7   # Vini
+    $expArr = $exS1.arr + $exS2.arr + $exV.arr
+    $expN   = $exS1.n + $exS2.n + $exV.n
+    $expansionJson = '{"month":' + (JsEscape $naCurYM) + ',"arr":' + ([string][math]::Round($expArr)) + ',"n":' + $expN + ',"base":8187394}'
+    Write-Host "  expansion ($naCurYM): Studio `$$([math]::Round($exS1.arr + $exS2.arr)) | Vini `$$([math]::Round($exV.arr)) | Total `$$([math]::Round($expArr)) ($expN rows)"
+} catch {
+    Write-Host "  expansion: WARNING — fetch/parse failed ($_). Preserving existing block."
+}
+
 # ---- Reseller new-addition + churn (Studio) ------------------------------
 # Sheet 1kvvDbn…, gid 135115178. Column "Delta (M-1 to M)" (column S) = the
 # CURRENT-month revenue delta vs last month (positive = new addition/expansion,
@@ -1688,6 +1757,7 @@ if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we h
 if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
 if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
 if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-add + churn
+if ($expansionJson)     { $asKeys += 'expansion' }        # existing-customer upsell ARR (NRR)
 if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
@@ -1708,6 +1778,7 @@ if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
 if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
+if ($expansionJson)     { $inserted += ',"expansion":' + $expansionJson }
 if ($payOverdueJson)    { $inserted += ',"pay_overdue":' + $payOverdueJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
