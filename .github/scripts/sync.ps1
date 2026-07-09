@@ -1752,13 +1752,15 @@ try {
 }
 
 # ---- Revenue Loss (D2D churn/contraction this month) for the LARR ----------
-# D2D loss = the churn tracker tab's OWN ARR total (sheet 1H5cBuW…, gid 1421999984,
-# row 0 of the ARR column). That total reflects the sheet owner's exact current-
-# month filter (~$191,170); replicating the literal "exclude Prevented/Revival/
-# Deferred" filter over the raw export lands a bit higher because the tab carries
-# extra New/Future-Churn rows the total excludes — so we read the maintained total.
-# Partner loss = the reseller sheet churn (D.reseller.churnArr), read client-side.
-# Embedded as `revenue_loss`; LARR = base + live-this-month − D2D loss − partner loss.
+# Churn tracker tab (sheet 1H5cBuW…, gid 1421999984). Per user spec:
+#   Churn/Contraction Month = current month, Leader Approved NOT IN
+#   ('Churn/Contraction Prevented','Attempting Revival','Churn/Contraction
+#   Deferred'); sum ARR, split by Product (Studio/Vini = D2D vs Partner).
+# We apply the filter DETERMINISTICALLY rather than reading the tab's totals
+# cell — that cell is a SUBTOTAL that swings with whatever filter the sheet has
+# applied at fetch time (seen at both ~$191K filtered and ~$2.9M unfiltered).
+# Columns resolved by header name (robust to reordering). Partner loss stays the
+# reseller-sheet churn (client-side). Embedded as `revenue_loss`.
 $revenueLossJson = $null
 try {
     $rlSheet = '1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A'
@@ -1775,15 +1777,33 @@ try {
     if (-not $rlRaw) { throw "revenue_loss fetch empty" }
     $rlHdr = 0..79 | ForEach-Object { "c$_" }
     $rlRecs = @($rlRaw | ConvertFrom-Csv -Header $rlHdr)
-    if ($rlRecs.Count -lt 3) { throw "revenue_loss too few rows" }
-    # Row 1 = header; locate the 'ARR' column; row 0 = the maintained total.
-    $arrCol = -1
-    for ($ci = 0; $ci -lt 40; $ci++) { if ((([string]$rlRecs[1]."c$ci").Trim()) -eq 'ARR') { $arrCol = $ci; break } }
-    if ($arrCol -lt 0) { throw "revenue_loss ARR column not found" }
-    $d2dLoss = [math]::Round( (NA-Money $rlRecs[0]."c$arrCol") )
-    if ($d2dLoss -le 0) { throw "revenue_loss ARR total parsed as 0" }
-    $revenueLossJson = '{"month":' + (JsEscape $naCurYM) + ',"d2d":' + ([string]$d2dLoss) + '}'
-    Write-Host "  revenue_loss ($naCurYM): D2D `$$d2dLoss (churn-tracker ARR total, col $arrCol)"
+    if ($rlRecs.Count -lt 5) { throw "revenue_loss too few rows" }
+    # Row 0 = totals, row 1 = header, data from row 2. Resolve columns by header.
+    $cArr = -1; $cMon = -1; $cProd = -1; $cLead = -1
+    $hRow = $rlRecs[1]
+    for ($ci = 0; $ci -lt 40; $ci++) {
+        $h = ([string]$hRow."c$ci").Trim()
+        if ($h -eq 'ARR') { $cArr = $ci }
+        elseif ($h -eq 'Churn/Contraction Month') { $cMon = $ci }
+        elseif ($h -eq 'Product') { $cProd = $ci }
+        elseif ($h -eq 'Leader Approved') { $cLead = $ci }
+    }
+    if ($cArr -lt 0 -or $cMon -lt 0 -or $cLead -lt 0) { throw "revenue_loss columns not found (arr=$cArr mon=$cMon lead=$cLead)" }
+    $rlExclude = @('churn/contraction prevented', 'attempting revival', 'churn/contraction deferred')
+    $rlD2D = 0.0; $rlPartner = 0.0; $rlN = 0
+    for ($ri = 2; $ri -lt $rlRecs.Count; $ri++) {
+        $row = $rlRecs[$ri]
+        $eid = [string]$row."c0"; if (-not $eid) { continue }
+        if (-not (([string]$row."c$cMon").Trim().StartsWith($naCurYM))) { continue }
+        $lead = ([string]$row."c$cLead").Trim().ToLower()
+        if ($rlExclude -contains $lead) { continue }
+        $a = NA-Money ($row."c$cArr")
+        $prod = ([string]$row."c$cProd").Trim()
+        if ($prod -match 'partner|reseller') { $rlPartner += $a } else { $rlD2D += $a; $rlN++ }
+    }
+    $d2dLoss = [math]::Round($rlD2D)
+    $revenueLossJson = '{"month":' + (JsEscape $naCurYM) + ',"d2d":' + ([string]$d2dLoss) + ',"n":' + ([string]$rlN) + '}'
+    Write-Host "  revenue_loss ($naCurYM): D2D `$$d2dLoss ($rlN rows, filtered: current month, excl 3 leader statuses)"
 } catch {
     Write-Host "  revenue_loss: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
