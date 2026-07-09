@@ -150,19 +150,33 @@ if (!SUPA_KEY || !SUPA_URL) { console.log('SUPABASE_URL/SUPABASE_SERVICE_KEY not
 async function upsert(table, rows, onConflict) {
   if (!rows.length) return;
   const B = 500;
+  // Self-heal on schema drift: if the payload carries a column the table doesn't
+  // have yet (PostgREST PGRST204), drop that column and retry rather than failing
+  // the whole table. Keeps the snapshot alive when a new action-item segment
+  // (e.g. image_pendency) is added to the UI before the DB column exists — the
+  // `total` field still reflects it, so the trend stays accurate.
+  const stripped = new Set();
+  const applyStrip = arr => stripped.size ? arr.map(r => { const c = { ...r }; stripped.forEach(k => delete c[k]); return c; }) : arr;
   for (let i = 0; i < rows.length; i += B) {
-    const batch = rows.slice(i, i + B);
-    const res = await fetch(`${SUPA_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
-      method: 'POST',
-      headers: {
-        apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`,
-        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
-      },
-      body: JSON.stringify(batch),
-    });
-    if (!res.ok) throw new Error(`${table} upsert failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    let batch = applyStrip(rows.slice(i, i + B));
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const res = await fetch(`${SUPA_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`,
+          'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(batch),
+      });
+      if (res.ok) break;
+      const txt = await res.text();
+      const miss = txt.match(/Could not find the '([^']+)' column/);
+      if (miss && !stripped.has(miss[1])) { stripped.add(miss[1]); batch = applyStrip(batch); continue; }
+      throw new Error(`${table} upsert failed (${res.status}): ${txt.slice(0, 300)}`);
+    }
   }
-  console.log(`  ${table}: upserted ${rows.length}`);
+  const note = stripped.size ? ` (dropped unknown col(s): ${[...stripped].join(', ')} — add them in Supabase to store the breakdown)` : '';
+  console.log(`  ${table}: upserted ${rows.length}${note}`);
 }
 
 // Same-day re-runs first clear that day's rows so deletions/renames don't linger.
