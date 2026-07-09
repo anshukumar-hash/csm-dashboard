@@ -1663,7 +1663,7 @@ try {
         $eid = ([string]$eRecs[$ri]."c0").Trim().ToLower(); if ($eid) { [void]$expEidSet.Add($eid) }
     }
     Write-Host "  expansion: master enterprise ids = $($expEidSet.Count)"
-    function NA-ExpansionThisMonth($gid, $confCol, $projCol, $entCol) {
+    function NA-ExpansionThisMonth($gid, $confCol, $projCol, $goCol, $entCol) {
         $csvUrl = "https://docs.google.com/spreadsheets/d/$naSheet/export?format=csv&gid=$gid"
         $raw = $null
         for ($att = 1; $att -le 5; $att++) {
@@ -1681,17 +1681,25 @@ try {
         for ($ri = 3; $ri -lt $recs.Count; $ri++) {
             $row = $recs[$ri]
             $acct = [string]$row."c0"; if (-not $acct) { continue }
-            if ((([string]$row."c4").Trim().ToLower()) -ne 'ob initiated') { continue }
-            if ((([string]$row."c$confCol").Trim().ToLower()) -ne 'confirmed') { continue }
-            $pm = NA-DateYM ($row."c$projCol"); if (-not $pm.StartsWith($naCurYM)) { continue }
-            $eid = ([string]$row."c$entCol").Trim().ToLower(); if (-not $expEidSet.Contains($eid)) { continue }
-            $arr += NA-Money ($row."c2"); $n++
+            $eid = ([string]$row."c$entCol").Trim().ToLower(); if (-not $expEidSet.Contains($eid)) { continue }   # existing (already-live) enterprise
+            $stage = ([string]$row."c4").Trim().ToLower()
+            $hit = $false
+            if ($stage -eq 'ob initiated' -or $stage -eq 'in implementation') {
+                # Upcoming confirmed upsell projected to go live this month.
+                if ((([string]$row."c$confCol").Trim().ToLower()) -eq 'confirmed' -and (NA-DateYM ($row."c$projCol")).StartsWith($naCurYM)) { $hit = $true }
+            }
+            elseif ($stage -eq 'live') {
+                # Upsell that already went live this month.
+                if ((NA-DateYM ($row."c$goCol")).StartsWith($naCurYM)) { $hit = $true }
+            }
+            if ($hit) { $arr += NA-Money ($row."c2"); $n++ }
         }
         return @{ arr = $arr; n = $n }
     }
-    $exS1 = NA-ExpansionThisMonth 1134407178 12 13 6   # Studio AMER
-    $exS2 = NA-ExpansionThisMonth 764039413 12 13 6    # Studio APAC/EMEA
-    $exV  = NA-ExpansionThisMonth 2053683245 13 15 7   # Vini
+    # args: gid, confCol, projCol, goCol (go-live date), entCol
+    $exS1 = NA-ExpansionThisMonth 1134407178 12 13 15 6   # Studio AMER
+    $exS2 = NA-ExpansionThisMonth 764039413 12 13 21 6    # Studio APAC/EMEA
+    $exV  = NA-ExpansionThisMonth 2053683245 13 15 16 7   # Vini
     $expArr = $exS1.arr + $exS2.arr + $exV.arr
     $expN   = $exS1.n + $exS2.n + $exV.n
     $expStudioArr = [math]::Round($exS1.arr + $exS2.arr); $expViniArr = [math]::Round($exV.arr)
@@ -1737,13 +1745,18 @@ try {
     if ($resDeltaIdx -lt 0) { $resDeltaIdx = 18 }   # positional fallback = column S
     Write-Host "  reseller cols (csv): 'Delta (M-1 to M)' idx=$resDeltaIdx, rows=$($resRecs.Count)"
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
+    $script:resChurnStudio = 0.0; $script:resChurnVini = 0.0   # Partner loss split by Product (col E) for per-product NRR
     for ($ri = 1; $ri -lt $resRecs.Count; $ri++) {   # row 0 = header; data from row 1
         $row = $resRecs[$ri]
         $partner = ([string]$row."c0").Trim(); if (-not $partner) { continue }   # skips blank-name 115,644 artifact
         $dRaw = [string]$row."c$resDeltaIdx"; if (-not $dRaw) { continue }
         $d = NA-Money $dRaw; if ($d -eq 0) { continue }
         $arr = $d * 12.0
-        if ($arr -gt 0) { $resNew += $arr; $resNewN++ } else { $resChurn += [math]::Abs($arr); $resChurnN++ }
+        if ($arr -gt 0) { $resNew += $arr; $resNewN++ }
+        else {
+            $resChurn += [math]::Abs($arr); $resChurnN++
+            if ((([string]$row."c4").Trim().ToLower()) -eq 'vini') { $script:resChurnVini += [math]::Abs($arr) } else { $script:resChurnStudio += [math]::Abs($arr) }
+        }
     }
     $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + '}'
     Write-Host "  reseller (all products, csv): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
@@ -1790,7 +1803,7 @@ try {
     }
     if ($cArr -lt 0 -or $cMon -lt 0 -or $cLead -lt 0) { throw "revenue_loss columns not found (arr=$cArr mon=$cMon lead=$cLead)" }
     $rlExclude = @('churn/contraction prevented', 'attempting revival', 'churn/contraction deferred')
-    $rlD2D = 0.0; $rlPartner = 0.0; $rlN = 0
+    $rlD2Dstudio = 0.0; $rlD2Dvini = 0.0; $rlN = 0
     for ($ri = 2; $ri -lt $rlRecs.Count; $ri++) {
         $row = $rlRecs[$ri]
         $eid = [string]$row."c0"; if (-not $eid) { continue }
@@ -1798,12 +1811,19 @@ try {
         $lead = ([string]$row."c$cLead").Trim().ToLower()
         if ($rlExclude -contains $lead) { continue }
         $a = NA-Money ($row."c$cArr")
-        $prod = ([string]$row."c$cProd").Trim()
-        if ($prod -match 'partner|reseller') { $rlPartner += $a } else { $rlD2D += $a; $rlN++ }
+        if ((([string]$row."c$cProd").Trim().ToLower()) -eq 'vini') { $rlD2Dvini += $a } else { $rlD2Dstudio += $a }
+        $rlN++
     }
-    $d2dLoss = [math]::Round($rlD2D)
-    $revenueLossJson = '{"month":' + (JsEscape $naCurYM) + ',"d2d":' + ([string]$d2dLoss) + ',"n":' + ([string]$rlN) + '}'
-    Write-Host "  revenue_loss ($naCurYM): D2D `$$d2dLoss ($rlN rows, filtered: current month, excl 3 leader statuses)"
+    # Partner loss split by Product (col E of the reseller sheet), computed in the
+    # reseller block above. Defaults to 0 if that block failed.
+    $pStudio = if ($null -ne $script:resChurnStudio) { [math]::Round($script:resChurnStudio) } else { 0 }
+    $pVini   = if ($null -ne $script:resChurnVini)   { [math]::Round($script:resChurnVini) }   else { 0 }
+    $d2dStudio = [math]::Round($rlD2Dstudio); $d2dVini = [math]::Round($rlD2Dvini)
+    $d2dLoss = $d2dStudio + $d2dVini
+    $revenueLossJson = '{"month":' + (JsEscape $naCurYM) + ',"d2d":' + ([string]$d2dLoss) + ',"n":' + ([string]$rlN) +
+        ',"d2dStudio":' + ([string]$d2dStudio) + ',"d2dVini":' + ([string]$d2dVini) +
+        ',"partnerStudio":' + ([string]$pStudio) + ',"partnerVini":' + ([string]$pVini) + '}'
+    Write-Host "  revenue_loss ($naCurYM): D2D Studio `$$d2dStudio + Vini `$$d2dVini | Partner Studio `$$pStudio + Vini `$$pVini ($rlN rows)"
 } catch {
     Write-Host "  revenue_loss: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
