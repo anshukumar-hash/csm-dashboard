@@ -1962,7 +1962,8 @@ try {
             '"rsn":'  + (JsEscape $(if ($rsnRaw) { $rsnRaw } else { 'Not Tagged' })),
             '"rgr":'  + (JsEscape $(if ($rgrRaw) { $rgrRaw } else { 'Untagged' })),
             '"appr":' + (JsEscape (CaCol $r @('Leader Approved'))),
-            '"bill":' + (JsEscape (CaCol $r @('Billing Status')))
+            '"bill":' + (JsEscape (CaCol $r @('Billing Status'))),
+            '"rmk":'  + (JsEscape (CaCol $r @('Remark')))
         )
         # [string[]] cast forces a deterministic comma join (see history: an
         # untyped -join intermittently used $OFS space → invalid JS).
