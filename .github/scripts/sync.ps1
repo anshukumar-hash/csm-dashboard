@@ -1568,7 +1568,7 @@ function NA-DateYM($raw) {
     try { return ([datetime]$s).ToString('yyyy-MM') } catch {}
     return ''
 }
-function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
+function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5, $segCol = -1) {
     # Count accounts with Stage='Live' (col 4 / column E) AND a Go-Live Date
     # ($goCol) in the current month; sum ARR (col 2 / column C). $entCol = Ent ID col.
     #
@@ -1595,6 +1595,7 @@ function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
     $recs = @($raw | ConvertFrom-Csv -Header $hdr)
     if ($recs.Count -lt ($minRows + 3)) { throw "na csv too few rows gid=$gid ($($recs.Count) < $($minRows+3))" }
     $arr = 0.0; $n = 0
+    $entArr = 0.0; $entN = 0; $midArr = 0.0; $midN = 0   # customer-segment split (Ent vs Mid+SMB)
     $ents = New-Object System.Collections.Generic.HashSet[string]
     for ($ri = 3; $ri -lt $recs.Count; $ri++) {
         $row = $recs[$ri]
@@ -1602,10 +1603,17 @@ function NA-LiveThisMonth($gid, $goCol, $entCol, $minRows = 5) {
         if ((([string]$row."c4").Trim().ToLower()) -ne 'live') { continue }
         $gm = NA-DateYM ($row."c$goCol")
         if (-not $gm.StartsWith($naCurYM)) { continue }
-        $arr += NA-Money ($row."c2"); $n++
+        $m = NA-Money ($row."c2"); $arr += $m; $n++
+        # Segment split: onboarding "Segment" column is Ent / Mid (SMB folded into
+        # Mid). Anything not explicitly Ent (incl. blanks) → the Mid+SMB bucket so
+        # Ent + Mid+SMB always reconciles to the direct new-addition total.
+        if ($segCol -ge 0) {
+            $seg = (([string]$row."c$segCol").Trim().ToLower())
+            if ($seg.StartsWith('ent')) { $entArr += $m; $entN++ } else { $midArr += $m; $midN++ }
+        }
         $eid = [string]$row."c$entCol"; if ($eid) { [void]$ents.Add($eid) } elseif ($acct) { [void]$ents.Add($acct) }
     }
-    return @{ arr = $arr; rooftops = $n; ents = $ents.Count; n = $n }
+    return @{ arr = $arr; rooftops = $n; ents = $ents.Count; n = $n; entArr = $entArr; entN = $entN; midArr = $midArr; midN = $midN }
 }
 $newAdditionJson = $null
 $newAdditionStudioAcctsJson = $null
@@ -1613,20 +1621,26 @@ try {
     # VINI new-addition = onboarding tab (gid 2053683245): Stage='Live' (col E/4)
     # AND Go-Live Date (col Q/16) in the current month; sum ARR (col C/2).
     # Enterprise ID = col 7. One row per rooftop (no agent-level dup).
-    $naV = NA-LiveThisMonth 2053683245 16 7 30
+    $naV = NA-LiveThisMonth 2053683245 16 7 30 11   # Segment = col L (11)
     # STUDIO new-addition = AMER tab + APAC/EMEA tab, per spec
     # "AMER + APAC/EMEA = studio ARR": Stage='Live' (col E/4) AND Go-Live Date in
     # the current month, summing ARR (col C/2). Go-Live Date column differs per
     # tab — AMER = column P (15), APAC/EMEA = col 21. Enterprise ID = col 6.
-    $naS1 = NA-LiveThisMonth 1134407178 15 6 100   # AMER (~700 rows; min-rows guards partials)
-    $naS2 = NA-LiveThisMonth 764039413 21 6 1      # APAC/EMEA (small tab)
+    $naS1 = NA-LiveThisMonth 1134407178 15 6 100 7   # AMER (~700 rows; min-rows guards partials); Segment = col H (7)
+    $naS2 = NA-LiveThisMonth 764039413 21 6 1 7      # APAC/EMEA (small tab); Segment = col H (7)
     $naS = @{ arr = ($naS1.arr + $naS2.arr); rooftops = ($naS1.n + $naS2.n); ents = ($naS1.ents + $naS2.ents) }
     $newAdditionStudioAcctsJson = '{}'   # no cross-sync state needed
     $studioSrc = "AMER+APAC/EMEA Live·go-live"
+    # Customer-segment split of the DIRECT new-addition (Studio + Vini), summed
+    # across the three onboarding tabs. Feeds the Meeting view's Enterprise /
+    # Mid+SMB New Addition tiles; reseller new-add is tracked separately (Partner).
+    $naEntArr = $naS1.entArr + $naS2.entArr + $naV.entArr; $naEntN = $naS1.entN + $naS2.entN + $naV.entN
+    $naMidArr = $naS1.midArr + $naS2.midArr + $naV.midArr; $naMidN = $naS1.midN + $naS2.midN + $naV.midN
+    $bySegJson = '{"ent":{"arr":' + ([string][math]::Round($naEntArr)) + ',"n":' + $naEntN + '},"midsmb":{"arr":' + ([string][math]::Round($naMidArr)) + ',"n":' + $naMidN + '}}'
 
     $cell = { param($x) '{"arr":' + ([string][double]$x.arr) + ',"rooftops":' + $x.rooftops + ',"ents":' + $x.ents + '}' }
-    $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + '}'
-    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt, $studioSrc) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr))"
+    $newAdditionJson = '{"month":' + (JsEscape $naCurYM) + ',"studio":' + (& $cell $naS) + ',"vini":' + (& $cell $naV) + ',"bySeg":' + $bySegJson + '}'
+    Write-Host "  new_addition ($naCurYM): Studio `$$([math]::Round($naS.arr)) ($($naS.rooftops) rt, $studioSrc) | Vini `$$([math]::Round($naV.arr)) ($($naV.rooftops) rt) | Overall `$$([math]::Round($naS.arr + $naV.arr)) | bySeg Ent `$$([math]::Round($naEntArr)) ($naEntN) · Mid+SMB `$$([math]::Round($naMidArr)) ($naMidN)"
 } catch {
     Write-Host "  new_addition: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
