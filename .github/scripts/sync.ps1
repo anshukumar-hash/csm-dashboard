@@ -1677,7 +1677,7 @@ try {
         $eid = ([string]$eRecs[$ri]."c0").Trim().ToLower(); if ($eid) { [void]$expEidSet.Add($eid) }
     }
     Write-Host "  expansion: master enterprise ids = $($expEidSet.Count)"
-    function NA-ExpansionThisMonth($gid, $confCol, $projCol, $goCol, $entCol) {
+    function NA-ExpansionThisMonth($gid, $confCol, $projCol, $goCol, $entCol, $segCol = -1) {
         $csvUrl = "https://docs.google.com/spreadsheets/d/$naSheet/export?format=csv&gid=$gid"
         $raw = $null
         for ($att = 1; $att -le 5; $att++) {
@@ -1692,6 +1692,7 @@ try {
         $hdr = 0..79 | ForEach-Object { "c$_" }
         $recs = @($raw | ConvertFrom-Csv -Header $hdr)
         $arr = 0.0; $n = 0
+        $entArr = 0.0; $entN = 0; $midArr = 0.0; $midN = 0   # customer-segment split (Ent vs Mid+SMB)
         for ($ri = 3; $ri -lt $recs.Count; $ri++) {
             $row = $recs[$ri]
             $acct = [string]$row."c0"; if (-not $acct) { continue }
@@ -1706,18 +1707,28 @@ try {
                 # Upsell that already went live this month.
                 if ((NA-DateYM ($row."c$goCol")).StartsWith($naCurYM)) { $hit = $true }
             }
-            if ($hit) { $arr += NA-Money ($row."c2"); $n++ }
+            if ($hit) {
+                $m = NA-Money ($row."c2"); $arr += $m; $n++
+                if ($segCol -ge 0) {
+                    $seg = (([string]$row."c$segCol").Trim().ToLower())
+                    if ($seg.StartsWith('ent')) { $entArr += $m; $entN++ } else { $midArr += $m; $midN++ }
+                }
+            }
         }
-        return @{ arr = $arr; n = $n }
+        return @{ arr = $arr; n = $n; entArr = $entArr; entN = $entN; midArr = $midArr; midN = $midN }
     }
-    # args: gid, confCol, projCol, goCol (go-live date), entCol
-    $exS1 = NA-ExpansionThisMonth 1134407178 12 13 15 6   # Studio AMER
-    $exS2 = NA-ExpansionThisMonth 764039413 12 13 21 6    # Studio APAC/EMEA
-    $exV  = NA-ExpansionThisMonth 2053683245 13 15 16 7   # Vini
+    # args: gid, confCol, projCol, goCol (go-live date), entCol, segCol
+    $exS1 = NA-ExpansionThisMonth 1134407178 12 13 15 6 7    # Studio AMER; Segment = col H (7)
+    $exS2 = NA-ExpansionThisMonth 764039413 12 13 21 6 7     # Studio APAC/EMEA; Segment = col H (7)
+    $exV  = NA-ExpansionThisMonth 2053683245 13 15 16 7 11   # Vini; Segment = col L (11)
     $expArr = $exS1.arr + $exS2.arr + $exV.arr
     $expN   = $exS1.n + $exS2.n + $exV.n
     $expStudioArr = [math]::Round($exS1.arr + $exS2.arr); $expViniArr = [math]::Round($exV.arr)
-    $expansionJson = '{"month":' + (JsEscape $naCurYM) + ',"arr":' + ([string][math]::Round($expArr)) + ',"n":' + $expN + ',"base":8187394,"studio":' + ([string]$expStudioArr) + ',"vini":' + ([string]$expViniArr) + ',"studioN":' + ([string]($exS1.n + $exS2.n)) + ',"viniN":' + ([string]$exV.n) + '}'
+    # Customer-segment split of expansion (Ent vs Mid+SMB) → Meeting NRR at segment level.
+    $expEntArr = $exS1.entArr + $exS2.entArr + $exV.entArr; $expEntN = $exS1.entN + $exS2.entN + $exV.entN
+    $expMidArr = $exS1.midArr + $exS2.midArr + $exV.midArr; $expMidN = $exS1.midN + $exS2.midN + $exV.midN
+    $expBySeg = '{"ent":{"arr":' + ([string][math]::Round($expEntArr)) + ',"n":' + $expEntN + '},"midsmb":{"arr":' + ([string][math]::Round($expMidArr)) + ',"n":' + $expMidN + '}}'
+    $expansionJson = '{"month":' + (JsEscape $naCurYM) + ',"arr":' + ([string][math]::Round($expArr)) + ',"n":' + $expN + ',"base":8187394,"studio":' + ([string]$expStudioArr) + ',"vini":' + ([string]$expViniArr) + ',"studioN":' + ([string]($exS1.n + $exS2.n)) + ',"viniN":' + ([string]$exV.n) + ',"bySeg":' + $expBySeg + '}'
     Write-Host "  expansion ($naCurYM): Studio `$$expStudioArr | Vini `$$expViniArr | Total `$$([math]::Round($expArr)) ($expN rows)"
 } catch {
     Write-Host "  expansion: WARNING — fetch/parse failed ($_). Preserving existing block."
