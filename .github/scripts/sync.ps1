@@ -1465,7 +1465,13 @@ try {
     $entNameCol  = & $pick @('enterprise_name','account_name','company_name','company','enterprise')
     $teamNameCol = & $pick @('team_name','rooftop_name','dealership_name','rooftop','dealership')
     Write-Host "  account_status name cols: enterprise='$entNameCol' team='$teamNameCol'"
-    # Each bucket holds e/t as ordered id->name maps (name '' falls back to id).
+    # PRIORITY DEDUP — Metabase #12436 is per-rooftop, so an enterprise with
+    # rooftops spread across stages was leaking into EVERY bucket it touched (a
+    # Live account showing under OB/Contracted). Per user spec, each enterprise now
+    # counts in exactly ONE bucket = its MOST-ADVANCED stage: Live > OB >
+    # Contracted. Teams (rooftops) still count in their OWN actual stage, so the
+    # Rooftops column stays accurate; only the Accounts double-count is removed.
+    $prio = @{ live = 3; ob = 2; contracted = 1 }
     $byCsm = @{}
     foreach ($r in $asRows) {
         $st = ([string]$r.stage).Trim()
@@ -1475,24 +1481,37 @@ try {
         $enNm = if ($entNameCol)  { [string]$r.$entNameCol }  else { '' }
         $tmNm = if ($teamNameCol) { [string]$r.$teamNameCol } else { '' }
         foreach ($key in @($csmName, '__all__')) {
-            if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ live=@{e=[ordered]@{};t=[ordered]@{}}; ob=@{e=[ordered]@{};t=[ordered]@{}}; contracted=@{e=[ordered]@{};t=[ordered]@{}} } }
-            if ($r.enterprise_id) { $byCsm[$key][$b].e[[string]$r.enterprise_id] = $enNm }
+            if (-not $byCsm.ContainsKey($key)) { $byCsm[$key] = @{ ent=@{}; live=[ordered]@{}; ob=[ordered]@{}; contracted=[ordered]@{} } }
+            $slot = $byCsm[$key]
+            # Enterprise → keep only its highest-priority stage across all its rooftops.
+            if ($r.enterprise_id) {
+                $eid = [string]$r.enterprise_id
+                $cur = $slot.ent[$eid]
+                if (-not $cur) { $slot.ent[$eid] = @{ b = $b; name = $enNm } }
+                elseif ($prio[$b] -gt $prio[$cur.b]) { $cur.b = $b; if ($enNm) { $cur.name = $enNm } }
+                elseif (-not $cur.name -and $enNm) { $cur.name = $enNm }
+            }
             # Teams store the enterprise_id alongside the name so the rooftop
-            # console deep-link can be enterprise_id + team_id.
-            if ($r.team_id)       { $byCsm[$key][$b].t[[string]$r.team_id]       = @{ n = $tmNm; e = [string]$r.enterprise_id } }
+            # console deep-link can be enterprise_id + team_id. Kept per actual stage.
+            if ($r.team_id) { $slot[$b][[string]$r.team_id] = @{ n = $tmNm; e = [string]$r.enterprise_id } }
         }
     }
     $asParts = New-Object System.Collections.Generic.List[string]
     # eL/tL = [{i:id, n:name}] lists. Emitted ONLY for ob/contracted (the red,
     # clickable rows); live stays counts-only to keep the payload small.
-    # eL = enterprises [{i:id, n:name}]; tL = teams [{i:team_id, n:name, e:enterprise_id}].
     $listJsonE = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value) { $_.Value } else { $_.Key })) + '}' }) -join ',') }
     $listJsonT = { param($map) (@($map.GetEnumerator() | ForEach-Object { '{"i":' + (JsEscape $_.Key) + ',"n":' + (JsEscape $(if ($_.Value.n) { $_.Value.n } else { $_.Key })) + ',"e":' + (JsEscape ([string]$_.Value.e)) + '}' }) -join ',') }
-    $cellCount = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + '}' }
-    $cellFull  = { param($x) '{"a":' + $x.e.Count + ',"r":' + $x.t.Count + ',"eL":[' + (& $listJsonE $x.e) + '],"tL":[' + (& $listJsonT $x.t) + ']}' }
+    $cellCount = { param($e,$t) '{"a":' + $e.Count + ',"r":' + $t.Count + '}' }
+    $cellFull  = { param($e,$t) '{"a":' + $e.Count + ',"r":' + $t.Count + ',"eL":[' + (& $listJsonE $e) + '],"tL":[' + (& $listJsonT $t) + ']}' }
     foreach ($k in $byCsm.Keys) {
-        $o = $byCsm[$k]
-        $asParts.Add((JsEscape $k) + ':{"live":' + (& $cellCount $o.live) + ',"ob":' + (& $cellFull $o.ob) + ',"contracted":' + (& $cellFull $o.contracted) + '}')
+        $slot = $byCsm[$k]
+        # Roll each enterprise into its single priority bucket's e-map.
+        $eLive = [ordered]@{}; $eOb = [ordered]@{}; $eCon = [ordered]@{}
+        foreach ($eid in $slot.ent.Keys) {
+            $rec = $slot.ent[$eid]
+            if ($rec.b -eq 'live') { $eLive[$eid] = $rec.name } elseif ($rec.b -eq 'ob') { $eOb[$eid] = $rec.name } else { $eCon[$eid] = $rec.name }
+        }
+        $asParts.Add((JsEscape $k) + ':{"live":' + (& $cellCount $eLive $slot.live) + ',"ob":' + (& $cellFull $eOb $slot.ob) + ',"contracted":' + (& $cellFull $eCon $slot.contracted) + '}')
     }
     $accountStatusJson = '{' + ($asParts -join ',') + '}'
     Write-Host "  account_status: $($byCsm.Count) CSM keys from Metabase"
