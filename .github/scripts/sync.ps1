@@ -1029,7 +1029,7 @@ $sStudioSchema = @(
     'pen','ws','ws_link',
     't1','t2','t3','prag',
     'unr','cr','ota','res','trag',
-    'red','mbr','cf','csm','ct','cst','seg','region','eid'
+    'red','mbr','cf','csm','ct','cst','seg','region','eid','carr'
 )
 
 # Map new-sheet col labels → field name
@@ -1057,6 +1057,7 @@ $si = @{
     u_jun   = Find-Col $sCols @("Jun'26","Jun26")
     u_mtd   = Find-Col $sCols @('mtd_vins','MTD VINs','MTD Vins','MTD')
     arr     = Find-Col $sCols @('ARR')
+    carr    = Find-Col $sCols @('CARR','C-ARR','Contracted ARR')
     t1      = Find-Col $sCols @('Payment T1','T1')
     t2      = Find-Col $sCols @('T2')
     t3      = Find-Col $sCols @('T3')
@@ -1178,6 +1179,12 @@ foreach ($row in $studioTab.rows) {
     $r[$idx['region']]  = [string](Gviz-Val $c[$si.region])
     # eid: needed so payment-bucket aggregates can dedup per enterprise.
     $r[$idx['eid']]     = $eidForRow
+    # CARR (Contracted ARR) — new sheet column, used by the CSM-Performance
+    # "Usage · Studio" 0-usage insight to quantify the ARR at risk per rooftop.
+    $carrRaw = if ($si.carr -ge 0) { Gviz-Val $c[$si.carr] } else { 0 }
+    $carrNum = 0.0
+    try { $carrNum = [double]$carrRaw } catch { $carrNum = 0.0 }
+    $r[$idx['carr']]    = $carrNum
 
     $sRows.Add($r)
 }
