@@ -70,6 +70,15 @@ try {
   try { await dst.connect(); console.log('✓ dest connected'); }
   catch (e) { console.error('✗ DEST connect failed:', e.message); throw e; }
 
+  // This is a bulk mirror job (large `select *` on the source + big batched
+  // INSERTs on the dest). Supabase applies a short per-statement statement_timeout
+  // by default, which was killing the vins INSERT batches once the table grew
+  // (error 57014 "canceling statement due to statement timeout") — leaving the
+  // freshly-dropped dest table empty and aborting every downstream JSON feed.
+  // Lift the timeout for this session on BOTH ends (session pooler :5432 keeps it).
+  await src.query(`set statement_timeout = '1200s'`).catch(e => console.log('  (src statement_timeout not set:', e.message + ')'));
+  await dst.query(`set statement_timeout = '1200s'`).catch(e => console.log('  (dst statement_timeout not set:', e.message + ')'));
+
   // ---- 1) vins ----
   const v = await mirrorTable('public', 'vins', 'vins');
   const colNames = v ? v.colNames : [];
