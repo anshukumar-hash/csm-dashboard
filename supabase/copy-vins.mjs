@@ -22,8 +22,11 @@ const DST = process.env.CSM_DEST_DB_URL;
 if (!SRC || !DST) { console.log('VINS_SOURCE_DB_URL / CSM_DEST_DB_URL not set — skipping (no-op).'); process.exit(0); }
 
 const ident = s => '"' + String(s).replace(/"/g, '""') + '"';
-const src = new Client({ connectionString: SRC, ssl: { rejectUnauthorized: false } });
-const dst = new Client({ connectionString: DST, ssl: { rejectUnauthorized: false } });
+// Lift the per-statement timeout at CONNECTION STARTUP (a session-level `SET` does
+// not survive the Supabase pooler). 20 min is ample for the full-table aggregates.
+const PG_OPTS = '-c statement_timeout=1200000';
+const src = new Client({ connectionString: SRC, ssl: { rejectUnauthorized: false }, options: PG_OPTS });
+const dst = new Client({ connectionString: DST, ssl: { rejectUnauthorized: false }, options: PG_OPTS });
 
 function diag(label, url) {
   try {
@@ -70,18 +73,23 @@ try {
   try { await dst.connect(); console.log('✓ dest connected'); }
   catch (e) { console.error('✗ DEST connect failed:', e.message); throw e; }
 
-  // This is a bulk mirror job (large `select *` on the source + big batched
-  // INSERTs on the dest). Supabase applies a short per-statement statement_timeout
-  // by default, which was killing the vins INSERT batches once the table grew
-  // (error 57014 "canceling statement due to statement timeout") — leaving the
-  // freshly-dropped dest table empty and aborting every downstream JSON feed.
-  // Lift the timeout for this session on BOTH ends (session pooler :5432 keeps it).
-  await src.query(`set statement_timeout = '1200s'`).catch(e => console.log('  (src statement_timeout not set:', e.message + ')'));
-  await dst.query(`set statement_timeout = '1200s'`).catch(e => console.log('  (dst statement_timeout not set:', e.message + ')'));
+  // Belt-and-suspenders: also SET per-session (harmless if the startup `options`
+  // already applied it; ignored if the pooler drops it).
+  await src.query(`set statement_timeout = '1200s'`).catch(() => {});
+  await dst.query(`set statement_timeout = '1200s'`).catch(() => {});
 
   // ---- 1) vins ----
-  const v = await mirrorTable('public', 'vins', 'vins');
-  const colNames = v ? v.colNames : [];
+  // Read the source column list up-front, INDEPENDENT of the raw-table mirror.
+  // Every JSON feed below is computed DIRECTLY from the source `public.vins`, so
+  // the dashboard data refreshes even if the (large) dest mirror can't complete.
+  const colNames = (await src.query(
+    `select column_name from information_schema.columns
+      where table_schema='public' and table_name='vins' order by ordinal_position`)).rows.map(r => r.column_name);
+  // Raw-table mirror into the dest project is BEST EFFORT (for ad-hoc SQL Editor
+  // use only). The full drop→recreate→reload of a large, actively-read table can
+  // time out / lock-block on Supabase — that must NOT abort the JSON feeds.
+  try { await mirrorTable('public', 'vins', 'vins'); }
+  catch (e) { console.log('  vins raw mirror skipped (non-fatal):', String(e.message).slice(0, 160)); }
   const teamCol = ['team_id', 'rooftop_id', 'dealer_id', 'rid', 'store_id'].find(c => colNames.includes(c))
     || colNames.find(c => /team|rooftop|dealer|store/i.test(c)) || null;
   const filterCols = ['output_processing_spin', 'spin_status', 'spin_reason_bucket'];
@@ -90,22 +98,19 @@ try {
 
   // Distinct spin_reason_bucket values (for the per-bucket pivot query).
   if (colNames.includes('spin_reason_bucket')) {
-    const buckets = (await dst.query(`select distinct spin_reason_bucket from public.vins where spin_reason_bucket is not null order by 1`)).rows.map(r => r.spin_reason_bucket);
+    const buckets = (await src.query(`select distinct spin_reason_bucket from public.vins where spin_reason_bucket is not null order by 1`)).rows.map(r => r.spin_reason_bucket);
     console.log('  spin_reason_bucket values:', JSON.stringify(buckets));
   }
 
-  // 360 Pendency view + vins360.json (spin_status='Not Delivered' · Insufficient Images).
+  // 360 Pendency -> vins360.json (spin_status='Not Delivered' · Insufficient Images).
+  // Aggregated straight from the source (no dependency on the dest mirror/view).
   if (teamCol && !missingFilters.length) {
-    await dst.query(`create or replace view public.vins_360_pending as
-      select ${ident(teamCol)} as team_id, count(*)::int as pending
-      from public.vins
-      where output_processing_spin = 1 and spin_status = 'Not Delivered'
-        and spin_reason_bucket = 'Insufficient Images' and ${ident(teamCol)} is not null
-      group by ${ident(teamCol)}`);
-    await dst.query(`grant usage on schema public to anon`).catch(() => {});
-    await dst.query(`grant select on public.vins_360_pending to anon`).catch(() => {});
     const map360 = {};
-    (await dst.query(`select team_id, pending from public.vins_360_pending`)).rows
+    (await src.query(`select ${ident(teamCol)} as team_id, count(*)::int as pending
+        from public.vins
+        where output_processing_spin = 1 and spin_status = 'Not Delivered'
+          and spin_reason_bucket = 'Insufficient Images' and ${ident(teamCol)} is not null
+        group by ${ident(teamCol)}`)).rows
       .forEach(r => { if (r.team_id != null) map360[String(r.team_id)] = Number(r.pending) || 0; });
     for (const p of [path.join(REPO, 'vins360.json'), path.join(REPO, 'vercel_deploy', 'vins360.json')]) fs.writeFileSync(p, JSON.stringify(map360));
     console.log(`  360 Pendency: ${Object.values(map360).reduce((a, b) => a + b, 0)} across ${Object.keys(map360).length} rooftops. Wrote vins360.json.`);
@@ -116,7 +121,7 @@ try {
 
   // Per-rooftop spin_reason_bucket breakdown (360 Pendency detail) -> vins_buckets.json
   if (colNames.includes('spin_reason_bucket') && colNames.includes('rooftop_id')) {
-    const br = (await dst.query(`
+    const br = (await src.query(`
       select rooftop_id, max(enterprise_id) as enterprise_id,
         count(*) filter (where spin_reason_bucket='Insufficient Images') as ii,
         count(*) filter (where spin_reason_bucket='QC Hold')            as qch,
@@ -135,7 +140,7 @@ try {
     console.log(`  wrote vins_buckets.json: ${Object.keys(bmap).length} rooftops`);
     // Per-VIN detail (for the modal CSV download): r=rooftop_id e=enterprise_id
     // d=dealer_vin_id v=vin b=bucketKey. Not-Delivered spins only.
-    const dr = (await dst.query(`
+    const dr = (await src.query(`
       select rooftop_id as r, enterprise_id as e, dealer_vin_id as d, vin as v,
         case spin_reason_bucket
           when 'Insufficient Images' then 'ii' when 'QC Hold' then 'qch' when 'QC Pending' then 'qcp'
@@ -151,7 +156,7 @@ try {
   // Filter: output_processing_catalog=1 AND status='Not Delivered' AND has_photos=1.
   // Same shape/keys as the spin 360 feeds, published to vins_image_*.json.
   if (['reason_bucket', 'rooftop_id', 'output_processing_catalog', 'status', 'has_photos'].every(c => colNames.includes(c))) {
-    const ib = (await dst.query(`
+    const ib = (await src.query(`
       select rooftop_id, max(enterprise_id) as enterprise_id,
         count(*) filter (where reason_bucket='Missing VIN Name')    as mvn,
         count(*) filter (where reason_bucket='Processing Pending')  as pp,
@@ -169,7 +174,7 @@ try {
     ib.forEach(r => { imap[String(r.rooftop_id)] = { e: r.enterprise_id, mvn:+r.mvn, pp:+r.pp, qcp:+r.qcp, qch:+r.qch, sp:+r.sp, sold:+r.sold, up:+r.up, inf:+r.inf, total:+r.total }; });
     for (const p of [path.join(REPO, 'vins_image_buckets.json'), path.join(REPO, 'vercel_deploy', 'vins_image_buckets.json')]) fs.writeFileSync(p, JSON.stringify(imap));
     console.log(`  wrote vins_image_buckets.json: ${Object.keys(imap).length} rooftops`);
-    const idr = (await dst.query(`
+    const idr = (await src.query(`
       select rooftop_id as r, enterprise_id as e, dealer_vin_id as d, vin as v,
         case reason_bucket
           when 'Missing VIN Name' then 'mvn' when 'Processing Pending' then 'pp' when 'QC Pending' then 'qcp'
@@ -192,12 +197,13 @@ try {
   console.log('  adoption candidates:', JSON.stringify(adoptFound));
   if (adoptFound.length) {
     const a = adoptFound.find(r => /rooftop/i.test(r.table_name)) || adoptFound[0];
-    await mirrorTable(a.table_schema, a.table_name, 'rooftop_adoption');
-    await dst.query(`grant select on public.rooftop_adoption to anon`).catch(() => {});
-    // Per-rooftop feature-adoption map -> rooftop_adoption.json for the dashboard.
-    console.log('  rooftop_adoption sample:', JSON.stringify((await dst.query(`select team_id, app_adoption, smartview_vdp_enabled, smartview_vlp_enabled, smart_campaign_adoption, active from public.rooftop_adoption limit 3`)).rows));
+    // Mirror to dest for ad-hoc SQL Editor use — best effort, non-fatal.
+    try { await mirrorTable(a.table_schema, a.table_name, 'rooftop_adoption');
+      await dst.query(`grant select on public.rooftop_adoption to anon`).catch(() => {});
+    } catch (e) { console.log('  rooftop_adoption raw mirror skipped (non-fatal):', String(e.message).slice(0, 140)); }
+    // Per-rooftop feature-adoption map -> rooftop_adoption.json — read from SOURCE.
     const truthy = v => { if (v === true || v === 1) return true; const s = String(v == null ? '' : v).trim().toLowerCase(); return ['true','t','yes','y','1','enabled','adopted','live','active','on'].includes(s); };
-    const ad = (await dst.query(`select * from public.rooftop_adoption where team_id is not null`)).rows;
+    const ad = (await src.query(`select * from ${ident(a.table_schema)}.${ident(a.table_name)} where team_id is not null`)).rows;
     const amap = {};
     ad.forEach(r => { amap[String(r.team_id)] = { n: r.team_name, en: r.enterprise_name, e: r.enterprise_id, app: truthy(r.app_adoption), vdp: truthy(r.smartview_vdp_enabled), vlp: truthy(r.smartview_vlp_enabled), camp: truthy(r.smart_campaign_adoption), active: truthy(r.active) }; });
     for (const p of [path.join(REPO, 'rooftop_adoption.json'), path.join(REPO, 'vercel_deploy', 'rooftop_adoption.json')]) fs.writeFileSync(p, JSON.stringify(amap));
