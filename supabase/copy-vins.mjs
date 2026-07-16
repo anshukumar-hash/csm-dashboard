@@ -85,11 +85,18 @@ try {
   const colNames = (await src.query(
     `select column_name from information_schema.columns
       where table_schema='public' and table_name='vins' order by ordinal_position`)).rows.map(r => r.column_name);
-  // Raw-table mirror into the dest project is BEST EFFORT (for ad-hoc SQL Editor
-  // use only). The full drop→recreate→reload of a large, actively-read table can
-  // time out / lock-block on Supabase — that must NOT abort the JSON feeds.
-  try { await mirrorTable('public', 'vins', 'vins'); }
-  catch (e) { console.log('  vins raw mirror skipped (non-fatal):', String(e.message).slice(0, 160)); }
+  // Raw-table mirror into the dest project is for ad-hoc SQL Editor use ONLY and
+  // is OFF by default: the full drop→recreate→reload of the large, actively-read
+  // vins table reliably times out / lock-blocks on Supabase (the DROP waits on
+  // PostgREST read locks), which is what was aborting the whole job. The dashboard
+  // never reads dest.public.vins — every feed below comes from the source. Set
+  // MIRROR_RAW_VINS=1 to opt back into the raw copy (best-effort either way).
+  if (process.env.MIRROR_RAW_VINS === '1') {
+    try { await mirrorTable('public', 'vins', 'vins'); }
+    catch (e) { console.log('  vins raw mirror skipped (non-fatal):', String(e.message).slice(0, 160)); }
+  } else {
+    console.log('  vins raw mirror SKIPPED (MIRROR_RAW_VINS!=1) — feeds come from source.');
+  }
   const teamCol = ['team_id', 'rooftop_id', 'dealer_id', 'rid', 'store_id'].find(c => colNames.includes(c))
     || colNames.find(c => /team|rooftop|dealer|store/i.test(c)) || null;
   const filterCols = ['output_processing_spin', 'spin_status', 'spin_reason_bucket'];
