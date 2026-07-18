@@ -68,19 +68,9 @@ jobs:
           done
           echo "Push still failing after retries"; exit 1
 
-      # Deploy ONLY when new data was committed. Previously this fired every run
-      # (every 15 min) regardless of change, burning ~96 Vercel deploys/day and
-      # exhausting the free-tier 100/day cap. Now gated on steps.commit.
-      - name: Ping Vercel deploy hook
-        if: env.HOOK != '' && steps.commit.outputs.changed == 'true'
-        run: |
-          # Vercel deploy hook = a URL you generate in:
-          #   Vercel dashboard → Project Settings → Git → Deploy Hooks
-          # for the project `customer_success_operative_dashboard` under
-          # team `hey-s-projects4`. Paste it as the GitHub repo secret
-          # VERCEL_DEPLOY_HOOK and this step fires it on every sync that
-          # commits new data. Bypasses the GitHub-author permission check
-          # that was blocking auto-deploys.
-          echo "Triggering Vercel deploy on customer_success_operative_dashboard..."
-          resp=$(curl -sS -X POST "$HOOK")
-          echo "Vercel response: $resp"
+      # NOTE: no explicit Vercel deploy-hook ping. Vercel's Git integration
+      # already auto-deploys every push to main (the commit step above), so
+      # ALSO pinging the hook produced a DUPLICATE build per data update
+      # (~2x deploys/day, pushing the CSM project toward the free-tier 100/day
+      # cap). The git push above is now the single deploy trigger — dashboard
+      # refresh is unchanged, just no longer double-deployed.

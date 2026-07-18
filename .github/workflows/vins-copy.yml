@@ -47,7 +47,9 @@ jobs:
             for i in 1 2 3; do
               git pull --rebase origin main && git push origin main && break || sleep 5
             done
-            if [[ -n "${{ secrets.VERCEL_DEPLOY_HOOK }}" ]]; then curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}" >/dev/null && echo "deploy hook pinged"; fi
+            # No deploy-hook ping: the git push above already triggers Vercel's
+            # Git-integration auto-deploy. Pinging the hook too double-deployed
+            # (redundant build, counted against the 100/day cap). Refresh unchanged.
           else
             echo "vins360.json unchanged — no commit"
           fi

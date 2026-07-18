@@ -60,13 +60,8 @@ jobs:
           echo "Pushed update to origin/main"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      # Deploy ONLY when churn data actually changed (was firing every 15 min
-      # regardless — a major contributor to the free-tier 100-deploys/day cap).
-      - name: Ping Vercel deploy hook
-        if: env.HOOK != '' && steps.commit.outputs.changed == 'true'
-        run: |
-          # Vercel deploy hook fires a redeploy so the freshly-committed
-          # churn_data.json is served. Same hook the dashboard sync uses.
-          echo "Triggering Vercel deploy on customer_success_operative_dashboard..."
-          resp=$(curl -sS -X POST "$HOOK")
-          echo "Vercel response: $resp"
+      # NOTE: no explicit Vercel deploy-hook ping. Vercel's Git integration
+      # auto-deploys every push to main (the commit step above), so pinging the
+      # hook too was a DUPLICATE build per data update — a major contributor to
+      # the free-tier 100-deploys/day cap. The git push is the single deploy
+      # trigger now; the freshly-committed churn data is still served on refresh.
