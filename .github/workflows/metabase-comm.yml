@@ -39,7 +39,19 @@ jobs:
 
       - name: Fetch question 358 → comm_metabase.json
         working-directory: metabase
-        run: node fetch-comm.mjs
+        # Tolerate a Metabase failure so a persistently-broken fetch does NOT
+        # fail the whole run (which emails a "workflow failed" notification every
+        # 2 hours). On failure we emit a ::warning:: (visible in the run, but
+        # GitHub does not email for warnings) and keep the last-good
+        # comm_metabase.json — the commit step below finds no change, so nothing
+        # is committed or deployed. When the embedding secret is fixed the fetch
+        # succeeds again and data updates normally, no re-enable needed.
+        run: |
+          if node fetch-comm.mjs; then
+            echo "CSAT fetch OK"
+          else
+            echo "::warning::CSAT fetch from Metabase (question 358) failed — keeping the last-good comm_metabase.json. Most likely a stale METABASE_SECRET_KEY (embedding secret): rotate it under Settings → Secrets and variables → Actions to restore fresh CSAT."
+          fi
 
       - name: Commit comm_metabase.json + redeploy if changed
         run: |
@@ -52,7 +64,8 @@ jobs:
             for i in 1 2 3; do
               git pull --rebase origin main && git push origin main && break || sleep 5
             done
-            if [[ -n "${{ secrets.VERCEL_DEPLOY_HOOK }}" ]]; then curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}" >/dev/null && echo "deploy hook pinged"; fi
+            # No deploy-hook ping: the git push above already triggers Vercel's
+            # Git-integration auto-deploy (avoids a duplicate build vs the 100/day cap).
           else
             echo "comm_metabase.json unchanged — no commit"
           fi
