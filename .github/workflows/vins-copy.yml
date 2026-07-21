@@ -2,8 +2,13 @@ name: Copy vins to CSM Supabase
 
 on:
   schedule:
-    # Every hour at :17 (odd minute avoids GitHub's congested :00).
-    - cron: '17 * * * *'
+    # Once a day at 02:17 UTC (= 07:47 AM IST), so the 360 / image-pendency
+    # feeds are fresh for the start of the India workday. Was hourly ('17 * * * *')
+    # but each run does a full DROP/CREATE/reload of the dest tables — 24 rebuilds/
+    # day churned the small CSM Supabase project's CPU. Daily is plenty: the
+    # underlying pendency data changes on a daily rhythm, not minute-to-minute.
+    # Use "Run workflow" (workflow_dispatch) for an on-demand mid-day refresh.
+    - cron: '17 2 * * *'
   workflow_dispatch: {}
 
 concurrency:
