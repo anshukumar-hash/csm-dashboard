@@ -1,0 +1,71 @@
+name: Fetch Vini Report Sent from Tracker
+
+on:
+  schedule:
+    # A few times a day on an odd minute (avoids GitHub's congested :00). The
+    # digest goes out in the morning IST; refreshing a few times keeps the
+    # Report Sent column current without hammering the tracker.
+    - cron: '37 3 * * *'
+    - cron: '37 9 * * *'
+    - cron: '37 15 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: vini-report
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      TRACKER_USER:     ${{ secrets.TRACKER_USER }}
+      TRACKER_PASSWORD: ${{ secrets.TRACKER_PASSWORD }}
+      TRACKER_API_URL:  ${{ secrets.TRACKER_API_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Guard — require the tracker credential
+        run: |
+          if [ -z "${TRACKER_USER}" ] || [ -z "${TRACKER_PASSWORD}" ]; then
+            echo "::error::TRACKER_USER / TRACKER_PASSWORD not set. Add them under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Fetch report-sent tracking → vini_report_tracking.json
+        working-directory: vini-report
+        # Tolerate a tracker failure so a persistently-broken fetch does NOT fail
+        # the whole run (which would email a "workflow failed" notice on every
+        # cron). On failure we emit a ::warning:: and keep the last-good JSON —
+        # the commit step then finds no change and nothing is committed/deployed.
+        run: |
+          if node fetch-report-tracking.mjs; then
+            echo "Report Sent fetch OK"
+          else
+            echo "::warning::Vini Report Sent fetch from tracker failed — keeping the last-good vini_report_tracking.json. Check TRACKER_USER/TRACKER_PASSWORD/TRACKER_API_URL under Settings → Secrets and variables → Actions."
+          fi
+
+      - name: Commit vini_report_tracking.json + redeploy if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          FILES="vini_report_tracking.json vercel_deploy/vini_report_tracking.json"
+          if [[ -n "$(git status --porcelain $FILES)" ]]; then
+            git add $FILES
+            git commit -m "Update vini_report_tracking.json (Report Sent from tracker) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+            # No deploy-hook ping: the git push above already triggers Vercel's
+            # Git-integration auto-deploy (avoids a duplicate build vs the 100/day cap).
+          else
+            echo "vini_report_tracking.json unchanged — no commit"
+          fi
