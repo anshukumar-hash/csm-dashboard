@@ -185,6 +185,24 @@ async function clearDay(table) {
     method: 'DELETE', headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, Prefer: 'return=minimal' },
   });
 }
+// Retention: keep only the last RETENTION_DAYS of history. These snapshot tables
+// used to grow one generation per day forever (vini_snapshots is ~4 rows/rooftop/
+// day), which is what exhausted the project's disk/compute. Pruning here keeps
+// them bounded. Cutoff is derived from `today` so a SNAPSHOT_DATE override still
+// prunes relative to the snapshot being written. Override the window with
+// SNAPSHOT_RETENTION_DAYS. Prune is non-fatal — a hiccup never blocks the save.
+const RETENTION_DAYS = Number(process.env.SNAPSHOT_RETENTION_DAYS) || 90;
+const PRUNE_CUTOFF = new Date(new Date(today + 'T00:00:00Z').getTime() - RETENTION_DAYS * 864e5)
+  .toISOString().slice(0, 10);
+async function prune(table) {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${table}?snapshot_date=lt.${PRUNE_CUTOFF}`, {
+    method: 'DELETE',
+    headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, Prefer: 'return=minimal,count=exact' },
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 160)}`);
+  const n = (res.headers.get('content-range') || '').split('/')[1];   // "*/<count>"
+  console.log(`  ${table}: pruned rows older than ${PRUNE_CUTOFF}${n ? ` (${n} removed)` : ''}`);
+}
 // Each table saves independently — a missing/locked table is logged and skipped
 // so it never blocks the others (resilient save).
 const targets = [
@@ -200,6 +218,12 @@ for (const [t] of targets) { try { await clearDay(t); } catch (e) {} }
 for (const [t, rows, oc] of targets) {
   try { await upsert(t, rows, oc); }
   catch (e) { failures.push(t); console.error(`  ${t}: SKIPPED — ${String(e.message).slice(0, 180)}`); }
+}
+// Retention prune (keep last RETENTION_DAYS). Independent of the upserts and
+// non-fatal — a prune hiccup is logged and skipped so it never fails the save.
+console.log(`Pruning snapshots older than ${PRUNE_CUTOFF} (retention ${RETENTION_DAYS}d)…`);
+for (const [t] of targets) {
+  try { await prune(t); } catch (e) { console.error(`  ${t}: prune skipped — ${String(e.message).slice(0, 160)}`); }
 }
 if (failures.length) {
   console.error(`Snapshot saved ${targets.length - failures.length}/${targets.length} tables for ${today}. Missing: ${failures.join(', ')} (create them in Supabase).`);
