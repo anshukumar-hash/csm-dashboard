@@ -1,0 +1,71 @@
+name: Fetch Vini rooftops from Metabase
+
+on:
+  schedule:
+    # A few times a day on an odd minute (avoids GitHub's congested :00). The
+    # card is daily; refreshing a few times keeps Live ARR / appointments / RoI
+    # current without hammering Metabase.
+    - cron: '27 3 * * *'
+    - cron: '27 9 * * *'
+    - cron: '27 15 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: vini-card
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      METABASE_API_KEY:  ${{ secrets.METABASE_API_KEY }}
+      METABASE_BASE_URL: ${{ secrets.METABASE_BASE_URL }}
+      METABASE_VINI_CARD: ${{ secrets.METABASE_VINI_CARD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Guard — require the Metabase API key
+        run: |
+          if [ -z "${METABASE_API_KEY}" ]; then
+            echo "::error::METABASE_API_KEY not set. Add it under Settings → Secrets and variables → Actions (same key as .env.local)."
+            exit 1
+          fi
+
+      - name: Fetch card 12755 → vini_card.json
+        working-directory: metabase
+        # Tolerate a Metabase failure so a persistently-broken fetch does NOT
+        # fail the whole run (which would email on every cron). On failure we
+        # emit a ::warning:: and keep the last-good vini_card.json — the commit
+        # step then finds no change and nothing is committed or deployed.
+        run: |
+          if node fetch-vini-card.mjs; then
+            echo "Vini card fetch OK"
+          else
+            echo "::warning::Vini card fetch from Metabase failed — keeping the last-good vini_card.json. Check METABASE_API_KEY under Settings → Secrets and variables → Actions."
+          fi
+
+      - name: Commit vini_card.json + redeploy if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          FILES="vini_card.json vercel_deploy/vini_card.json"
+          if [[ -n "$(git status --porcelain $FILES)" ]]; then
+            git add $FILES
+            git commit -m "Update vini_card.json (Vini rooftops from Metabase 12755) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+            # No deploy-hook ping: the git push above already triggers Vercel's
+            # Git-integration auto-deploy (avoids a duplicate build vs the 100/day cap).
+          else
+            echo "vini_card.json unchanged — no commit"
+          fi
