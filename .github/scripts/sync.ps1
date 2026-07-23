@@ -1986,6 +1986,11 @@ try {
         elseif ($monRaw) { try { $mon = ([datetime]$monRaw).ToString('yyyy-MM') } catch { $mon = '' } }
         $rsnRaw = (CaCol $r @('Reason')).Trim()
         $rgrRaw = (CaCol $r @('Regretable/ Unregretable','Regrettable/Unregrettable','Regretable Unregretable')).Trim()
+        # Account Age Bucket (tenure at churn) — sheet-computed from MIN payment
+        # Service_period_Start_date → Churn/Contraction Month. Blank / sheet
+        # errors (e.g. #NUM!) collapse to '' so the dashboard shows "Unknown".
+        $ageRaw = (CaCol $r @('Account Age Bucket','Account Age','Age Bucket')).Trim()
+        $age = if ($ageRaw -match '^\d+(-\d+|\+)\s*Months?$') { $ageRaw } else { '' }
         $parts = @(
             '"eid":'  + (JsEscape $eid),
             '"cust":' + (JsEscape (CaCol $r @('Customer'))),
@@ -2000,7 +2005,8 @@ try {
             '"rgr":'  + (JsEscape $(if ($rgrRaw) { $rgrRaw } else { 'Untagged' })),
             '"appr":' + (JsEscape (CaCol $r @('Leader Approved'))),
             '"bill":' + (JsEscape (CaCol $r @('Billing Status'))),
-            '"rmk":'  + (JsEscape (CaCol $r @('Remark')))
+            '"rmk":'  + (JsEscape (CaCol $r @('Remark'))),
+            '"age":'  + (JsEscape $age)
         )
         # [string[]] cast forces a deterministic comma join (see history: an
         # untyped -join intermittently used $OFS space → invalid JS).
