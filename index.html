@@ -3668,10 +3668,8 @@ function roiMtdRag(roiMtd) {
 //   RoI (MTD prorated) weight 7  ·  Communication weight 3.
 // Payment is NOT a factor for Vini. Each signal → G=100/A=60/R=20 (via _ragValue);
 // NA signals are excluded from BOTH numerator and denominator. Aggregate score
-// ≥80 Green, ≥60 Amber, <60 Red. Per user spec (2026-07): a Vini agent with NO
-// evaluable signal (RoI + Comm both NA) is treated as Red — not NA — so nothing
-// hides from the health view. Shared by every Vini overall-RAG site (rooftop
-// rows + segment/group rollups) so they can't drift apart.
+// ≥80 Green, ≥60 Amber, <60 Red; all-NA → NA. Shared by every Vini overall-RAG
+// site (rooftop rows + segment/group rollups) so they can't drift apart.
 // `roiMtd` is the numeric MTD-prorated RoI factor; `commRag` is a pre-computed
 // G/A/R/NA string.
 function viniOverallRag(roiMtd, commRag) {
@@ -3679,7 +3677,7 @@ function viniOverallRag(roiMtd, commRag) {
   const parts = { roi: roiMtdRag(roiMtd), comm: commRag };
   let sum = 0, wu = 0;
   for (const k in W) { const v = _ragValue(parts[k]); if (v == null) continue; sum += v * W[k]; wu += W[k]; }
-  if (!wu) return 'Red';   // no evaluable signal → Red (was NA)
+  if (!wu) return 'NA';
   const s = sum / wu;
   return s >= 80 ? 'Green' : s >= 60 ? 'Amber' : 'Red';
 }
