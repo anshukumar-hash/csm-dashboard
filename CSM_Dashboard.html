@@ -273,7 +273,15 @@
   /* Future Churn Pipeline — clickable per-CSM bar rows */
   .ca-bar-row.ca-pipe-row{cursor:pointer;border-radius:6px;transition:background .12s}
   .ca-bar-row.ca-pipe-row:hover{background:rgba(37,99,235,.07)}
-  .ccd-modal:has(.pipe-list){max-width:840px}
+  .ccd-modal:has(.pipe-list){max-width:900px}
+  /* Ticket-analysis heatmap — clickable number cells */
+  .ca-tixheat td.ca-tixheat-cell{transition:outline .1s}
+  .ca-tixheat td.ca-tixheat-cell:hover{outline:2px solid rgba(37,99,235,.6);outline-offset:-2px}
+  /* Multi-select filter pills (Churn Intelligence Segment / Product) */
+  .ca-pills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:33px}
+  .ca-pill{font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg);color:var(--text-2);cursor:pointer;font-weight:600;line-height:1.2;white-space:nowrap}
+  .ca-pill:hover{border-color:var(--blue,#2563EB);color:var(--text)}
+  .ca-pill.active{background:var(--blue,#2563EB);border-color:var(--blue,#2563EB);color:#fff}
   /* Per-CSM small-multiples grid (Regrettable/Unregrettable MoM minis) */
   .ca-mini-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:4px}
   .ca-mini{border:1px solid var(--border);border-radius:8px;padding:5px 7px 2px;background:var(--bg)}
@@ -2051,7 +2059,7 @@ let state = {
   csmReportMgr:'', csmReportPod:'',  // RAG Intelligence Manager / Pod scope ('' = all)
   csmReportCsm:'',           // selected CSM in the CSM Report tab ('' = all)
   churnSearch:'',            // case-insensitive company filter on churn tables
-  ca: { mon:'', csm:'', pod:'', seg:'', prod:'' },  // Churn Intelligence dashboard filters
+  ca: { mon:'', csm:'', pod:'', seg:[], prod:[] },  // Churn Intelligence filters (seg/prod = multi-select arrays)
   caTab: 'v1',                              // Churn Intelligence subtab (v1 | v2)
   mbrExpanded: false,                       // MBR column: false = current month only, true = last 3 months
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
@@ -7268,8 +7276,8 @@ function caFiltered(){
     (!f.mon  || r.mon === f.mon) &&
     (!f.csm  || r.csm === f.csm) &&
     (!f.pod  || getPod(r.csm) === f.pod) &&
-    (!f.seg  || r.seg === f.seg) &&
-    (!f.prod || r.prod === f.prod));
+    (!f.seg.length  || f.seg.includes(r.seg)) &&
+    (!f.prod.length || f.prod.includes(r.prod)));
 }
 const caSum = (arr, pred) => arr.reduce((s,r)=>s + ((!pred||pred(r)) ? (Number(r.arr)||0) : 0), 0);
 
@@ -7287,9 +7295,9 @@ function caPartnerRows(opts){
   if(!(arr>0) || !mon) return [];
   const f = state.ca;
   if(!opts.skipMonth && f.mon && f.mon !== mon) return [];
-  if(f.seg  && f.seg  !== 'Reseller') return [];
-  if(f.prod && f.prod !== 'Studio')   return [];
-  if(f.csm) return [];
+  if(Array.isArray(f.seg)  && f.seg.length  && !f.seg.includes('Reseller')) return [];
+  if(Array.isArray(f.prod) && f.prod.length && !f.prod.includes('Studio'))  return [];
+  if(f.csm || f.pod) return [];
   return [{ eid:'', cust:'Partnership churn · reseller'+(n>1?' ('+n+')':''), seg:'Reseller',
             arr, mon, prod:'Studio', reg:'—', csm:'—', cat:'Churn', rsn:'Moved to Partnership',
             rgr:'Untagged', appr:'', bill:'', __partner:true }];
@@ -7478,8 +7486,8 @@ function caFilteredEx(skip){
     (skip.mon  || !f.mon  || r.mon  === f.mon) &&
     (skip.csm  || !f.csm  || r.csm  === f.csm) &&
     (skip.pod  || !f.pod  || getPod(r.csm) === f.pod) &&
-    (skip.seg  || !f.seg  || r.seg  === f.seg) &&
-    (skip.prod || !f.prod || r.prod === f.prod));
+    (skip.seg  || !f.seg.length  || f.seg.includes(r.seg)) &&
+    (skip.prod || !f.prod.length || f.prod.includes(r.prod)));
 }
 // Horizontal STACKED-bar list: one row per item, segments sized by ARR, all
 // rows scaled to the largest total so lengths compare across rows. Sorted desc.
@@ -7548,25 +7556,81 @@ function churnTixCount(eid){
   const v = (VINI_TIX[eid]   && Array.isArray(VINI_TIX[eid].rows))   ? VINI_TIX[eid].rows.length   : 0;
   return s + v;
 }
-// Churn-accounts ticket analysis: one row per churned account (current filters)
-// with its tenure-at-churn bucket, reason, and total tickets raised. Sorted by
-// tickets desc so the heaviest-support churns surface first.
-function caChurnTixTable(rows){
-  const data = rows.map(r=>({ en:r.en||r.cust||'', age:caAgeBucket(r), rsn:r.rsn||'Not Tagged',
-      tix:churnTixCount(r.eid), arr:Number(r.arr)||0 }))
-    .sort((a,b)=> b.tix-a.tix || b.arr-a.arr);
-  if(!data.length) return '<div class="ca-empty">No churn rows for current filters.</div>';
-  const totTix = data.reduce((s,d)=>s+d.tix,0);
-  const body = data.map(d=>`<tr>`
-    + `<td class="nm" title="${cEsc(d.en)}">${cEsc(d.en)}</td>`
-    + `<td><span class="dot" style="background:${CA_AGE_COLOR[d.age]||'#94A3B8'}"></span>${cEsc(d.age)}</td>`
-    + `<td>${cEsc(d.rsn)}</td>`
-    + `<td class="num">${d.tix}</td></tr>`).join('');
-  return `<div class="ca-tix-wrap"><table class="ca-tix"><thead><tr>`
-    + `<th>Enterprise</th><th>Account Age at Churn</th><th>Reason</th><th class="num">Tickets Raised</th>`
-    + `</tr></thead><tbody>${body}`
-    + `<tr class="tot"><td>Total (${data.length} accounts)</td><td></td><td></td><td class="num">${totTix}</td></tr>`
-    + `</tbody></table></div>`;
+// Churn-accounts ticket analysis as a HEATMAP: account-age (rows) × churn reason
+// (top-8 cols) with the CELL = total support tickets raised by churned accounts
+// in that tenure×reason bucket. Shaded white→red by ticket volume; every number
+// is click-through (→ caShowTixDrill) to the underlying account list. Total
+// column/row and an "Other" column (reasons beyond the top-8) keep it reconciled.
+let _caTixRows = [], _caTixTopReasons = [];
+function caChurnTixHeatmap(rows){
+  _caTixRows = rows;
+  const ages = CA_AGE_ORDER.filter(b=>rows.some(r=>caAgeBucket(r)===b))
+    .concat(rows.some(r=>caAgeBucket(r)==='Unknown')?['Unknown']:[]);
+  if(!ages.length) return '<div class="ca-empty">No churn rows for current filters.</div>';
+  const rm={}; rows.forEach(r=>{ const k=r.rsn||'Not Tagged'; rm[k]=(rm[k]||0)+churnTixCount(r.eid); });
+  const reasons=Object.entries(rm).sort((a,b)=>b[1]-a[1]).slice(0,8).map(e=>e[0]);
+  _caTixTopReasons = reasons;
+  if(!reasons.length) return '<div class="ca-empty">No churn rows for current filters.</div>';
+  const cell=(b,rsn)=>rows.reduce((s,r)=>s+((caAgeBucket(r)===b && (r.rsn||'Not Tagged')===rsn)?churnTixCount(r.eid):0),0);
+  const M={}; let max=0;
+  ages.forEach(b=>{ M[b]={}; reasons.forEach(rsn=>{ const v=cell(b,rsn); M[b][rsn]=v; if(v>max)max=v; }); });
+  const ageTot=b=>rows.reduce((s,r)=>s+(caAgeBucket(r)===b?churnTixCount(r.eid):0),0);
+  const otherOf=b=>Math.max(0, ageTot(b)-reasons.reduce((s,rsn)=>s+M[b][rsn],0));
+  const colTot=rsn=>ages.reduce((s,b)=>s+M[b][rsn],0);
+  const hasOther=ages.some(b=>otherOf(b)>0);
+  const otherTot=ages.reduce((s,b)=>s+otherOf(b),0);
+  const grand=ages.reduce((s,b)=>s+ageTot(b),0);
+  const bg=v=>v>0?`rgba(220,38,38,${(0.08+0.80*(v/(max||1))).toFixed(3)})`:'transparent';
+  const cellTd=(v,age,rsn,extraCls,title)=>`<td class="${extraCls||''} ca-tixheat-cell" data-age="${cEsc(age)}" data-rsn="${cEsc(rsn)}"`
+    + ` style="background:${extraCls?'':bg(v)}${v>0?';cursor:pointer':''}" title="${cEsc(title)}">${v>0?v:''}</td>`;
+  let h='<div class="ca-heat-scroll"><table class="ca-heat ca-age-heat ca-tixheat"><thead><tr>'
+    + '<th class="rh">Account Age at Churn</th>'
+    + reasons.map(c=>`<th title="${cEsc(c)}">${cEsc(c)}</th>`).join('')
+    + (hasOther?'<th class="oth" title="All other reasons">Other</th>':'')
+    + '<th class="tot">Total</th></tr></thead><tbody>';
+  ages.forEach(b=>{
+    const col=CA_AGE_COLOR[b]||'#94A3B8';
+    h+=`<tr><th class="rh"><span class="dot" style="background:${col}"></span>${cEsc(b)}</th>`;
+    reasons.forEach(rsn=>{ h+=cellTd(M[b][rsn], b, rsn, '', `${b} · ${rsn}: ${M[b][rsn]} ticket(s) — click to list accounts`); });
+    if(hasOther){ h+=cellTd(otherOf(b), b, '__OTHER__', 'oth', `${b} · other reasons: ${otherOf(b)} ticket(s) — click to list`); }
+    h+=cellTd(ageTot(b), b, '__ALL__', 'tot', `${b} · all reasons: ${ageTot(b)} ticket(s) — click to list`);
+  });
+  h+='<tr class="tot"><th class="rh">Total</th>'
+    + reasons.map(rsn=>cellTd(colTot(rsn), '__ALL__', rsn, '', `All ages · ${rsn}: ${colTot(rsn)} ticket(s) — click to list`)).join('')
+    + (hasOther?cellTd(otherTot, '__ALL__', '__OTHER__', 'oth', `All ages · other reasons: ${otherTot} — click to list`):'')
+    + cellTd(grand, '__ALL__', '__ALL__', 'tot', `All churned accounts: ${grand} ticket(s) — click to list`)
+    + '</tr>';
+  return h+'</tbody></table></div>';
+}
+// Drill-down: list the churned accounts behind a ticket-heatmap cell.
+function caShowTixDrill(age, rsn){
+  let list=(_caTixRows||[]).slice();
+  if(age && age!=='__ALL__') list=list.filter(r=>caAgeBucket(r)===age);
+  if(rsn==='__OTHER__')      list=list.filter(r=>!_caTixTopReasons.includes(r.rsn||'Not Tagged'));
+  else if(rsn && rsn!=='__ALL__') list=list.filter(r=>(r.rsn||'Not Tagged')===rsn);
+  if(!list.length) return;
+  const lbl=[age==='__ALL__'?'All ages':age, rsn==='__ALL__'?'All reasons':rsn==='__OTHER__'?'Other reasons':rsn].join(' · ');
+  openModal('Ticket Analysis — '+cEsc(lbl)+' · '+list.length+' account'+(list.length===1?'':'s'), caTixDrillTableHtml(list));
+}
+// Modal table for a ticket-heatmap drill-down: the requested churn columns plus
+// Tickets Raised, sorted by tickets desc.
+function caTixDrillTableHtml(list){
+  const rowsT=list.map(r=>({r, tix:churnTixCount(r.eid)})).sort((a,b)=>b.tix-a.tix || (Number(b.r.arr)||0)-(Number(a.r.arr)||0));
+  const totArr=list.reduce((s,r)=>s+(Number(r.arr)||0),0);
+  const totTix=rowsT.reduce((s,x)=>s+x.tix,0);
+  const body=rowsT.map(({r,tix})=>`<tr>`
+    + `<td>${cEsc(r.en||r.cust||'')}</td>`
+    + `<td class="num" style="text-align:right">${cMoney(r.arr)}</td>`
+    + `<td>${cEsc(r.seg||'')}</td>`
+    + `<td>${cEsc(caMonthLabel(r.mon))}</td>`
+    + `<td>${cEsc(r.cat||'')}</td>`
+    + `<td>${cEsc(r.rsn||'Not Tagged')}</td>`
+    + `<td class="num" style="text-align:right">${tix}</td></tr>`).join('');
+  return `<table class="ccd-mtbl pipe-list"><thead><tr>`
+    + `<th>Enterprise Name</th><th style="text-align:right">ARR</th><th>Segment</th><th>Month</th>`
+    + `<th>Churn/Contraction</th><th>Reason</th><th style="text-align:right">Tickets Raised</th></tr></thead><tbody>${body}`
+    + `<tr style="font-weight:700"><td>Total</td><td style="text-align:right">${cMoney(totArr)}</td><td colspan="4"></td><td style="text-align:right">${totTix}</td></tr>`
+    + `</tbody></table>`;
 }
 // ARR heatmap: rowKeys × colKeys, cell colour scaled to the max cell (white→red).
 // opts (all optional): rowHeader (top-left label), rowLabel(rk)->html (row header
@@ -7715,6 +7779,17 @@ function renderChurnAnalysis(){
   const segs = CA_SEG_ORDER.filter(s=>CHURN_ANALYSIS.some(r=>r.seg===s));
   const prods = [...new Set(CHURN_ANALYSIS.map(r=>r.prod))].filter(p=>p&&p!=='NA').sort();
   const opt = (v,sel,lbl)=>`<option value="${cEsc(v)}"${v===sel?' selected':''}>${cEsc(lbl||v)}</option>`;
+  // seg / prod are multi-select arrays (rendered as pills). Coerce any stale
+  // single-value persisted state to an array so old sessions don't break.
+  if(!Array.isArray(state.ca.seg))  state.ca.seg  = state.ca.seg  ? [String(state.ca.seg)]  : [];
+  if(!Array.isArray(state.ca.prod)) state.ca.prod = state.ca.prod ? [String(state.ca.prod)] : [];
+  const pillGroup = (key, opts, allLbl, labelFn) => {
+    const sel = state.ca[key];
+    const pill = (val, txt, on) => `<button type="button" class="ca-pill${on?' active':''}" data-val="${cEsc(val)}">${cEsc(txt)}</button>`;
+    return `<div class="ca-pills" data-cakey="${key}">`
+      + pill('', allLbl, !sel.length)
+      + opts.map(v=>pill(v, labelFn?labelFn(v):v, sel.includes(v))).join('') + `</div>`;
+  };
   const fb = document.getElementById('ca-filter-bar');
   if(fb){
     fb.innerHTML =
@@ -7727,17 +7802,23 @@ function renderChurnAnalysis(){
       + `<div class="ca-fg"><label>Pod</label><select id="ca-f-pod">`
         + opt('', state.ca.pod, 'All Pods')
         + Object.keys(POD_MAP).map(p=>opt(p, state.ca.pod, podOptLabel(p))).join('') + `</select></div>`
-      + `<div class="ca-fg"><label>Segment</label><select id="ca-f-seg">`
-        + opt('', state.ca.seg, 'All Segments')
-        + segs.map(s=>opt(s, state.ca.seg)).join('') + `</select></div>`
-      + `<div class="ca-fg"><label>Product</label><select id="ca-f-prod">`
-        + opt('', state.ca.prod, 'All Products')
-        + prods.map(p=>opt(p, state.ca.prod)).join('') + `</select></div>`
+      + `<div class="ca-fg"><label>Segment</label>` + pillGroup('seg', segs, 'All') + `</div>`
+      + `<div class="ca-fg"><label>Product</label>` + pillGroup('prod', prods, 'All') + `</div>`
       + `<button class="ca-reset" id="ca-f-reset">Reset filters</button>`;
     const bind=(id,key)=>{ const el=document.getElementById(id); if(el) el.addEventListener('change',e=>{ state.ca[key]=e.target.value; persistState&&persistState(); renderChurnAnalysis(); }); };
-    bind('ca-f-mon','mon'); bind('ca-f-csm','csm'); bind('ca-f-pod','pod'); bind('ca-f-seg','seg'); bind('ca-f-prod','prod');
+    bind('ca-f-mon','mon'); bind('ca-f-csm','csm'); bind('ca-f-pod','pod');
+    if(!fb._pillWired){ fb._pillWired = true;
+      fb.addEventListener('click', e=>{
+        const p = e.target.closest && e.target.closest('.ca-pill'); if(!p || !fb.contains(p)) return;
+        const grp = p.closest('.ca-pills'); const key = grp && grp.dataset.cakey; if(!key) return;
+        const val = p.getAttribute('data-val'); const arr = (state.ca[key]||[]).slice();
+        if(val===''){ state.ca[key] = []; }
+        else { const i = arr.indexOf(val); if(i>=0) arr.splice(i,1); else arr.push(val); state.ca[key] = arr; }
+        persistState&&persistState(); renderChurnAnalysis();
+      });
+    }
     const rb=document.getElementById('ca-f-reset');
-    if(rb) rb.addEventListener('click',()=>{ state.ca={mon:'',csm:'',pod:'',seg:'',prod:''}; persistState&&persistState(); renderChurnAnalysis(); });
+    if(rb) rb.addEventListener('click',()=>{ state.ca={mon:'',csm:'',pod:'',seg:[],prod:[]}; persistState&&persistState(); renderChurnAnalysis(); });
   }
 
   const rows = caFiltered().concat(caPartnerRows());
@@ -7780,8 +7861,8 @@ function renderChurnAnalysis(){
     caChurnCounts(r) &&                          // same churn definition as Overall/Email
     (!state.ca.csm  || r.csm === state.ca.csm) &&
     (!state.ca.pod  || getPod(r.csm) === state.ca.pod) &&
-    (!state.ca.seg  || r.seg === state.ca.seg) &&
-    (!state.ca.prod || r.prod === state.ca.prod))
+    (!state.ca.seg.length  || state.ca.seg.includes(r.seg)) &&
+    (!state.ca.prod.length || state.ca.prod.includes(r.prod)))
     .concat(caPartnerRows({skipMonth:true}));    // fold partnership churn into its month's point
 
   // Dashed dark "Overall" total line, appended to every trend chart.
@@ -7873,13 +7954,17 @@ function renderChurnAnalysis(){
           caHeatmap(heatSegs, heatReasons, heatVal, { rowHeader:'Segment', rowTotal:s=>caSum(heatRows.filter(r=>r.seg===s)) }), true)
       + panel('Account Ageing Analysis','Churned ARR by tenure — months from first invoice to churn · current filters',
           caAgeingTable(rows), true)
-      + panel('Churn Accounts — Ticket Analysis','Churned accounts by tenure & reason, with total support tickets raised · current filters',
-          caChurnTixTable(rows), true)
+      + panel('Churn Accounts — Ticket Analysis','Support tickets raised by churned accounts — tenure × reason · click any number to list the accounts · current filters',
+          caChurnTixHeatmap(rows), true)
       + panel('Top Churn Reasons by ARR', (state.ca.mon?caMonthLabel(state.ca.mon)+' · ':'')+'all reasons, current filters', caReasonBars(rows), true);
     caBindCharts();
     if(!ch._pipeWired){ ch._pipeWired = true;
-      ch.addEventListener('click', e=>{ const row = e.target.closest && e.target.closest('.ca-pipe-row');
-        if(row && ch.contains(row)) caShowPipeModal(row.getAttribute('data-pipe')); });
+      ch.addEventListener('click', e=>{
+        const row = e.target.closest && e.target.closest('.ca-pipe-row');
+        if(row && ch.contains(row)){ caShowPipeModal(row.getAttribute('data-pipe')); return; }
+        const cell = e.target.closest && e.target.closest('.ca-tixheat-cell');
+        if(cell && ch.contains(cell) && cell.textContent.trim()) caShowTixDrill(cell.getAttribute('data-age'), cell.getAttribute('data-rsn'));
+      });
     }
   }
 }
