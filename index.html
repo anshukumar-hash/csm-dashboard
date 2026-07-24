@@ -162,7 +162,7 @@
   .ca-head{display:flex;align-items:baseline;gap:12px;margin:4px 0 16px;flex-wrap:wrap}
   .ca-head h2{font-size:18px;font-weight:800;color:var(--text);margin:0;letter-spacing:-.01em}
   .ca-head .sub{font-size:12.5px;color:var(--text-3)}
-  .ca-filter-bar{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:18px}
+  .ca-filter-bar{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:18px;position:sticky;top:0;z-index:40;box-shadow:0 4px 14px rgba(15,23,42,.07)}
   .ca-fg{display:flex;flex-direction:column;gap:5px}
   .ca-fg label{font-size:10.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
   .ca-fg select{font-size:12.5px;padding:6px 28px 6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);cursor:pointer;min-width:140px}
@@ -261,6 +261,19 @@
   .ca-heat tr.tot th.rh,.ca-heat tr.tot td{font-weight:700;color:var(--text);border-top:2px solid var(--border)}
   .ca-age-heat th.rh{min-width:104px;max-width:150px}
   .ca-age-heat .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  /* Churn-accounts ticket-analysis table (after Account Ageing Analysis) */
+  .ca-tix-wrap{overflow-x:auto;margin-top:4px}
+  .ca-tix{width:100%;border-collapse:collapse;font-size:12px}
+  .ca-tix th,.ca-tix td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+  .ca-tix th{color:var(--text-2);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
+  .ca-tix td.num,.ca-tix th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .ca-tix td.nm{font-weight:600;color:var(--text);max-width:260px;overflow:hidden;text-overflow:ellipsis}
+  .ca-tix .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .ca-tix tr.tot td{font-weight:700;color:var(--text);border-top:2px solid var(--border);border-bottom:none}
+  /* Future Churn Pipeline — clickable per-CSM bar rows */
+  .ca-bar-row.ca-pipe-row{cursor:pointer;border-radius:6px;transition:background .12s}
+  .ca-bar-row.ca-pipe-row:hover{background:rgba(37,99,235,.07)}
+  .ccd-modal:has(.pipe-list){max-width:840px}
   /* Per-CSM small-multiples grid (Regrettable/Unregrettable MoM minis) */
   .ca-mini-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:4px}
   .ca-mini{border:1px solid var(--border);border-radius:8px;padding:5px 7px 2px;background:var(--bg)}
@@ -7471,16 +7484,19 @@ function caFilteredEx(skip){
 // Horizontal STACKED-bar list: one row per item, segments sized by ARR, all
 // rows scaled to the largest total so lengths compare across rows. Sorted desc.
 // items: [{label, parts:[{key,value,color}]}]
-function caStackedBars(items){
+function caStackedBars(items, opts){
+  opts = opts || {};
   const rows = items.map(it => ({ label: it.label, parts: it.parts,
       total: it.parts.reduce((s,p)=>s+(Number(p.value)||0),0) }))
     .filter(it => it.total > 0).sort((a,b)=>b.total-a.total);
   if(!rows.length) return '<div class="ca-empty">No data for the current filters.</div>';
   const max = rows[0].total || 1;
+  const clk = !!opts.clickable;
   return '<div class="ca-bars">' + rows.map(it=>{
     const segs = it.parts.filter(p=>p.value>0).map(p =>
       `<span class="seg" style="width:${(p.value/max*100).toFixed(2)}%;background:${p.color}" title="${cEsc(p.key||'')}: ${cMoney(p.value)}"></span>`).join('');
-    return `<div class="ca-bar-row"><span class="nm" title="${cEsc(it.label)}">${cEsc(it.label)}</span>`
+    const clkAttr = clk ? ` ca-pipe-row" data-pipe="${cEsc(it.label)}" title="Click to see the accounts` : '"';
+    return `<div class="ca-bar-row${clkAttr}><span class="nm" title="${cEsc(it.label)}">${cEsc(it.label)}</span>`
       + `<span class="tr stk">${segs}</span><span class="amt">${cMoney(it.total)}</span></div>`;
   }).join('') + '</div>';
 }
@@ -7496,6 +7512,61 @@ function caFutureItems(rows, fmonths){
     const o = by[c] || (by[c] = {}); o[r.mon] = (o[r.mon]||0) + (Number(r.arr)||0); });
   return Object.entries(by).map(([c,mm])=>({ label:c,
     parts: fmonths.map((m,i)=>({ key:caMonthLabel(m), value:mm[m]||0, color:caColor(i) })) }));
+}
+// Future Churn Pipeline drill-down: the future-dated churn rows currently on
+// screen (set by renderChurnAnalysis), plus the click→modal that lists a CSM's
+// upcoming churn/contraction accounts.
+let _caPipeRows = [];
+function caShowPipeModal(csm){
+  const list = (_caPipeRows || [])
+    .filter(r => (r.csm || '(Unassigned)') === csm)
+    .sort((a,b)=> (a.mon<b.mon?-1:a.mon>b.mon?1:0) || (Number(b.arr)||0)-(Number(a.arr)||0));
+  if(!list.length) return;
+  openModal('Future Churn Pipeline — ' + cEsc(csm) + ' · ' + list.length + ' account' + (list.length===1?'':'s'),
+    caPipeTableHtml(list));
+}
+function caPipeTableHtml(list){
+  const tot = list.reduce((s,r)=>s+(Number(r.arr)||0),0);
+  const body = list.map(r=>`<tr>`
+    + `<td>${cEsc(r.en||r.cust||'')}</td>`
+    + `<td class="num">${cMoney(r.arr)}</td>`
+    + `<td>${cEsc(r.seg||'')}</td>`
+    + `<td>${cEsc(caMonthLabel(r.mon))}</td>`
+    + `<td>${cEsc(r.cat||'')}</td>`
+    + `<td>${cEsc(r.rsn||'Not Tagged')}</td></tr>`).join('');
+  return `<table class="ccd-mtbl pipe-list"><thead><tr>`
+    + `<th>Enterprise Name</th><th class="num" style="text-align:right">ARR</th><th>Segment</th>`
+    + `<th>Month</th><th>Churn/Contraction</th><th>Reason</th></tr></thead><tbody>${body}`
+    + `<tr style="font-weight:700"><td>Total</td><td class="num" style="text-align:right">${cMoney(tot)}</td><td colspan="4"></td></tr>`
+    + `</tbody></table>`;
+}
+// Total support tickets ever raised for an enterprise (Studio + Vini dumps),
+// regardless of the dashboard period — "how much support did this account need".
+function churnTixCount(eid){
+  if(!eid) return 0;
+  const s = (STUDIO_TIX[eid] && Array.isArray(STUDIO_TIX[eid].rows)) ? STUDIO_TIX[eid].rows.length : 0;
+  const v = (VINI_TIX[eid]   && Array.isArray(VINI_TIX[eid].rows))   ? VINI_TIX[eid].rows.length   : 0;
+  return s + v;
+}
+// Churn-accounts ticket analysis: one row per churned account (current filters)
+// with its tenure-at-churn bucket, reason, and total tickets raised. Sorted by
+// tickets desc so the heaviest-support churns surface first.
+function caChurnTixTable(rows){
+  const data = rows.map(r=>({ en:r.en||r.cust||'', age:caAgeBucket(r), rsn:r.rsn||'Not Tagged',
+      tix:churnTixCount(r.eid), arr:Number(r.arr)||0 }))
+    .sort((a,b)=> b.tix-a.tix || b.arr-a.arr);
+  if(!data.length) return '<div class="ca-empty">No churn rows for current filters.</div>';
+  const totTix = data.reduce((s,d)=>s+d.tix,0);
+  const body = data.map(d=>`<tr>`
+    + `<td class="nm" title="${cEsc(d.en)}">${cEsc(d.en)}</td>`
+    + `<td><span class="dot" style="background:${CA_AGE_COLOR[d.age]||'#94A3B8'}"></span>${cEsc(d.age)}</td>`
+    + `<td>${cEsc(d.rsn)}</td>`
+    + `<td class="num">${d.tix}</td></tr>`).join('');
+  return `<div class="ca-tix-wrap"><table class="ca-tix"><thead><tr>`
+    + `<th>Enterprise</th><th>Account Age at Churn</th><th>Reason</th><th class="num">Tickets Raised</th>`
+    + `</tr></thead><tbody>${body}`
+    + `<tr class="tot"><td>Total (${data.length} accounts)</td><td></td><td></td><td class="num">${totTix}</td></tr>`
+    + `</tbody></table></div>`;
 }
 // ARR heatmap: rowKeys × colKeys, cell colour scaled to the max cell (white→red).
 // opts (all optional): rowHeader (top-left label), rowLabel(rk)->html (row header
@@ -7781,6 +7852,7 @@ function renderChurnAnalysis(){
     return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,8).map(e=>e[0]); })();
   const heatVal = (s,rsn)=> caSum(heatRows.filter(r=>r.seg===s && (r.rsn||'Not Tagged')===rsn));
 
+  _caPipeRows = futureRows;   // drives the Future Churn Pipeline click-through modal
   const ch = document.getElementById('ca-charts');
   if(ch){
     const panel = (title,sub,body,wide)=>`<div class="ca-chart${wide?' wide':''}"><h3>${title}</h3><div class="csub">${sub}</div>${body}</div>`;
@@ -7795,14 +7867,20 @@ function renderChurnAnalysis(){
       + panel('Regrettable vs Unregrettable — by CSM (MoM)','Monthly ARR trend per CSM · one mini-chart each, ordered by total · current filters',
           caSmallMultiples(regrByCsmRows, tMonths), true)
       + panel('Churn caught by Signals (MoM)', coverageSub, coverageBody, true)
-      + panel('Future Churn Pipeline', futureSub,
-          caStackedBars(caFutureItems(futureRows, futureMonths)) + futureLegend, true)
+      + panel('Future Churn Pipeline', futureSub + ' · click a CSM to list the accounts',
+          caStackedBars(caFutureItems(futureRows, futureMonths), { clickable:true }) + futureLegend, true)
       + panel('Segment × Reason Heatmap','ARR lost — where loss concentrates · current filters',
           caHeatmap(heatSegs, heatReasons, heatVal, { rowHeader:'Segment', rowTotal:s=>caSum(heatRows.filter(r=>r.seg===s)) }), true)
       + panel('Account Ageing Analysis','Churned ARR by tenure — months from first invoice to churn · current filters',
           caAgeingTable(rows), true)
+      + panel('Churn Accounts — Ticket Analysis','Churned accounts by tenure & reason, with total support tickets raised · current filters',
+          caChurnTixTable(rows), true)
       + panel('Top Churn Reasons by ARR', (state.ca.mon?caMonthLabel(state.ca.mon)+' · ':'')+'all reasons, current filters', caReasonBars(rows), true);
     caBindCharts();
+    if(!ch._pipeWired){ ch._pipeWired = true;
+      ch.addEventListener('click', e=>{ const row = e.target.closest && e.target.closest('.ca-pipe-row');
+        if(row && ch.contains(row)) caShowPipeModal(row.getAttribute('data-pipe')); });
+    }
   }
 }
 
