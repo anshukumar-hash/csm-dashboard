@@ -1186,6 +1186,9 @@
     <div class="filter-group"><span class="filter-label">CSM Manager</span>
       <div class="ms" id="ms-manager" data-fkey="manager"></div>
     </div>
+    <div class="filter-group"><span class="filter-label">Pod</span>
+      <div class="ms" id="ms-pod" data-fkey="pod"></div>
+    </div>
     <div class="filter-group" id="g-csm"><span class="filter-label">CSM</span>
       <div class="ms" id="ms-csm" data-fkey="csm"></div>
     </div>
@@ -1343,9 +1346,11 @@
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">Manager:</label>
         <select class="filter-select" id="csmr-mgr-select" style="min-width:180px"></select>
+        <label style="font-size:13px;font-weight:700;color:var(--text-3)">Pod:</label>
+        <select class="filter-select" id="csmr-pod-select" style="min-width:160px"></select>
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">CSM:</label>
         <select class="filter-select" id="csmr-select" style="min-width:200px"></select>
-        <button class="email-btn email-btn-ghost" id="csmr-reset" title="Reset to All Managers / All CSMs" style="display:none">✕ Reset</button>
+        <button class="email-btn email-btn-ghost" id="csmr-reset" title="Reset to All Managers / Pods / CSMs" style="display:none">✕ Reset</button>
       </div>
       <button class="email-btn email-btn-ghost" id="csmr-copy">Copy</button>
     </div>
@@ -1357,9 +1362,11 @@
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">Manager:</label>
         <select class="filter-select" id="ankit-mgr-select" style="min-width:180px"></select>
+        <label style="font-size:13px;font-weight:700;color:var(--text-3)">Pod:</label>
+        <select class="filter-select" id="ankit-pod-select" style="min-width:160px"></select>
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">CSM:</label>
         <select class="filter-select" id="ankit-select" style="min-width:200px"></select>
-        <button class="email-btn email-btn-ghost" id="ankit-reset" title="Reset to All Managers / All CSMs" style="display:none">✕ Reset</button>
+        <button class="email-btn email-btn-ghost" id="ankit-reset" title="Reset to All Managers / Pods / CSMs" style="display:none">✕ Reset</button>
       </div>
     </div>
     <div id="ankit-cards" class="ankit-cards"></div>
@@ -1442,6 +1449,30 @@ function normalizeCSM(csm) {
 }
 function getManager(csm) {
   return MANAGER_MAP[csm] || MANAGER_MAP[normalizeCSM(csm)] || '';
+}
+
+// POD = a Pod Lead + their team-member CSMs. Selecting a pod filters to the
+// UNION of the lead + members (e.g. Ankur → Ankur + Aditya). Values are the
+// canonical "First Last" display names (matching MANAGER_MAP keys); dropdown
+// key = the pod-lead first name. Update here to re-shape a pod.
+const POD_MAP = {
+  'Ankur':  ['Ankur Batra','Aditya Kaul'],
+  'Aman':   ['Aman Seth','Jaspreet Kaur'],
+  'Ritika': ['Ritika Agarwal','Abhijeet Mitra'],
+  'Prabha': ['Prabha Kumari','Zeeshana Aijaz'],
+  'Rupesh': ['Rupesh Rawat','Manpreet Kaur','Prathamesh Prashant','Anuj Tewatia','Vishal Singh','Vishal Singh1','Sanyam Tyagi'],
+};
+// Reverse index: canonical CSM display name → pod key. Built once.
+const CSM_POD = {}; Object.keys(POD_MAP).forEach(p => POD_MAP[p].forEach(c => { CSM_POD[c] = p; }));
+// Pod for a CSM (accepts email or "First Last"); '' if not in any pod.
+function getPod(csm) {
+  return CSM_POD[csm] || CSM_POD[normalizeCSM(csm)] || '';
+}
+// Union of CSM display names for a set of pod keys (used by scope-based views).
+function csmsForPods(pods) {
+  const out = new Set();
+  (pods || []).forEach(p => (POD_MAP[p] || []).forEach(c => out.add(c)));
+  return [...out];
 }
 
 const D = window.__DASHBOARD_DATA__;
@@ -2002,18 +2033,19 @@ var __viniAgentTypesByRid = null;
 let state = {
   product:'studio', view:'overview', period:'MTD',
   viewSub:'display',         // last-used sub-view inside the grouped "View" tab
-  ankitMgr:'', ankitCsm:'', ankitMetric:'ticket_sla',  // Ankit's View filter + selected scorecard
+  ankitMgr:'', ankitPod:'', ankitCsm:'', ankitMetric:'ticket_sla',  // Ankit's View filter + selected scorecard
   churnTab:'intelligence',   // active sub-tab inside the Signal Intelligence view
+  csmReportMgr:'', csmReportPod:'',  // RAG Intelligence Manager / Pod scope ('' = all)
   csmReportCsm:'',           // selected CSM in the CSM Report tab ('' = all)
   churnSearch:'',            // case-insensitive company filter on churn tables
-  ca: { mon:'', csm:'', seg:'', prod:'' },  // Churn Intelligence dashboard filters
+  ca: { mon:'', csm:'', pod:'', seg:'', prod:'' },  // Churn Intelligence dashboard filters
   caTab: 'v1',                              // Churn Intelligence subtab (v1 | v2)
   mbrExpanded: false,                       // MBR column: false = current month only, true = last 3 months
   customRange: null,   // { from:'YYYY-MM-DD', to:'YYYY-MM-DD' } when user picks a range
   // Filters are now ARRAYS so every dropdown supports multi-select. Empty
   // array = "no filter applied" (i.e. show all). Filter checks below use
   // .length and .includes() instead of strict equality.
-  filters: { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] },
+  filters: { region:[], segment:[], manager:[], pod:[], csm:[], acct:[], agent:[] },
   // Sort state per Rooftop View (Studio + Vini). null = use default ARR DESC.
   sort: { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null, csmCombined: null },
   rooftopContext: { kind:'all', value:null },
@@ -2041,9 +2073,12 @@ let _restoreScrollY = 0;
     if (saved.view)    state.view    = saved.view;
     if (saved.viewSub) state.viewSub = saved.viewSub;
     if (saved.ankitMgr != null) state.ankitMgr = saved.ankitMgr;
+    if (saved.ankitPod != null) state.ankitPod = saved.ankitPod;
     if (saved.ankitCsm != null) state.ankitCsm = saved.ankitCsm;
     if (saved.ankitMetric) state.ankitMetric = saved.ankitMetric;
     if (saved.churnTab) state.churnTab = saved.churnTab;
+    if (saved.csmReportMgr != null) state.csmReportMgr = saved.csmReportMgr;
+    if (saved.csmReportPod != null) state.csmReportPod = saved.csmReportPod;
     if (saved.csmReportCsm != null) state.csmReportCsm = saved.csmReportCsm;
     if (saved.ca && typeof saved.ca === 'object') Object.assign(state.ca, saved.ca);
     if (saved.period)  state.period  = saved.period;
@@ -2060,8 +2095,8 @@ function persistState(){
   try {
     sessionStorage.setItem(STATE_KEY, JSON.stringify({
       product: state.product, view: state.view, viewSub: state.viewSub, period: state.period,
-      ankitMgr: state.ankitMgr, ankitCsm: state.ankitCsm, ankitMetric: state.ankitMetric,
-      churnTab: state.churnTab, csmReportCsm: state.csmReportCsm, ca: state.ca,
+      ankitMgr: state.ankitMgr, ankitPod: state.ankitPod, ankitCsm: state.ankitCsm, ankitMetric: state.ankitMetric,
+      churnTab: state.churnTab, csmReportMgr: state.csmReportMgr, csmReportPod: state.csmReportPod, csmReportCsm: state.csmReportCsm, ca: state.ca,
       customRange: state.customRange, filters: state.filters, sort: state.sort,
       rooftopContext: state.rooftopContext, rooftopSearch: state.rooftopSearch,
       entListSearch: state.entListSearch || '', scrollY: window.scrollY
@@ -2596,6 +2631,9 @@ function csmMatches(csm) {
     const mgr = getManager(csm);
     if (!state.filters.manager.includes(mgr)) return false;
   }
+  if (state.filters.pod && state.filters.pod.length) {
+    if (!state.filters.pod.includes(getPod(csm))) return false;
+  }
   return true;
 }
 function getStudio() {
@@ -2625,7 +2663,7 @@ function getVini() {
     if (f.segment.length && !f.segment.includes(r.seg)) return false;
     const rowRegion = (r.region || 'AMER').toUpperCase();
     if (f.region.length && !f.region.map(x => x.toUpperCase()).includes(rowRegion)) return false;
-    if (f.csm.length || f.manager.length) {
+    if (f.csm.length || f.manager.length || (f.pod && f.pod.length)) {
       // Per user spec: when a CSM filter is active, Unassigned rooftops are
       // hidden unless 'Unassigned CSM' is itself among the picked values.
       // Drilling down on the "Unassigned" chip from the overview lands here
@@ -7216,6 +7254,7 @@ function caFiltered(){
     caChurnCounts(r) &&
     (!f.mon  || r.mon === f.mon) &&
     (!f.csm  || r.csm === f.csm) &&
+    (!f.pod  || getPod(r.csm) === f.pod) &&
     (!f.seg  || r.seg === f.seg) &&
     (!f.prod || r.prod === f.prod));
 }
@@ -7425,6 +7464,7 @@ function caFilteredEx(skip){
     caChurnCounts(r) &&   // align with Overall/Email — drop revived/deferred/prevented
     (skip.mon  || !f.mon  || r.mon  === f.mon) &&
     (skip.csm  || !f.csm  || r.csm  === f.csm) &&
+    (skip.pod  || !f.pod  || getPod(r.csm) === f.pod) &&
     (skip.seg  || !f.seg  || r.seg  === f.seg) &&
     (skip.prod || !f.prod || r.prod === f.prod));
 }
@@ -7613,6 +7653,9 @@ function renderChurnAnalysis(){
       + `<div class="ca-fg"><label>CSM</label><select id="ca-f-csm">`
         + opt('', state.ca.csm, 'All CSMs')
         + csms.map(c=>opt(c, state.ca.csm)).join('') + `</select></div>`
+      + `<div class="ca-fg"><label>Pod</label><select id="ca-f-pod">`
+        + opt('', state.ca.pod, 'All Pods')
+        + Object.keys(POD_MAP).map(p=>opt(p, state.ca.pod, podOptLabel(p))).join('') + `</select></div>`
       + `<div class="ca-fg"><label>Segment</label><select id="ca-f-seg">`
         + opt('', state.ca.seg, 'All Segments')
         + segs.map(s=>opt(s, state.ca.seg)).join('') + `</select></div>`
@@ -7621,9 +7664,9 @@ function renderChurnAnalysis(){
         + prods.map(p=>opt(p, state.ca.prod)).join('') + `</select></div>`
       + `<button class="ca-reset" id="ca-f-reset">Reset filters</button>`;
     const bind=(id,key)=>{ const el=document.getElementById(id); if(el) el.addEventListener('change',e=>{ state.ca[key]=e.target.value; persistState&&persistState(); renderChurnAnalysis(); }); };
-    bind('ca-f-mon','mon'); bind('ca-f-csm','csm'); bind('ca-f-seg','seg'); bind('ca-f-prod','prod');
+    bind('ca-f-mon','mon'); bind('ca-f-csm','csm'); bind('ca-f-pod','pod'); bind('ca-f-seg','seg'); bind('ca-f-prod','prod');
     const rb=document.getElementById('ca-f-reset');
-    if(rb) rb.addEventListener('click',()=>{ state.ca={mon:'',csm:'',seg:'',prod:''}; persistState&&persistState(); renderChurnAnalysis(); });
+    if(rb) rb.addEventListener('click',()=>{ state.ca={mon:'',csm:'',pod:'',seg:'',prod:''}; persistState&&persistState(); renderChurnAnalysis(); });
   }
 
   const rows = caFiltered().concat(caPartnerRows());
@@ -7665,6 +7708,7 @@ function renderChurnAnalysis(){
   const trendRows = CHURN_ANALYSIS.filter(r =>  // honour the non-month filters only
     caChurnCounts(r) &&                          // same churn definition as Overall/Email
     (!state.ca.csm  || r.csm === state.ca.csm) &&
+    (!state.ca.pod  || getPod(r.csm) === state.ca.pod) &&
     (!state.ca.seg  || r.seg === state.ca.seg) &&
     (!state.ca.prod || r.prod === state.ca.prod))
     .concat(caPartnerRows({skipMonth:true}));    // fold partnership churn into its month's point
@@ -8454,6 +8498,7 @@ function ovCaPassesFilters(r){
   // Manager + CSM: CHURN_ANALYSIS carries a CSM name; derive manager from it and
   // match CSM by normalized name so churn responds to those filters too.
   if(f.manager.length && !f.manager.includes(getManager(r.csm))) return false;
+  if(f.pod && f.pod.length && !f.pod.includes(getPod(r.csm))) return false;
   if(f.csm.length){ const c=normalizeCSM(String(r.csm||'')); if(!f.csm.some(x=>normalizeCSM(String(x))===c)) return false; }
   return true;
 }
@@ -8586,7 +8631,7 @@ function computeOverview(scope){
   // Projected GRR (Yearly), compounded. The unfiltered Overall headline uses the
   // fixed book starting ARR (7,732,095) so it matches the Email & CSM cards;
   // filtered / Studio / Vini scopes annualize off their reconstructed start.
-  const _noFilt = !(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||state.filters.acct.length||(state.filters.agent&&state.filters.agent.length));
+  const _noFilt = !(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length||(state.filters.agent&&state.filters.agent.length));
   const grrBase = (scope==='overall' && _noFilt) ? 7732095 : grrStart;
   const grr=projGrrYearly(grrBase, lost);
 
@@ -8707,7 +8752,7 @@ const SEG_BASE_ARR = {
   vini:    1438180,
 };
 function ovArrDisplay(scope){
-  const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||state.filters.acct.length);
+  const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length);
   if(isFiltered) return computeOverview(scope).liveArr;
   // Live ARR = Base + New Addition − Churn (single consistent model for the Overall
   // tab + Meeting tab). New = live-this-month (product-split); Churn = this month's
@@ -8745,7 +8790,7 @@ function ovNrr(scope){
 function ovArrSection(scope, label, accent, m){
   const o=computeOverview(scope);
   const RC={Green:'#16A34A',Amber:'#D97706',Red:'#DC2626',NA:'#94A3B8'};
-  const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||state.filters.acct.length);
+  const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length);
   const newUp=o.newArr>0;
   const grrCls=o.grr==null?'na':o.grr>=90?'green':o.grr>=80?'amber':'red';
   const grrVal=o.grr==null?'—':o.grr.toFixed(1)+'%';
@@ -8860,7 +8905,7 @@ function meetingExp(key){
 // segment cut (clears region/CSM/manager/etc so the Meeting tab is filter-independent).
 function computeMeetingSeg(def){
   const saved = state.filters;
-  state.filters = {region:[], segment:def.segFilter||[], manager:[], csm:[], acct:[], agent:[]};
+  state.filters = {region:[], segment:def.segFilter||[], manager:[], pod:[], csm:[], acct:[], agent:[]};
   let res;
   try {
     const o = computeOverview(def.scope||'overall');
@@ -9006,6 +9051,7 @@ let _ankitExpanded = new Set();   // expanded CSM group names (reset when metric
 let _ankitRows = [];              // current metric's leaf rows (for ticket popups)
 function ankitScope(){
   if(state.ankitCsm) return state.ankitCsm;
+  if(state.ankitPod) return csmsForPods([state.ankitPod]);
   if(state.ankitMgr) return csmsForManager(state.ankitMgr);
   return null;
 }
@@ -9209,18 +9255,24 @@ function renderAnkit(){
   if(mgrSel){ if(!mgrSel._wired){ mgrSel._wired=true;
       const managers=[...new Set(Object.values(MANAGER_MAP))].sort();
       mgrSel.innerHTML='<option value="">All Managers</option>'+managers.map(m=>`<option value="${cEsc(m)}">${cEsc(m)}</option>`).join('');
-      mgrSel.addEventListener('change', e=>{ state.ankitMgr=e.target.value; state.ankitCsm=''; _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
+      mgrSel.addEventListener('change', e=>{ state.ankitMgr=e.target.value; state.ankitPod=''; state.ankitCsm=''; _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
     mgrSel.value=state.ankitMgr||''; }
+  // Pod dropdown (lead + members)
+  const podSel=document.getElementById('ankit-pod-select');
+  if(podSel){ if(!podSel._wired){ podSel._wired=true;
+      podSel.innerHTML='<option value="">All Pods</option>'+Object.keys(POD_MAP).map(p=>`<option value="${cEsc(p)}">${cEsc(podOptLabel(p))}</option>`).join('');
+      podSel.addEventListener('change', e=>{ state.ankitPod=e.target.value; state.ankitMgr=''; state.ankitCsm=''; _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
+    podSel.value=state.ankitPod||''; }
   // CSM dropdown (full roster, independent of manager)
   const sel=document.getElementById('ankit-select');
   if(sel){ const roster=csmReportRoster();
     if(sel._rosterN!==roster.length){ sel._rosterN=roster.length;
       sel.innerHTML='<option value="">All CSMs</option>'+roster.map(c=>`<option value="${cEsc(c)}">${cEsc(c)}</option>`).join(''); }
-    if(!sel._wired){ sel._wired=true; sel.addEventListener('change', e=>{ state.ankitCsm=e.target.value; if(e.target.value){ const mg=getManager(e.target.value); if(mg)state.ankitMgr=mg; } _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
+    if(!sel._wired){ sel._wired=true; sel.addEventListener('change', e=>{ state.ankitCsm=e.target.value; if(e.target.value){ const mg=getManager(e.target.value); if(mg)state.ankitMgr=mg; state.ankitPod=''; } _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
     sel.value=state.ankitCsm||''; }
   const rb=document.getElementById('ankit-reset');
-  if(rb){ if(!rb._wired){ rb._wired=true; rb.addEventListener('click', ()=>{ state.ankitMgr=''; state.ankitCsm=''; _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
-    rb.style.display=(state.ankitMgr||state.ankitCsm)?'':'none'; }
+  if(rb){ if(!rb._wired){ rb._wired=true; rb.addEventListener('click', ()=>{ state.ankitMgr=''; state.ankitPod=''; state.ankitCsm=''; _ankitExpanded=new Set(); persistState&&persistState(); renderAnkit(); }); }
+    rb.style.display=(state.ankitMgr||state.ankitPod||state.ankitCsm)?'':'none'; }
   const data=ankitData(ankitScope());
   if(!ANKIT_METRICS.some(m=>m.key===state.ankitMetric)) state.ankitMetric=ANKIT_METRICS[0].key;
   const cardsHost=document.getElementById('ankit-cards');
@@ -9257,9 +9309,20 @@ function renderCsmReport(){
     if(!mgrSel._wired){ mgrSel._wired = true;
       const managers = [...new Set(Object.values(MANAGER_MAP))].sort();
       mgrSel.innerHTML = '<option value="">All Managers</option>' + managers.map(m=>`<option value="${cEsc(m)}">${cEsc(m)}</option>`).join('');
-      mgrSel.addEventListener('change', e=>{ state.csmReportMgr = e.target.value; state.csmReportCsm = ''; persistState&&persistState(); renderCsmReport(); });
+      mgrSel.addEventListener('change', e=>{ state.csmReportMgr = e.target.value; state.csmReportPod = ''; state.csmReportCsm = ''; persistState&&persistState(); renderCsmReport(); });
     }
     mgrSel.value = mgr;
+  }
+  // Pod dropdown (All Pods + each pod lead). Selecting one scopes to that pod's
+  // lead + members; clears any CSM pick. Sits between Manager and CSM in priority.
+  const pod = state.csmReportPod || '';
+  const podSel = document.getElementById('csmr-pod-select');
+  if(podSel){
+    if(!podSel._wired){ podSel._wired = true;
+      podSel.innerHTML = '<option value="">All Pods</option>' + Object.keys(POD_MAP).map(p=>`<option value="${cEsc(p)}">${cEsc(podOptLabel(p))}</option>`).join('');
+      podSel.addEventListener('change', e=>{ state.csmReportPod = e.target.value; state.csmReportCsm = ''; state.csmReportMgr = ''; persistState&&persistState(); renderCsmReport(); });
+    }
+    podSel.value = pod;
   }
   // CSM dropdown ALWAYS lists every CSM (independent of the manager). Repopulate
   // whenever the roster size changes so it fills once the data finishes loading.
@@ -9273,14 +9336,15 @@ function renderCsmReport(){
     }
     if(!sel._wired){ sel._wired = true;
       sel.addEventListener('change', e=>{ state.csmReportCsm = e.target.value;
-        // Picking a CSM syncs the Manager dropdown to that CSM's manager.
-        if(e.target.value){ const mg = getManager(e.target.value); if(mg) state.csmReportMgr = mg; }
+        // Picking a CSM syncs the Manager dropdown to that CSM's manager and clears the Pod scope.
+        if(e.target.value){ const mg = getManager(e.target.value); if(mg) state.csmReportMgr = mg; state.csmReportPod = ''; }
         persistState&&persistState(); renderCsmReport(); }); }
     sel.value = state.csmReportCsm || '';
   }
-  // Resolve scope: a specific CSM (string) > a manager's team (array) > whole book.
+  // Resolve scope: a specific CSM (string) > a pod (lead+members) > a manager's team > whole book.
   let scope = null, scopeLabel = null;
   if(state.csmReportCsm){ scope = state.csmReportCsm; }
+  else if(pod){ scope = csmsForPods([pod]); scopeLabel = pod + ' Pod'; }
   else if(mgr){ scope = csmsForManager(mgr); scopeLabel = mgr; }
   const host = document.getElementById('csmr-snapshot');
   if(host){ host.innerHTML = buildCsmPerfHtml(scope, scopeLabel); csmPerfWire(host); }
@@ -9289,8 +9353,8 @@ function renderCsmReport(){
   // Reset button — clears Manager + CSM back to the whole book. Shown only when a filter is active.
   const rb = document.getElementById('csmr-reset');
   if(rb){
-    if(!rb._wired){ rb._wired = true; rb.addEventListener('click', ()=>{ state.csmReportMgr=''; state.csmReportCsm=''; persistState&&persistState(); renderCsmReport(); }); }
-    rb.style.display = (state.csmReportMgr || state.csmReportCsm) ? '' : 'none';
+    if(!rb._wired){ rb._wired = true; rb.addEventListener('click', ()=>{ state.csmReportMgr=''; state.csmReportPod=''; state.csmReportCsm=''; persistState&&persistState(); renderCsmReport(); }); }
+    rb.style.display = (state.csmReportMgr || state.csmReportPod || state.csmReportCsm) ? '' : 'none';
   }
 }
 // Expandable account lists (click a .csmp-link to toggle its sibling list).
@@ -10704,7 +10768,7 @@ document.addEventListener('click', e => {
 // state.filters[key] arrays; getStudio() / getVini() / csmMatches() already
 // treat those arrays as OR-within-dimension membership tests, so the data
 // layer needed no change — only the UI became multi-select.
-const FILTER_KEYS = ['region','segment','manager','csm','acct','agent'];
+const FILTER_KEYS = ['region','segment','manager','pod','csm','acct','agent'];
 
 // Fixed-vocabulary option lists. CSM + Agent are dynamic (filled by
 // setFilterOptions from the live roster).
@@ -10712,21 +10776,29 @@ const MS_STATIC = {
   region:  ['AMER','APAC','EMEA'],
   segment: ['Ent','Mid','SMB','Resellers'],
   manager: ['Rupesh Rawat','Madhav Uppal','Jatin Makkar'],
+  pod:     Object.keys(POD_MAP),   // Ankur · Aman · Ritika · Prabha · Rupesh
   acct:    ['FGD','FSD','ISD','IGD','Others','Partner']
 };
 const MS_DEFAULT_LABEL = {
   region:'All Regions', segment:'All Segments', manager:'All Managers',
-  csm:'All CSMs', acct:'All Types', agent:'All Agents'
+  pod:'All Pods', csm:'All CSMs', acct:'All Types', agent:'All Agents'
 };
 // Live option list per key (so a dropdown can be re-rendered after any state
 // change without re-deriving its vocabulary).
 const msOptions = {
   region: MS_STATIC.region.slice(), segment: MS_STATIC.segment.slice(),
-  manager: MS_STATIC.manager.slice(), acct: MS_STATIC.acct.slice(),
+  manager: MS_STATIC.manager.slice(), pod: MS_STATIC.pod.slice(), acct: MS_STATIC.acct.slice(),
   csm: [], agent: []
 };
 
 function msEsc(v){ return String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+// Pod dropdown option label: "Ankur + Aditya" (lead + teammate first names,
+// de-duped, lead excluded from the tail).
+function podOptLabel(key){
+  const mates=(POD_MAP[key]||[]).map(c=>String(c).split(' ')[0])
+    .filter((n,i,a)=>a.indexOf(n)===i && n!==key);
+  return mates.length ? key+' + '+mates.join(', ') : key;
+}
 // Button caption: default label when empty, the single value when one is
 // picked, "N selected" when several.
 function msCaption(key){
@@ -10754,7 +10826,7 @@ function buildMs(key){
   } else {
     html += opts.map(v => {
       const val = String(v);
-      const text = key === 'csm' ? dispCsm(val) : val;
+      const text = key === 'csm' ? dispCsm(val) : key === 'pod' ? podOptLabel(val) : val;
       const ck = sel.includes(val) ? ' checked' : '';
       return '<label class="ms-opt"><input type="checkbox" value="' + msEsc(val) + '"' + ck + '>'
            +   '<span>' + msEsc(text) + '</span></label>';
@@ -10815,7 +10887,7 @@ document.addEventListener('change', e => {
 });
 
 document.getElementById('f-reset').addEventListener('click', () => {
-  state.filters = { region:[], segment:[], manager:[], csm:[], acct:[], agent:[] };
+  state.filters = { region:[], segment:[], manager:[], pod:[], csm:[], acct:[], agent:[] };
   state.sort = { studioRooftop: null, viniRooftop: null, entList: null, csmSummaryStudio: null, csmSummaryVini: null, csmCombined: null };
   state.rooftopContext = { kind:'all', value:null };
   syncAllFilterSelects();
