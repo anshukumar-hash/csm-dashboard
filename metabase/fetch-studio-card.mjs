@@ -65,13 +65,24 @@ const arrJson = JSON.parse(arrTxt.slice(arrTxt.indexOf('{'), arrTxt.lastIndexOf(
 const cellV = c => c ? c.v : null;
 const ARR_COL = 16;   // col Q — matches SEG_BASE.studio when summed
 const KEEP_STAGE = new Set(['Live', 'Future Churn']);
-const arrByEid = {};
+// Full per-enterprise record (arr + identity) so we can both (a) supply ARR to
+// card rooftops and (b) add Live/Future-Churn accounts that card 12114 is
+// MISSING as their own rows (else those live accounts vanish from the view).
+const arrByEid = {}, arrRecByEid = {};
 for (const r of (arrJson.table.rows || []).slice(1)) {   // row 0 = header
   const c = r.c || [];
   if (S(cellV(c[2])).trim().toLowerCase() !== 'studio') continue;
-  if (!KEEP_STAGE.has(S(cellV(c[3])).trim())) continue;
+  const stage = S(cellV(c[3])).trim();
+  if (!KEEP_STAGE.has(stage)) continue;
   const eid = S(cellV(c[0])).trim(); if (!eid) continue;
-  arrByEid[eid] = num(c[ARR_COL] ? (c[ARR_COL].v ?? c[ARR_COL].f) : 0);
+  const arr = num(c[ARR_COL] ? (c[ARR_COL].v ?? c[ARR_COL].f) : 0);
+  arrByEid[eid] = arr;
+  arrRecByEid[eid] = {
+    eid, arr, stage,
+    cust: S(cellV(c[1])).trim(),
+    ct: S(cellV(c[6])).trim(), cst: S(cellV(c[7])).trim(),
+    seg: S(cellV(c[8])).trim(), csm: S(cellV(c[9])).trim(), region: S(cellV(c[12])).trim(),
+  };
 }
 console.error(`ARR sheet: ${Object.keys(arrByEid).length} Studio Live/Future-Churn enterprises.`);
 
@@ -100,6 +111,26 @@ const rows = card.map(r => {
     carr: num(r.contracted_arr),
   };
 }).filter(r => r.rid);
+
+// Union: Live/Future-Churn accounts present in the ARR sheet but MISSING from
+// card 12114 (billing-only rooftops the usage registry doesn't have). Add each
+// as its own row keyed by eid so no live account disappears from the view. They
+// carry ARR/MRR but no VINs/CARR (card has none for them).
+const cardEidSet = new Set(card.map(r => S(r.enterprise_id).trim()));
+let added = 0;
+for (const eid of Object.keys(arrRecByEid)) {
+  if (cardEidSet.has(eid)) continue;
+  const a = arrRecByEid[eid];
+  rows.push({
+    rid: eid, rn: a.cust, en: a.cust, eid,
+    ct: a.ct, cst: a.cst, seg: a.seg, csm: a.csm || 'Unassigned CSM', region: a.region,
+    ws: 0, ws_link: '', pen: 0,
+    u_jan: 0, u_feb: 0, u_mar: 0, u_apr: 0, u_may: 0, u_jun: 0, u_mtd: 0,
+    arr: Math.round(a.arr * 100) / 100, mrr: Math.round(a.arr / 12 * 100) / 100, carr: 0,
+  });
+  totArr += a.arr; added++;
+}
+console.error(`Added ${added} ARR-sheet Live/Future-Churn accounts missing from card 12114.`);
 
 const out = {
   rows,

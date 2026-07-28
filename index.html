@@ -5786,7 +5786,9 @@ function renderRooftop() {
       rows = rows.filter(r => {
         const rn = String(r[S_COL.rn] || '').toLowerCase();
         const en = String(r[S_COL.en] || '').toLowerCase();
-        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
+        const eid = String(r[S_COL.eid] || '').toLowerCase();
+        const rid = String(r[S_COL.rid] || '').toLowerCase();
+        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0 || eid.indexOf(q) >= 0 || rid.indexOf(q) >= 0;
       });
     }
     // Click-to-sort: state.sort.studioRooftop = {key, dir} drives ordering when
@@ -6031,7 +6033,9 @@ function renderRooftop() {
       rows = rows.filter(r => {
         const rn = String(r.rn || '').toLowerCase();
         const en = String(r.en || '').toLowerCase();
-        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0;
+        const eid = String(r.eid || '').toLowerCase();
+        const rid = String(r.rid || '').toLowerCase();
+        return rn.indexOf(q) >= 0 || en.indexOf(q) >= 0 || eid.indexOf(q) >= 0 || rid.indexOf(q) >= 0;
       });
     }
     // The scorecards must see ALL stages in scope so Churned ARR isn't zeroed
