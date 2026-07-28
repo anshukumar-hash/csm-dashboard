@@ -1622,32 +1622,67 @@ function csvDownload(text, base) {
 // WEIGHTAGE INPUTS, so a Red account's drivers are visible. Studio weights =
 // usage/payment/ticket/comm; Vini weights = RoI + comm (the non-weight cells are
 // left blank per product). Basis/identity columns first, then the weight metrics.
+// Prescriptive "what would make this rooftop Green" action, derived from the
+// same weightage inputs shown in the CSV. Prioritises the hard Red-floor drivers
+// (Studio ≤10 VINs; Vini RoI-Amber-with-no-comms), then each Amber/Red signal.
+function rooftopActionItem(kind, d) {
+  if (d.overall === 'Green') return 'Healthy — maintain cadence; watch for any signal slipping to Amber.';
+  const a = [];
+  if (kind === 'Studio') {
+    if (d.lastMo <= 10) a.push('Usage critical — only ' + d.lastMo + ' VINs last completed month; re-onboard the team and drive daily uploads above 10/mo to clear the Red floor.');
+    else if (d.usage === 'Red') a.push('Usage declining (' + d.trend + ', ' + d.lastMo + ' VINs last mo) — reverse the drop with an enablement push / QBR.');
+    else if (d.usage === 'Amber') a.push('Usage flat (' + d.lastMo + ' VINs) — grow uploads to turn Green.');
+    if (d.payRag === 'Red') a.push('Payment Red — ' + d.overdue + ' invoices overdue; escalate collections / align on billing.');
+    else if (d.payRag === 'Amber') a.push('Clear the ' + d.overdue + ' overdue invoice(s).');
+    if (d.tixRag === 'Red') a.push('Tickets Red — ' + d.open + ' open/SLA-breached; drive resolution.');
+    else if (d.tixRag === 'Amber') a.push('Work down the ' + d.open + ' open ticket(s).');
+    if (d.comm === 'NA') a.push('No communication logged — book a check-in and capture CSAT.');
+    else if (d.comm === 'Red') a.push('Communication Red — low CSAT; schedule a recovery conversation.');
+    else if (d.comm === 'Amber') a.push('Lift CSAT — deepen the relationship.');
+  } else {
+    const roi = d.roi != null ? Number(d.roi).toFixed(2) + 'x' : '—';
+    if (d.roiRag === 'Red') a.push('RoI Red (' + roi + ') — grow appointment volume/quality so value covers MRR (target ≥3x).');
+    else if (d.roiRag === 'Amber') a.push('RoI Amber (' + roi + ') — push appointments toward the 3x Green line.');
+    if (d.comm === 'NA') a.push('No communication logged — establish a regular cadence and capture CSAT' + (d.roiRag === 'Amber' ? ' (RoI-Amber + no comms is what holds this at Red).' : '.'));
+    else if (d.comm === 'Red') a.push('Communication Red — low CSAT; schedule a recovery conversation.');
+    else if (d.comm === 'Amber') a.push('Lift CSAT.');
+  }
+  return a.length ? a.join(' ') : 'Mixed signals — review the account.';
+}
 function downloadAllRooftopsCsv() {
   const q = v => { const s = (v == null ? '' : String(v)); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const ovCnt = arr => arr.filter(x => String(x || '').toLowerCase() === 'overdue').length;
   const H = ['Product','Rooftop ID','Rooftop','Enterprise','Enterprise ID','CSM','Segment','Agent Type','Stage','Overall RAG',
-    'Usage RAG','Usage (VINs · trend)','Payment RAG','Payment (overdue)','Ticket RAG','Ticket (open)','Comm RAG','RoI RAG','RoI (factor)'];
+    'Usage RAG','Usage (VINs · trend)','Payment RAG','Payment (overdue)','Ticket RAG','Ticket (open)','Comm RAG','RoI RAG','RoI (factor)','Action item as per claude'];
   const rows = [H];
   (D.s_rows || []).forEach(r => {
     const eid = r[S_COL.eid] || '', en = r[S_COL.en] || '';
     const churned = String(r[S_COL.churn] || '').toLowerCase().includes('churn');
     const trend = usageTrend(rowUsageSeries(r));
     const tix = aggregateTicketsForEids([eid || en], STUDIO_TIX);
+    const lastMo = Number(r[S_COL.u_jun]) || 0;
+    const overall = studioRooftopOverallRag(r);
+    const usageRag = usageTrendRag(trend), payRag = r[S_COL.prag] || 'NA';
+    const overdue = ovCnt([r[S_COL.t1], r[S_COL.t2], r[S_COL.t3]]);
+    const tixRag = computeTicketRAG(tix), comm = csatRagInRange(eid, en) || 'NA';
     rows.push(['Studio', r[S_COL.rid] || '', r[S_COL.rn] || '', en, eid, r[S_COL.csm] || '', r[S_COL.seg] || '', '', churned ? 'Churned' : 'Live',
-      studioRooftopOverallRag(r),
-      usageTrendRag(trend), (Number(r[S_COL.u_jun]) || 0) + ' · ' + trend,
-      r[S_COL.prag] || 'NA', ovCnt([r[S_COL.t1], r[S_COL.t2], r[S_COL.t3]]),
-      computeTicketRAG(tix), (tix.op || 0),
-      csatRagInRange(eid, en) || 'NA',
-      '', '']);
+      overall,
+      usageRag, lastMo + ' · ' + trend,
+      payRag, overdue,
+      tixRag, (tix.op || 0),
+      comm,
+      '', '',
+      rooftopActionItem('Studio', { overall, usage: usageRag, trend, lastMo, payRag, overdue, tixRag, open: (tix.op || 0), comm })]);
   });
   (typeof viniAggregateRooftops === 'function' ? viniAggregateRooftops() : []).forEach(r => {
-    const commRag = scoreRag(csatRagCountsForInRange(r.eid, r.en), COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS);
+    const commRag = scoreRag(csatRagCountsForInRange(r.eid, r.en), COMM_GREEN_THRESH, COMM_AMBER_THRESH, COMM_WEIGHTS) || 'NA';
+    const overall = viniRowRag(r), roiRag = roiMtdRag(r.roi_mtd);
     rows.push(['Vini', r.rid || '', r.rn || '', r.en || '', r.eid || '', r.csm || '', r.seg || '', r.agent || '', r.stage || 'Live',
-      viniRowRag(r),
+      overall,
       '', '', '', '', '', '',
-      commRag || 'NA',
-      roiMtdRag(r.roi_mtd), (r.roi_mtd != null ? Number(r.roi_mtd).toFixed(2) + 'x' : '')]);
+      commRag,
+      roiRag, (r.roi_mtd != null ? Number(r.roi_mtd).toFixed(2) + 'x' : ''),
+      rooftopActionItem('Vini', { overall, roiRag, roi: r.roi_mtd, comm: commRag })]);
   });
   csvDownload(rows.map(row => row.map(q).join(',')).join('\n'), 'csm_rooftops_studio_vini');
 }
@@ -3546,6 +3581,10 @@ function favIconLink(wsLink){
 // Status counts so every surface agrees on the same per-rooftop verdict.
 // Usage signal is now the Usage Trend (per user spec); comm stays CSAT-derived.
 function studioRooftopOverallRag(r, tixRagMemo) {
+  // Hard override (user spec 2026-07): a Studio rooftop with ≤10 VINs in the last
+  // completed month (June actual, u_jun) is critically low usage → the WHOLE
+  // rooftop is Red, regardless of trend or the other signals.
+  if ((Number(r[S_COL.u_jun]) || 0) <= 10) return 'Red';
   const usage  = usageTrendRag(usageTrend(rowUsageSeries(r)));
   const ticket = tixRagMemo != null
     ? tixRagMemo
@@ -3707,8 +3746,13 @@ function roiMtdRag(roiMtd) {
 // `roiMtd` is the numeric MTD-prorated RoI factor; `commRag` is a pre-computed
 // G/A/R/NA string.
 function viniOverallRag(roiMtd, commRag) {
+  const roiRag = roiMtdRag(roiMtd);
+  // Override (user spec 2026-07): RoI Amber with NO communication signal → Red.
+  // A merely-OK RoI backed by zero comms is a red flag, not amber. (All-NA still
+  // returns NA below — see [[vini-na-rag-stays-na]].)
+  if (roiRag === 'Amber' && (commRag == null || commRag === 'NA')) return 'Red';
   const W = { roi: 7, comm: 3 };
-  const parts = { roi: roiMtdRag(roiMtd), comm: commRag };
+  const parts = { roi: roiRag, comm: commRag };
   let sum = 0, wu = 0;
   for (const k in W) { const v = _ragValue(parts[k]); if (v == null) continue; sum += v * W[k]; wu += W[k]; }
   if (!wu) return 'NA';
