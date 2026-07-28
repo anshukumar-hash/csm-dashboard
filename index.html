@@ -301,6 +301,35 @@
   .ret-tbl td.cell{font-weight:700;border-radius:8px;min-width:44px}
   .ret-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--text-2)}
   .ret-legend i{display:inline-block;width:22px;height:12px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  /* Cohort Retention Explorer (heatmap + account drill-down) */
+  .rex-heat{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
+  .rex-heat th{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);font-weight:700;padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)}
+  .rex-heat th.r,.rex-heat td.r{text-align:right}
+  .rex-heat td{padding:6px 8px;text-align:center;font-variant-numeric:tabular-nums;border-radius:3px;color:var(--text)}
+  .rex-heat td.coh{font-weight:600;text-align:left}
+  .rex-heat tbody tr{cursor:pointer;transition:outline .1s}
+  .rex-heat tbody tr:hover td{filter:brightness(.96)}
+  .rex-heat tbody tr.sel td{outline:2px solid var(--blue,#4F46E5);outline-offset:-2px}
+  .rex-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:11px;color:var(--text-3)}
+  .rex-dot{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+  .rex-chips{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 14px}
+  .rex-chip{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:8px 12px;min-width:112px}
+  .rex-chip .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:700}
+  .rex-chip .v{font-size:17px;font-weight:800;margin-top:2px;color:var(--text)}
+  .rex-chip.pos .v{color:#0E7C5A} .rex-chip.neg .v{color:#C2410C} .rex-chip.brand .v{color:var(--blue,#4F46E5)}
+  .rex-acct{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap}
+  .rex-acct th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700;padding:7px 9px;text-align:left;border-bottom:1px solid var(--border)}
+  .rex-acct th.r,.rex-acct td.r{text-align:right;font-variant-numeric:tabular-nums}
+  .rex-acct td{padding:7px 9px}
+  .rex-acct tbody tr:nth-child(even){background:var(--bg)}
+  .rex-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+  .rex-b-churn{background:rgba(194,65,12,.14);color:#9A3412} .rex-b-contract{background:rgba(253,186,116,.28);color:#9A3412}
+  .rex-b-flat{background:rgba(148,163,184,.20);color:#475569} .rex-b-expand{background:rgba(14,124,90,.16);color:#0E7C5A}
+  .ret-seg.rex-multi button:not(.active){text-decoration:line-through;opacity:.55}
+  .ret-seg.rex-multi button.active.s-churn{background:rgba(194,65,12,.16);color:#9A3412}
+  .ret-seg.rex-multi button.active.s-contract{background:rgba(253,186,116,.4);color:#9A3412}
+  .ret-seg.rex-multi button.active.s-flat{background:rgba(148,163,184,.28);color:#475569}
+  .ret-seg.rex-multi button.active.s-expand{background:rgba(14,124,90,.18);color:#0E7C5A}
   .ret-tbl tr.tot td{font-weight:800;border-top:2px solid var(--border)}
   .ret-tri td.empty{background:transparent!important;border:none}
   .ret-cut{flex-wrap:wrap;max-width:none}
@@ -9175,81 +9204,102 @@ const MEETING_SEGMENTS = [
 // contraction only (≤100%); NRR includes expansion (can exceed 100%).
 // Product-level (Studio / Vini) is pending — shown as "coming soon" until the
 // product feed lands, in the same grid.
-const RETENTION_DATA = {
-  month: '2026-06', monthLabel: "Jun'26",       // cohorts project forward from here
-  segments: ['Grand Total', 'Ent', 'Mid', 'Reseller', 'SMB'],  // cuts WITH data
-  products: ['Studio', 'Vini'],                 // product-level data coming soon
-  grr: { Ent: 96.67, Mid: 96.94, Reseller: 96.31, SMB: 93.93, 'Grand Total': 96.36 },
-  nrr: { Ent: 99.34, Mid: 97.85, Reseller: 105.38, SMB: 96.14, 'Grand Total': 100.09 },
-};
-const RET_MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function retCohortLabel(baseYM, k){            // baseYM '2026-06', k months forward
-  const [y,m] = baseYM.split('-').map(Number); const idx = y*12 + (m-1) + k;
-  return RET_MON3[idx%12] + "'" + String(Math.floor(idx/12)).slice(2);
-}
-// Colour band for a projected retention %. [bg, fg]. ≥100 handles NRR expansion.
-function retBand(v){
-  if (v==null) return ['transparent','var(--text-4)'];
-  if (v>=100) return ['#A7F3D0','#065F46'];
-  if (v>=97)  return ['#D1FAE5','#065F46'];
-  if (v>=90)  return ['#E7F6EC','#166534'];
-  if (v>=82)  return ['#FBE7D6','#92400E'];
-  if (v>=72)  return ['#F6D9C8','#9A3412'];
-  if (v>=60)  return ['#F1C9AE','#B45309'];
-  return ['#EFB4A8','#991B1B'];
+// Cohort retention explorer — per-account monthly ARR snapshots fetched from the
+// cohort sheet (metabase/fetch-cohort.mjs → cohort_data.json). Accounts grouped
+// by first active month; GRR caps each account at its start (expansion excluded,
+// ≤100%), NRR counts current (can exceed 100%). Values are ANNUAL ARR (shown as-is).
+let _cohortData = null, _cohortLoading = false;
+let _rexProduct = 'All', _rexMetric = 'GRR', _rexSel = null;
+const _rexStatus = { Churned:true, Contracted:true, Flat:true, Expanded:true };
+function rexNormP(p){ p=String(p||'').toLowerCase(); return p.indexOf('vin')===0?'Vini':(p.indexOf('stud')===0?'Studio':(p||'Studio')); }
+function rexMoney(v){ v=Math.round(v); const a=Math.abs(v); return a>=1e6?'$'+(v/1e6).toFixed(2)+'M':(a>=1e3?'$'+Math.round(v/1e3)+'K':'$'+v); }
+function rexHeatG(v){ if(v>=97)return'rgba(14,124,90,0.20)'; if(v>=90)return'rgba(14,124,90,0.09)'; if(v>=82)return'rgba(183,138,46,0.16)'; if(v>=72)return'rgba(194,65,12,0.18)'; if(v>=60)return'rgba(194,65,12,0.28)'; return'rgba(194,65,12,0.40)'; }
+function rexHeatN(v){ if(v>=120)return'rgba(14,124,90,0.30)'; if(v>=110)return'rgba(14,124,90,0.20)'; if(v>=103)return'rgba(14,124,90,0.10)'; if(v>=97)return'rgba(148,163,184,0.12)'; if(v>=90)return'rgba(183,138,46,0.16)'; if(v>=82)return'rgba(194,65,12,0.16)'; if(v>=72)return'rgba(194,65,12,0.26)'; return'rgba(194,65,12,0.38)'; }
+// Aggregate recs → per-account {name,prods,s,first} for the active product filter.
+function rexAggregate(){
+  const D=_cohortData, M=(D.months||[]).length, map={};
+  (D.recs||[]).forEach(r=>{ const p=rexNormP(r.p); if(_rexProduct!=='All' && p!==_rexProduct) return;
+    const key=r.eid||r.n; if(!map[key]) map[key]={name:r.n, prods:{}, s:new Array(M).fill(0)};
+    map[key].prods[p]=1; for(let k=0;k<M;k++) map[key].s[k]+=(Number(r.s[k])||0); });
+  const out=[]; Object.keys(map).forEach(k=>{ const o=map[k]; const first=o.s.findIndex(v=>v>0); if(first<0) return;
+    o.first=first; o.prods=Object.keys(o.prods).join('+'); out.push(o); }); return out;
 }
 function renderRetention(){
   const host = document.getElementById('ret-host'); if(!host) return;
-  const RD = RETENTION_DATA;
-  const metric = (state.retMetric==='nrr') ? 'nrr' : 'grr';
-  const allCuts = RD.segments.concat(RD.products);
-  const cut = allCuts.includes(state.retCut) ? state.retCut : 'Grand Total';
-  const isProduct = RD.products.includes(cut);
-  const HORIZON = 12;   // 12-month forward window → cohorts Jun'26 … Jun'27
-  // Toggle / filter buttons
-  const mBtn = (v,l)=>'<button class="'+(metric===v?'active':'')+'" data-ret="'+v+'">'+l+'</button>';
-  const cBtn = (v)=>'<button class="'+(cut===v?'active':'')+(RD.products.includes(v)?' soon':'')+'" data-retcut="'+cEsc(v)+'">'+cEsc(v)+'</button>';
-  const cutPills = RD.segments.map(cBtn).join('') + '<span class="ret-div"></span>' + RD.products.map(cBtn).join('');
-  const legend = [['≥100%','#A7F3D0'],['≥97%','#D1FAE5'],['90–96%','#E7F6EC'],['82–89%','#FBE7D6'],['72–81%','#F6D9C8'],['60–71%','#F1C9AE'],['<60%','#EFB4A8']]
-    .map(([t,c])=>'<span><i style="background:'+c+'"></i>'+t+'</span>').join('');
-  const mname = metric==='nrr' ? 'Net revenue retention (NRR)' : 'Gross revenue retention (GRR)';
-  // Body: triangle for a segment cut, or a "coming soon" note for a product cut.
-  let cardBody;
-  if(isProduct){
-    cardBody = '<div class="ret-empty">Product-level '+(metric==='nrr'?'NRR':'GRR')+' for <b>'+cEsc(cut)+'</b> is coming soon — it will render in this same triangle once the product feed lands.</div>';
-  } else {
-    const rate = (RD[metric][cut]||0)/100;
-    const head = ['<th class="l">Cohort start</th>'];
-    for(let j=0;j<=HORIZON;j++) head.push('<th>M'+j+'</th>');
-    let rows = '';
-    for(let k=0;k<=HORIZON;k++){           // k = cohort offset from Jun'26 (row)
-      const cells = [];
-      for(let j=0;j<=HORIZON;j++){         // j = months since that cohort's start (col)
-        if(k+j>HORIZON){ cells.push('<td class="empty"></td>'); continue; }
-        const v = Math.pow(rate,j)*100; const [bg,fg] = retBand(v);
-        cells.push('<td class="cell" style="background:'+bg+';color:'+fg+'">'+v.toFixed(0)+'%</td>');
-      }
-      rows += '<tr><td class="l nm">'+retCohortLabel(RD.month,k)+'</td>'+cells.join('')+'</tr>';
+  if(!_cohortData){
+    host.innerHTML='<div class="ret-head"><h2>Retention Explorer</h2><div class="sub">Loading cohort data…</div></div>';
+    if(!_cohortLoading){ _cohortLoading=true;
+      fetch('cohort_data.json',{cache:'no-store'}).then(r=>r.ok?r.json():null)
+        .then(j=>{ _cohortData=j||{months:[],recs:[]}; _cohortLoading=false; if(state.view==='retention') renderRetention(); })
+        .catch(()=>{ _cohortData={months:[],recs:[]}; _cohortLoading=false; if(state.view==='retention') renderRetention(); });
     }
-    cardBody = '<div class="ret-tbl-wrap"><table class="ret-tbl ret-tri"><thead><tr>'+head.join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'
-      + '<div class="ret-legend">'+legend+'</div>';
+    return;
   }
+  const D=_cohortData, MONTHS=D.months||[], M=MONTHS.length;
+  if(!M || !(D.recs||[]).length){ host.innerHTML='<div class="ret-head"><h2>Retention Explorer</h2><div class="sub">Cohort data unavailable — check the cohort feed.</div></div>'; return; }
+  const metric=_rexMetric, logos=rexAggregate();
+  const firstIdxs=[]; for(let c=0;c<M;c++){ if(logos.some(o=>o.first===c)) firstIdxs.push(c); }
+  const minF=firstIdxs.length?firstIdxs[0]:0, maxOff=M-1-minF;
+  const heat=(metric==='GRR')?rexHeatG:rexHeatN;
+  let th='<tr><th>Cohort start</th><th class="r">Logos</th><th class="r">Start ARR</th>';
+  for(let o=0;o<=maxOff;o++) th+='<th class="r">M'+o+'</th>'; th+='</tr>';
+  let body='';
+  firstIdxs.forEach(c=>{ const mem=logos.filter(o=>o.first===c); const start=mem.reduce((a,o)=>a+o.s[c],0);
+    body+='<tr class="rex-row'+(_rexSel===c?' sel':'')+'" data-c="'+c+'"><td class="coh">'+cEsc(MONTHS[c])+'</td><td class="r">'+mem.length+'</td><td class="r">'+rexMoney(start*12)+'</td>';
+    for(let o=0;o<=maxOff;o++){ if(c+o<M){ const acc=mem.reduce((a,ob)=>a+(metric==='GRR'?Math.min(ob.s[c+o],ob.s[c]):ob.s[c+o]),0); const v=start>0?Math.round(acc/start*100):0; body+='<td style="background:'+heat(v)+'">'+v+'%</td>'; } else body+='<td></td>'; }
+    body+='</tr>'; });
+  const lg=(metric==='GRR')
+    ? [['≥97%','rgba(14,124,90,0.20)'],['90–96%','rgba(14,124,90,0.09)'],['82–89%','rgba(183,138,46,0.16)'],['72–81%','rgba(194,65,12,0.18)'],['60–71%','rgba(194,65,12,0.28)'],['<60%','rgba(194,65,12,0.40)']]
+    : [['≥110%','rgba(14,124,90,0.20)'],['103–109%','rgba(14,124,90,0.10)'],['97–102%','rgba(148,163,184,0.12)'],['90–96%','rgba(183,138,46,0.16)'],['82–89%','rgba(194,65,12,0.16)'],['<82%','rgba(194,65,12,0.26)']];
+  const legend=lg.map(x=>'<span class="rex-lg"><span class="rex-dot" style="background:'+x[1]+'"></span>'+x[0]+'</span>').join('');
+  const pBtn=(v)=>'<button class="'+(_rexProduct===v?'active':'')+'" data-rexprod="'+v+'">'+v+'</button>';
+  const mBtn=(v,l)=>'<button class="'+(_rexMetric===v?'active':'')+'" data-rexmetric="'+v+'">'+l+'</button>';
+  if(_rexSel!=null && !firstIdxs.includes(_rexSel)) _rexSel=null;
+  const detail=(_rexSel!=null)
+    ? rexDetailHtml(logos, _rexSel, MONTHS, M)
+    : '<div class="ret-card"><div class="ret-head"><h2 style="font-size:15px">Accounts in cohort</h2><div class="sub">Click a cohort row above to list its accounts and how each moved to '+cEsc(MONTHS[M-1])+'.</div></div></div>';
   host.innerHTML =
-    '<div class="ret-head"><h2>Retention Explorer</h2>'
-    + '<div class="sub">'+mname+' cohort triangle, projected forward from the '+RD.monthLabel+' monthly run-rate. Each row is a cohort start month (Jun\x2726 → Jun\x2727); M0 = 100%, each later month = previous × the monthly rate, all ending at the 12-month horizon. '
-    + (metric==='nrr' ? 'NRR includes expansion (can exceed 100%).' : 'GRR = churn + contraction only, capped at 100%.')
-    + ' Source: leadership retention sheet. Pick a Segment or Product below to change the data.</div></div>'
-    + '<div class="ret-toggle-bar"><span class="lbl">Metric</span><div class="ret-seg">'+mBtn('grr','GRR (gross)')+mBtn('nrr','NRR (net)')+'</div>'
-    + '<span class="lbl" style="margin-left:8px">Segment / Product</span><div class="ret-seg ret-cut">'+cutPills+'</div></div>'
-    + '<div class="ret-card">'+cardBody+'</div>';
-  if(!host._retWired){ host._retWired = true;
+    '<div class="ret-head"><h2>Retention Explorer</h2><div class="sub">'
+    + (metric==='GRR'?'Gross':'Net')+' revenue retention by cohort — accounts grouped by first active month ('+cEsc(MONTHS[0])+'–'+cEsc(MONTHS[M-1])+'). '
+    + (metric==='GRR'?'Churn + contraction only; expansion excluded, caps at 100%.':'Includes expansion; can exceed 100%.')
+    + ' Click a cohort row to drill into its accounts. Source: cohort sheet (dollar-based off each cohort’s start-month ARR).</div></div>'
+    + '<div class="ret-toggle-bar"><span class="lbl">Product</span><div class="ret-seg">'+pBtn('All')+pBtn('Studio')+pBtn('Vini')+'</div>'
+    + '<span class="lbl" style="margin-left:8px">Metric</span><div class="ret-seg">'+mBtn('GRR','GRR (gross)')+mBtn('NRR','NRR (net)')+'</div></div>'
+    + '<div class="ret-card"><div class="ret-tbl-wrap"><table class="rex-heat"><thead>'+th+'</thead><tbody>'+body+'</tbody></table></div><div class="rex-legend">'+legend+'</div></div>'
+    + detail;
+  if(!host._rexWired){ host._rexWired=true;
     host.addEventListener('click', e=>{
-      const m = e.target.closest && e.target.closest('[data-ret]');
-      if(m && host.contains(m)){ state.retMetric = m.getAttribute('data-ret'); persistState&&persistState(); renderRetention(); return; }
-      const c = e.target.closest && e.target.closest('[data-retcut]');
-      if(c && host.contains(c)){ state.retCut = c.getAttribute('data-retcut'); persistState&&persistState(); renderRetention(); }
+      const p=e.target.closest&&e.target.closest('[data-rexprod]'); if(p&&host.contains(p)){ _rexProduct=p.getAttribute('data-rexprod'); _rexSel=null; renderRetention(); return; }
+      const m=e.target.closest&&e.target.closest('[data-rexmetric]'); if(m&&host.contains(m)){ _rexMetric=m.getAttribute('data-rexmetric'); renderRetention(); return; }
+      const s=e.target.closest&&e.target.closest('[data-rexstatus]'); if(s&&host.contains(s)){ const v=s.getAttribute('data-rexstatus'); _rexStatus[v]=!_rexStatus[v]; renderRetention(); return; }
+      const row=e.target.closest&&e.target.closest('.rex-row'); if(row&&host.contains(row)){ _rexSel=parseInt(row.getAttribute('data-c'),10); renderRetention(); }
     });
   }
+}
+// Account drill-down for a selected cohort — chips + status filter + table.
+function rexDetailHtml(logos, c, MONTHS, M){
+  const mem=logos.filter(o=>o.first===c);
+  const start=mem.reduce((a,o)=>a+o.s[c],0), curSum=mem.reduce((a,o)=>a+o.s[M-1],0);
+  const grr=mem.reduce((a,o)=>a+Math.min(o.s[M-1],o.s[c]),0);
+  let churn=0,contr=0,exp=0,nch=0,nco=0,nex=0,nfl=0;
+  mem.forEach(o=>{ const s=o.s[c],cur=o.s[M-1]; if(cur<=0){churn+=s;nch++;} else if(cur<s){contr+=(s-cur);nco++;} else if(cur>s){exp+=(cur-s);nex++;} else nfl++; });
+  const lastM=cEsc(MONTHS[M-1]);
+  const chips=[['Accounts',mem.length,''],['Start ARR',rexMoney(start*12),'brand'],[lastM+' ARR',rexMoney(curSum*12),''],
+    ['GRR',(start>0?Math.round(grr/start*100):0)+'%','pos'],['NRR',(start>0?Math.round(curSum/start*100):0)+'%','pos'],
+    ['Churned',nch+' · −'+rexMoney(churn*12),'neg'],['Contraction',nco+' · −'+rexMoney(contr*12),'neg'],['Expanded',nex+' · +'+rexMoney(exp*12),'pos']];
+  const chipsHtml=chips.map(x=>'<div class="rex-chip '+x[2]+'"><div class="k">'+cEsc(x[0])+'</div><div class="v">'+cEsc(String(x[1]))+'</div></div>').join('');
+  const stOf=o=>{ const s=o.s[c],cu=o.s[M-1]; return cu<=0?'Churned':cu<s?'Contracted':cu>s?'Expanded':'Flat'; };
+  const shown=mem.filter(o=>_rexStatus[stOf(o)]).sort((a,b)=>Math.abs(b.s[M-1]-b.s[c])-Math.abs(a.s[M-1]-a.s[c]));
+  const sBtn=(v,l,cls)=>'<button class="'+(_rexStatus[v]?('active '+cls):'')+'" data-rexstatus="'+v+'">'+l+'</button>';
+  const rows=shown.map(o=>{ const s=o.s[c],cur=o.s[M-1],d=cur-s,ret=s>0?Math.round(cur/s*100):0;
+    let st,cls; if(cur<=0){st='Churned';cls='rex-b-churn';} else if(cur<s){st='Contraction';cls='rex-b-contract';} else if(cur>s){st='Expanded';cls='rex-b-expand';} else {st='Flat';cls='rex-b-flat';}
+    let im='—'; if(st!=='Flat'){ const dir=(cur<s)?-1:1; let best=0; for(let k=c+1;k<M;k++){ const chg=(o.s[k]-o.s[k-1])*dir; if(chg>best){best=chg;im=MONTHS[k];} } }
+    const dstr=(d>0?'+':d<0?'−':'')+rexMoney(Math.abs(d)*12); const dcol=d<0?'#C2410C':d>0?'#0E7C5A':'var(--text-3)';
+    return '<tr><td>'+cEsc(o.name)+'</td><td><span class="rex-badge '+cls+'">'+st+'</span></td><td>'+cEsc(o.prods)+'</td><td>'+cEsc(im)+'</td><td class="r">'+rexMoney(s*12)+'</td><td class="r">'+rexMoney(cur*12)+'</td><td class="r" style="color:'+dcol+'">'+dstr+'</td><td class="r">'+ret+'%</td></tr>'; }).join('');
+  return '<div class="ret-card"><div class="ret-head"><h2 style="font-size:15px">'+cEsc(MONTHS[c])+' cohort — '+mem.length+' account'+(mem.length===1?'':'s')+(shown.length!==mem.length?' · showing '+shown.length:'')+' · movement to '+lastM+'</h2></div>'
+    + '<div class="rex-chips">'+chipsHtml+'</div>'
+    + '<div class="ret-toggle-bar"><span class="lbl">Show</span><div class="ret-seg rex-multi">'+sBtn('Churned','Churned','s-churn')+sBtn('Contracted','Contraction','s-contract')+sBtn('Flat','Flat','s-flat')+sBtn('Expanded','Expanded','s-expand')+'</div></div>'
+    + '<div class="ret-tbl-wrap"><table class="rex-acct"><thead><tr><th>Customer</th><th>Status</th><th>Product</th><th>Month of impact</th><th class="r">Start ARR</th><th class="r">'+lastM+' ARR</th><th class="r">Δ ARR</th><th class="r">Retention</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 // New-addition this month for a segment. Split by product (studio/vini) + reseller
 // exists in the embedded data; a pure Ent vs Mid+SMB split does NOT, so those

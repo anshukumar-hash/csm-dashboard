@@ -1,0 +1,55 @@
+name: Fetch Cohort retention data
+
+# Builds cohort_data.json for the Retention Explorer's cohort view from the
+# cohort sheet (per-account monthly ARR snapshots). Public sheet via gviz — no
+# secret needed. Commits the repo-root + vercel_deploy copies (the dashboard
+# fetches ./cohort_data.json at runtime).
+
+on:
+  schedule:
+    - cron: '37 4 * * *'
+    - cron: '37 16 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: cohort-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch cohort sheet → cohort_data.json
+        working-directory: metabase
+        run: |
+          if node fetch-cohort.mjs; then
+            echo "Cohort fetch OK"
+          else
+            echo "::warning::Cohort fetch failed — keeping the last-good cohort_data.json."
+          fi
+
+      - name: Commit cohort_data.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          FILES="cohort_data.json vercel_deploy/cohort_data.json"
+          if [[ -n "$(git status --porcelain $FILES)" ]]; then
+            git add $FILES
+            git commit -m "Update cohort_data.json (Retention Explorer cohorts) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+          else
+            echo "cohort_data.json unchanged — no commit"
+          fi
