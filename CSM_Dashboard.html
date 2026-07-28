@@ -302,9 +302,12 @@
   .ret-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--text-2)}
   .ret-legend i{display:inline-block;width:22px;height:12px;border-radius:3px;margin-right:5px;vertical-align:middle}
   .ret-tbl tr.tot td{font-weight:800;border-top:2px solid var(--border)}
-  .ret-tbl tr.ret-sep td{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);padding:12px 8px 4px;text-align:left}
-  .ret-tbl tr.ret-pending td.nm{color:var(--text-3)}
-  .ret-tbl td.soon{text-align:left;color:var(--text-4);font-style:italic;font-weight:600}
+  .ret-tri td.empty{background:transparent!important;border:none}
+  .ret-cut{flex-wrap:wrap;max-width:none}
+  .ret-cut .ret-div{width:1px;align-self:stretch;background:var(--border);margin:2px 4px}
+  .ret-seg button.soon{opacity:.6;font-style:italic}
+  .ret-seg button.soon::after{content:" · soon";font-size:9px;font-weight:600}
+  .ret-empty{padding:34px 20px;text-align:center;color:var(--text-3);font-size:13px}
   /* Multi-select checkbox dropdowns (Churn Month / CSM / Pod) */
   .ca-ms{position:relative}
   .ca-ms-btn{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);cursor:pointer;min-width:150px}
@@ -2137,7 +2140,7 @@ let state = {
   csmReportMgr:'', csmReportPod:'',  // RAG Intelligence Manager / Pod scope ('' = all)
   csmReportCsm:'',           // selected CSM in the CSM Report tab ('' = all)
   retMetric:'grr',           // Retention Explorer metric toggle (grr | nrr)
-  retMonth:'2026-06',        // Retention Explorer base month (projection run-rate source)
+  retCut:'Grand Total',      // Retention Explorer segment/product filter
   churnSearch:'',            // case-insensitive company filter on churn tables
   ca: { mon:[], csm:[], pod:[], seg:[], prod:[] },  // Churn Intelligence filters — all multi-select arrays
   caTab: 'v1',                              // Churn Intelligence subtab (v1 | v2)
@@ -9169,20 +9172,17 @@ const MEETING_SEGMENTS = [
 // Product-level (Studio / Vini) is pending — shown as "coming soon" until the
 // product feed lands, in the same grid.
 const RETENTION_DATA = {
-  monthsOrder: ['2026-06', '2026-05'],
-  label:  { '2026-06': "Jun'26", '2026-05': "May'26" },
-  segments: ['Ent', 'Mid', 'Reseller', 'SMB'],
-  totalKey: 'Grand Total',
-  products: ['Studio', 'Vini'],          // product-level data coming soon
-  grr: {
-    '2026-06': { Ent: 96.67, Mid: 96.94, Reseller: 96.31, SMB: 93.93, 'Grand Total': 96.36 },
-    '2026-05': { Ent: 95.79, Mid: 99.37, Reseller: 92.93, SMB: 96.70, 'Grand Total': 95.34 },
-  },
-  nrr: {
-    '2026-06': { Ent: 99.34, Mid: 97.85, Reseller: 105.38, SMB: 96.14, 'Grand Total': 100.09 },
-    '2026-05': { Ent: 104.80, Mid: 99.39, Reseller: 96.11, SMB: 97.56, 'Grand Total': 101.31 },
-  },
+  month: '2026-06', monthLabel: "Jun'26",       // cohorts project forward from here
+  segments: ['Grand Total', 'Ent', 'Mid', 'Reseller', 'SMB'],  // cuts WITH data
+  products: ['Studio', 'Vini'],                 // product-level data coming soon
+  grr: { Ent: 96.67, Mid: 96.94, Reseller: 96.31, SMB: 93.93, 'Grand Total': 96.36 },
+  nrr: { Ent: 99.34, Mid: 97.85, Reseller: 105.38, SMB: 96.14, 'Grand Total': 100.09 },
 };
+const RET_MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function retCohortLabel(baseYM, k){            // baseYM '2026-06', k months forward
+  const [y,m] = baseYM.split('-').map(Number); const idx = y*12 + (m-1) + k;
+  return RET_MON3[idx%12] + "'" + String(Math.floor(idx/12)).slice(2);
+}
 // Colour band for a projected retention %. [bg, fg]. ≥100 handles NRR expansion.
 function retBand(v){
   if (v==null) return ['transparent','var(--text-4)'];
@@ -9198,46 +9198,52 @@ function renderRetention(){
   const host = document.getElementById('ret-host'); if(!host) return;
   const RD = RETENTION_DATA;
   const metric = (state.retMetric==='nrr') ? 'nrr' : 'grr';
-  const month  = RD.monthsOrder.includes(state.retMonth) ? state.retMonth : RD.monthsOrder[0];
-  const data = RD[metric][month] || {};
-  const MONTHS = 12;
-  const head = ['<th class="l">Customer Segment</th>','<th>'+RD.label[month]+' monthly</th>'];
-  for(let k=0;k<=MONTHS;k++) head.push('<th>M'+k+'</th>');
-  // A data row: monthly % → M0..M12 projection (rate^k). isTot = bold Grand Total.
-  const dataRow = (name, pct, isTot) => {
-    const r = pct/100, cells = [];
-    for(let k=0;k<=MONTHS;k++){ const v = Math.pow(r,k)*100; const [bg,fg] = retBand(v);
-      cells.push('<td class="cell" style="background:'+bg+';color:'+fg+'">'+v.toFixed(0)+'%</td>'); }
-    return '<tr class="'+(isTot?'tot':'')+'"><td class="l nm">'+cEsc(name)+'</td><td class="base">'+pct.toFixed(2)+'%</td>'+cells.join('')+'</tr>';
-  };
-  const pendingRow = name =>
-    '<tr class="ret-pending"><td class="l nm">'+cEsc(name)+'</td><td class="base">—</td>'
-    + '<td class="soon" colspan="'+(MONTHS+1)+'">Product-level data coming soon</td></tr>';
-  let body = '';
-  RD.segments.forEach(s => { if (data[s]!=null) body += dataRow(s, data[s], false); });
-  if (data[RD.totalKey]!=null) body += dataRow(RD.totalKey, data[RD.totalKey], true);
-  body += '<tr class="ret-sep"><td class="l" colspan="'+(MONTHS+3)+'">Product level</td></tr>';
-  RD.products.forEach(p => body += pendingRow(p));
-  const seg  = (v,l)=>'<button class="'+(metric===v?'active':'')+'" data-ret="'+v+'">'+l+'</button>';
-  const mSeg = (v,l)=>'<button class="'+(month===v?'active':'')+'" data-retmon="'+v+'">'+l+'</button>';
+  const allCuts = RD.segments.concat(RD.products);
+  const cut = allCuts.includes(state.retCut) ? state.retCut : 'Grand Total';
+  const isProduct = RD.products.includes(cut);
+  const HORIZON = 12;   // 12-month forward window → cohorts Jun'26 … Jun'27
+  // Toggle / filter buttons
+  const mBtn = (v,l)=>'<button class="'+(metric===v?'active':'')+'" data-ret="'+v+'">'+l+'</button>';
+  const cBtn = (v)=>'<button class="'+(cut===v?'active':'')+(RD.products.includes(v)?' soon':'')+'" data-retcut="'+cEsc(v)+'">'+cEsc(v)+'</button>';
+  const cutPills = RD.segments.map(cBtn).join('') + '<span class="ret-div"></span>' + RD.products.map(cBtn).join('');
   const legend = [['≥100%','#A7F3D0'],['≥97%','#D1FAE5'],['90–96%','#E7F6EC'],['82–89%','#FBE7D6'],['72–81%','#F6D9C8'],['60–71%','#F1C9AE'],['<60%','#EFB4A8']]
     .map(([t,c])=>'<span><i style="background:'+c+'"></i>'+t+'</span>').join('');
   const mname = metric==='nrr' ? 'Net revenue retention (NRR)' : 'Gross revenue retention (GRR)';
+  // Body: triangle for a segment cut, or a "coming soon" note for a product cut.
+  let cardBody;
+  if(isProduct){
+    cardBody = '<div class="ret-empty">Product-level '+(metric==='nrr'?'NRR':'GRR')+' for <b>'+cEsc(cut)+'</b> is coming soon — it will render in this same triangle once the product feed lands.</div>';
+  } else {
+    const rate = (RD[metric][cut]||0)/100;
+    const head = ['<th class="l">Cohort start</th>'];
+    for(let j=0;j<=HORIZON;j++) head.push('<th>M'+j+'</th>');
+    let rows = '';
+    for(let k=0;k<=HORIZON;k++){           // k = cohort offset from Jun'26 (row)
+      const cells = [];
+      for(let j=0;j<=HORIZON;j++){         // j = months since that cohort's start (col)
+        if(k+j>HORIZON){ cells.push('<td class="empty"></td>'); continue; }
+        const v = Math.pow(rate,j)*100; const [bg,fg] = retBand(v);
+        cells.push('<td class="cell" style="background:'+bg+';color:'+fg+'">'+v.toFixed(0)+'%</td>');
+      }
+      rows += '<tr><td class="l nm">'+retCohortLabel(RD.month,k)+'</td>'+cells.join('')+'</tr>';
+    }
+    cardBody = '<div class="ret-tbl-wrap"><table class="ret-tbl ret-tri"><thead><tr>'+head.join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      + '<div class="ret-legend">'+legend+'</div>';
+  }
   host.innerHTML =
     '<div class="ret-head"><h2>Retention Explorer</h2>'
-    + '<div class="sub">'+mname+' by customer segment, projected 12 months from the '+RD.label[month]+' monthly run-rate — M0 = 100%, each month = the previous × the monthly retention rate; M12 = the annualised value. '
-    + (metric==='nrr' ? 'NRR includes expansion, so it can exceed 100%.' : 'GRR is churn + contraction only (expansion excluded), capped at 100%.')
-    + ' Source: leadership retention sheet. Product-level (Studio / Vini) will plug into the same grid once its feed lands.</div></div>'
-    + '<div class="ret-toggle-bar"><span class="lbl">Metric</span><div class="ret-seg">'+seg('grr','GRR (gross)')+seg('nrr','NRR (net)')+'</div>'
-    + '<span class="lbl" style="margin-left:8px">Base month</span><div class="ret-seg">'+mSeg('2026-06',"Jun'26")+mSeg('2026-05',"May'26")+'</div></div>'
-    + '<div class="ret-card"><div class="ret-tbl-wrap"><table class="ret-tbl"><thead><tr>'+head.join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>'
-    + '<div class="ret-legend">'+legend+'</div></div>';
+    + '<div class="sub">'+mname+' cohort triangle, projected forward from the '+RD.monthLabel+' monthly run-rate. Each row is a cohort start month (Jun\x2726 → Jun\x2727); M0 = 100%, each later month = previous × the monthly rate, all ending at the 12-month horizon. '
+    + (metric==='nrr' ? 'NRR includes expansion (can exceed 100%).' : 'GRR = churn + contraction only, capped at 100%.')
+    + ' Source: leadership retention sheet. Pick a Segment or Product below to change the data.</div></div>'
+    + '<div class="ret-toggle-bar"><span class="lbl">Metric</span><div class="ret-seg">'+mBtn('grr','GRR (gross)')+mBtn('nrr','NRR (net)')+'</div>'
+    + '<span class="lbl" style="margin-left:8px">Segment / Product</span><div class="ret-seg ret-cut">'+cutPills+'</div></div>'
+    + '<div class="ret-card">'+cardBody+'</div>';
   if(!host._retWired){ host._retWired = true;
     host.addEventListener('click', e=>{
       const m = e.target.closest && e.target.closest('[data-ret]');
       if(m && host.contains(m)){ state.retMetric = m.getAttribute('data-ret'); persistState&&persistState(); renderRetention(); return; }
-      const mo = e.target.closest && e.target.closest('[data-retmon]');
-      if(mo && host.contains(mo)){ state.retMonth = mo.getAttribute('data-retmon'); persistState&&persistState(); renderRetention(); }
+      const c = e.target.closest && e.target.closest('[data-retcut]');
+      if(c && host.contains(c)){ state.retCut = c.getAttribute('data-retcut'); persistState&&persistState(); renderRetention(); }
     });
   }
 }
