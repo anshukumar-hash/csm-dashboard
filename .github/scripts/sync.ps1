@@ -250,7 +250,18 @@ if ($apiTix.Count -lt 100) {
     throw "Ticket API returned $($apiTix.Count) rows after retries (<100) — looks broken. Aborting to avoid wiping ticket data."
 }
 Write-Host "  tickets API: $($apiTix.Count) tickets from $ticketsApiUrl"
-$studioTab      = Fetch-Gviz $urls.studio     1000   # studio rooftops ~1400 typical
+# Studio rooftops now come from Metabase card 12114 + the ARR sheet (gid
+# 1341638818), pre-built into studio_card.json by the "Fetch Studio rooftops"
+# workflow (metabase/fetch-studio-card.mjs). The old Google Sheet gid=603796861
+# is empty. On a missing/short feed the downstream <100-row guard preserves the
+# last-good embedded Studio data.
+$studioCard = $null
+$studioCardPath = "$repoRoot/studio_card.json"
+if (Test-Path $studioCardPath) {
+    try { $studioCard = (Get-Content $studioCardPath -Raw | ConvertFrom-Json) } catch { Write-Host "  studio_card.json parse failed: $_" }
+}
+$studioCardRows = if ($studioCard -and $studioCard.rows) { @($studioCard.rows) } else { @() }
+Write-Host "  studio_card.json: $($studioCardRows.Count) rooftops (Metabase card 12114 + ARR sheet)"
 $payPeriodsTab  = Fetch-Gviz $urls.payperiods 3000   # payment-periods ~6500 typical
 
 # CSAT now comes from the published Google Sheet CSV (gid=179502765, see
@@ -515,15 +526,9 @@ try {
 # from Studio so Vini can backfill its segment when its own value is missing
 # or generic — surfaces the Resellers segment on the Vini tab.
 $studioSegByEid = @{}
-foreach ($row in $studioTab.rows) {
-    if (-not $row) { continue }
-    $c = $row.c
-    if ($c.Count -le 6) { continue }
-    $eid = ([string](Gviz-Val $c[0])).Trim()
-    if (-not $eid) { continue }
-    $seg = ([string](Gviz-Val $c[6])).Trim()
-    if (-not $seg) { continue }
-    if ($seg -eq 'Customer Segment') { continue }   # stray header row in source
+foreach ($row in $studioCardRows) {
+    $eid = ([string]$row.eid).Trim(); if (-not $eid) { continue }
+    $seg = ([string]$row.seg).Trim(); if (-not $seg) { continue }
     # First-write wins; Studio is consistent within an enterprise.
     if (-not $studioSegByEid.ContainsKey($eid)) { $studioSegByEid[$eid] = $seg }
 }
@@ -885,21 +890,15 @@ foreach ($s in $viniStage) {
     }
 }
 
-# Build STUDIO master from the Studio gviz tab directly (the full $sRows build
-# happens further down, but for the ticket join we only need eid + name).
-$sColsForMaster = $studioTab.cols
-$siMaster = @{
-    eid = Find-Col $sColsForMaster @('Enterprise ID')
-    en  = Find-Col $sColsForMaster @('Enterrpise Name','Enterprise Name')
-}
+# Build STUDIO master from studio_card.json (the full $sRows build happens
+# further down; for the ticket join we only need eid + name).
 $studioEidSet = New-Object System.Collections.Generic.HashSet[string]
 $studioNameToEid = @{}
-foreach ($row in $studioTab.rows) {
-    $c = $row.c; if (-not $c) { continue }
-    $eid = [string](Gviz-Val $c[$siMaster.eid])
+foreach ($row in $studioCardRows) {
+    $eid = [string]$row.eid
     if (-not $eid) { continue }
     [void]$studioEidSet.Add($eid)
-    $nKey = NormName ([string](Gviz-Val $c[$siMaster.en]))
+    $nKey = NormName ([string]$row.en)
     if ($nKey -and -not $studioNameToEid.ContainsKey($nKey)) {
         $studioNameToEid[$nKey] = $eid
     }
@@ -1032,66 +1031,9 @@ $sStudioSchema = @(
     'red','mbr','cf','csm','ct','cst','seg','region','eid','carr'
 )
 
-# Map new-sheet col labels → field name
-$sCols = $studioTab.cols
-$si = @{
-    eid     = Find-Col $sCols @('Enterprise ID')
-    en      = Find-Col $sCols @('Enterrpise Name','Enterprise Name')
-    rid     = Find-Col $sCols @('Rooftop ID')
-    rn      = Find-Col $sCols @('Rooftop Name')
-    ct      = Find-Col $sCols @('account_type')
-    cst     = Find-Col $sCols @('account_subtype')
-    seg     = Find-Col $sCols @('Customer Segment')
-    csm     = Find-Col $sCols @('CSM Name')
-    region  = Find-Col $sCols @('Region')
-    ws      = Find-Col $sCols @('Quality Website Score','Website Score')
-    ws_link = Find-Col $sCols @('Website Link')
-    pen     = Find-Col $sCols @('Pendency (6 hrs)','Pendency')
-    # Monthly usage VINs — sheet cols M-R (gid=603796861). Header text carries
-    # an apostrophe ("Jan'26"); match defensively then fall back to position.
-    u_jan   = Find-Col $sCols @("Usage Jan'26","Usage Jan26","Jan'26","Jan26")
-    u_feb   = Find-Col $sCols @("Feb'26","Feb26")
-    u_mar   = Find-Col $sCols @("Mar'26","Mar26")
-    u_apr   = Find-Col $sCols @("Apr'26","Apr26")
-    u_may   = Find-Col $sCols @("May'26","May26")
-    u_jun   = Find-Col $sCols @("Jun'26","Jun26")
-    u_mtd   = Find-Col $sCols @('mtd_vins','MTD VINs','MTD Vins','MTD')
-    arr     = Find-Col $sCols @('ARR')
-    carr    = Find-Col $sCols @('CARR','C-ARR','Contracted ARR')
-    t1      = Find-Col $sCols @('Payment T1','T1')
-    t2      = Find-Col $sCols @('T2')
-    t3      = Find-Col $sCols @('T3')
-    prag    = Find-Col $sCols @('Payment RAG')
-    unr     = Find-Col $sCols @('Tickets #Unresolved','#Unresolved')
-    cr      = Find-Col $sCols @('#Created','Tickets #Created')
-    ota     = Find-Col $sCols @('Open Ticket Ageing (Hrs)','Open Ticket Ageing','Open Ageing (Hrs)')
-    res     = Find-Col $sCols @('Avg Resolution hrs','Avg Resolution')
-    trag    = Find-Col $sCols @('Ticket RAG')
-    red     = Find-Col $sCols @('Communication RAG Status','Communication RAG')
-    mbr     = Find-Col $sCols @('Leadership Connect MBR','MBR')
-    cf      = Find-Col $sCols @('Contact Freq')
-}
-# Positional fallbacks for the monthly usage block (M=12 … R=17, 0-based) in
-# case the apostrophe'd header text doesn't match exactly.
-if ($si.u_jan -lt 0) { $si.u_jan = 12 }
-if ($si.u_feb -lt 0) { $si.u_feb = 13 }
-if ($si.u_mar -lt 0) { $si.u_mar = 14 }
-if ($si.u_apr -lt 0) { $si.u_apr = 15 }
-if ($si.u_may -lt 0) { $si.u_may = 16 }
-if ($si.u_jun -lt 0) { $si.u_jun = 17 }   # column R = Jun'26 (added when June closed)
-if ($si.u_mtd -lt 0) { $si.u_mtd = 18 }   # column S = MTD Vins (shifted right by the new Jun'26 col)
-
-# Resolution time column is `[h]:mm:ss` formatted — extract from the
-# Gviz cell.f (display string) rather than .v (broken Date encoding).
-function Gviz-Hrs($cell) {
-    if (-not $cell) { return '' }
-    $f = [string]$cell.f
-    if (-not $f) { return '' }
-    if ($f -match '^(\d+):(\d+):(\d+)') {
-        return ([double]$matches[1] + [double]$matches[2]/60.0 + [double]$matches[3]/3600.0)
-    }
-    return ''
-}
+# Studio rows are read from studio_card.json (see $studioCardRows above) — the
+# Metabase-card-12114 + ARR-sheet feed replaces the old gid=603796861 columns,
+# so the sheet-column mapping / positional fallbacks are gone.
 
 # Manual segment overrides for Studio — keyed by Enterprise ID. Use when the
 # sheet's Customer Segment column is wrong/missing for a specific enterprise
@@ -1103,40 +1045,39 @@ $studioManualSeg = @{
 
 $sRows = New-Object System.Collections.Generic.List[object]
 $idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
-foreach ($row in $studioTab.rows) {
-    $c = $row.c; if (-not $c) { continue }
-    $rid = [string](Gviz-Val $c[$si.rid])
+foreach ($row in $studioCardRows) {
+    $rid = [string]$row.rid
     if (-not $rid) { continue }
 
-    # ARR comes from the new sheet column S. MRR is derived: ARR / 12.
-    $arrRaw = if ($si.arr -ge 0) { Gviz-Val $c[$si.arr] } else { 0 }
-    $arrNum = 0.0
-    try { $arrNum = [double]$arrRaw } catch { $arrNum = 0.0 }
-    $mrrNum = if ($arrNum -gt 0) { $arrNum / 12.0 } else { 0.0 }
+    # ARR + MRR (= ARR/12) are pre-computed per rooftop in studio_card.json:
+    # each enterprise's ARR (ARR sheet, Studio + Live/Future-Churn) split equally
+    # across its card-12114 rooftops.
+    $arrNum = 0.0; try { $arrNum = [double]$row.arr } catch { $arrNum = 0.0 }
+    $mrrNum = 0.0; try { $mrrNum = [double]$row.mrr } catch { $mrrNum = 0.0 }
+    if ($mrrNum -le 0 -and $arrNum -gt 0) { $mrrNum = $arrNum / 12.0 }
 
     $r = New-Object object[] $sStudioSchema.Count
 
     $r[$idx['rid']]     = $rid
-    $r[$idx['rn']]      = [string](Gviz-Val $c[$si.rn])
-    $r[$idx['en']]      = [string](Gviz-Val $c[$si.en])
+    $r[$idx['rn']]      = [string]$row.rn
+    $r[$idx['en']]      = [string]$row.en
     $r[$idx['mrr']]     = $mrrNum
     $r[$idx['arr']]     = $arrNum
-    # Monthly usage VINs (sheet cols M-R). Numeric per rooftop. The dashboard
+    # Monthly usage VINs (card 12114 Jan'26…Jun'26 + mtd_vins). The dashboard
     # sums these across a group and derives the Usage Trend at render time.
-    $r[$idx['u_jan']]   = Gviz-Val $c[$si.u_jan]
-    $r[$idx['u_feb']]   = Gviz-Val $c[$si.u_feb]
-    $r[$idx['u_mar']]   = Gviz-Val $c[$si.u_mar]
-    $r[$idx['u_apr']]   = Gviz-Val $c[$si.u_apr]
-    $r[$idx['u_may']]   = Gviz-Val $c[$si.u_may]
-    $r[$idx['u_jun']]   = Gviz-Val $c[$si.u_jun]
-    $r[$idx['u_mtd']]   = Gviz-Val $c[$si.u_mtd]
-    $r[$idx['pen']]     = Gviz-Val $c[$si.pen]
-    $r[$idx['ws']]      = Gviz-Val $c[$si.ws]
-    $r[$idx['ws_link']] = if ($si.ws_link -ge 0) { [string](Gviz-Val $c[$si.ws_link]) } else { '' }
-    # T-1 / T-2 / T-3 sourced from gid=1395015507 dense-rank by enterprise_id
-    # (NOT the sheet's Payment T1/T2/T3 columns). Rank 2/3/4 customer_status →
-    # t1/t2/t3. Payment RAG is recomputed worst-wins from the resulting statuses.
-    $eidStr  = [string](Gviz-Val $c[$si.eid])
+    $r[$idx['u_jan']]   = $row.u_jan
+    $r[$idx['u_feb']]   = $row.u_feb
+    $r[$idx['u_mar']]   = $row.u_mar
+    $r[$idx['u_apr']]   = $row.u_apr
+    $r[$idx['u_may']]   = $row.u_may
+    $r[$idx['u_jun']]   = $row.u_jun
+    $r[$idx['u_mtd']]   = $row.u_mtd
+    $r[$idx['pen']]     = $row.pen
+    $r[$idx['ws']]      = $row.ws
+    $r[$idx['ws_link']] = [string]$row.ws_link
+    # T-1 / T-2 / T-3 sourced from gid=1395015507 dense-rank by enterprise_id.
+    # Rank 2/3/4 customer_status → t1/t2/t3; Payment RAG recomputed worst-wins.
+    $eidStr  = [string]$row.eid
     $eidNorm = $eidStr.Trim().ToLower()
     $pr = $null
     if ($payRanks.ContainsKey($eidStr))      { $pr = $payRanks[$eidStr] }
@@ -1147,48 +1088,36 @@ foreach ($row in $studioTab.rows) {
         $r[$idx['t3']]   = [string]$pr.t3
         $r[$idx['prag']] = Compute-PaymentRag $pr.t1 $pr.t2 $pr.t3
     } else {
-        $r[$idx['t1']]   = ''
-        $r[$idx['t2']]   = ''
-        $r[$idx['t3']]   = ''
-        $r[$idx['prag']] = ''
+        $r[$idx['t1']]   = ''; $r[$idx['t2']] = ''; $r[$idx['t3']] = ''; $r[$idx['prag']] = ''
     }
-    $r[$idx['unr']]     = Gviz-Val $c[$si.unr]
-    $r[$idx['cr']]      = Gviz-Val $c[$si.cr]
-    $r[$idx['ota']]     = Gviz-Val $c[$si.ota]
-    # Avg Resolution: parse the formatted h:mm:ss string from `f`
-    $r[$idx['res']]     = if ($si.res -ge 0) { Gviz-Hrs $c[$si.res] } else { '' }
-    $r[$idx['trag']]    = [string](Gviz-Val $c[$si.trag])
-    $r[$idx['red']]     = [string](Gviz-Val $c[$si.red])
-    $r[$idx['mbr']]     = [string](Gviz-Val $c[$si.mbr])
-    $r[$idx['cf']]      = [string](Gviz-Val $c[$si.cf])
+    # Tickets + Comm RAG + MBR are NOT in card 12114 — the dashboard computes
+    # tickets from Ticket_Dump (STUDIO_TIX) and comm from CSAT at render time,
+    # so these legacy columns are left blank.
+    $r[$idx['unr']]='';  $r[$idx['cr']]='';  $r[$idx['ota']]='';  $r[$idx['res']]=''
+    $r[$idx['trag']]=''; $r[$idx['red']]=''; $r[$idx['mbr']]='';  $r[$idx['cf']]=''
 
-    $csmRaw = [string](Gviz-Val $c[$si.csm])
+    $csmRaw = [string]$row.csm
     if ([string]::IsNullOrWhiteSpace($csmRaw) -or $csmRaw.Trim().ToLower() -in 'csm not assigned','not assigned','unassigned','na','tbd') {
         $csmRaw = 'Unassigned CSM'
     }
     $r[$idx['csm']]     = $csmRaw
-    $r[$idx['ct']]      = [string](Gviz-Val $c[$si.ct])
-    $r[$idx['cst']]     = [string](Gviz-Val $c[$si.cst])
-    # Read eid first so we can apply the manual segment override below.
-    $eidForRow = [string](Gviz-Val $c[$si.eid])
-    $segValue  = [string](Gviz-Val $c[$si.seg])
+    $r[$idx['ct']]      = [string]$row.ct
+    $r[$idx['cst']]     = [string]$row.cst
+    $eidForRow = $eidStr
+    $segValue  = [string]$row.seg
     if ($eidForRow -and $studioManualSeg.ContainsKey($eidForRow)) {
         $segValue = $studioManualSeg[$eidForRow]
     }
     $r[$idx['seg']]     = $segValue
-    $r[$idx['region']]  = [string](Gviz-Val $c[$si.region])
-    # eid: needed so payment-bucket aggregates can dedup per enterprise.
+    $r[$idx['region']]  = [string]$row.region
     $r[$idx['eid']]     = $eidForRow
-    # CARR (Contracted ARR) — new sheet column, used by the CSM-Performance
-    # "Usage · Studio" 0-usage insight to quantify the ARR at risk per rooftop.
-    $carrRaw = if ($si.carr -ge 0) { Gviz-Val $c[$si.carr] } else { 0 }
-    $carrNum = 0.0
-    try { $carrNum = [double]$carrRaw } catch { $carrNum = 0.0 }
+    # CARR (Contracted ARR) — card 12114 contracted_arr per rooftop.
+    $carrNum = 0.0; try { $carrNum = [double]$row.carr } catch { $carrNum = 0.0 }
     $r[$idx['carr']]    = $carrNum
 
     $sRows.Add($r)
 }
-Write-Host "  Studio: built $($sRows.Count) s_rows (MRR computed as ARR/12)"
+Write-Host "  Studio: built $($sRows.Count) s_rows from studio_card.json (MRR = ARR/12)"
 
 # Guard: never overwrite Studio data with an empty/near-empty fetch. gviz can
 # hand back an empty table even after Fetch-Gviz's retries (seen 2026-06-22),
@@ -1196,7 +1125,7 @@ Write-Host "  Studio: built $($sRows.Count) s_rows (MRR computed as ARR/12)"
 # tab. Abort the whole sync instead — the existing snapshot is preserved, the
 # next 15-min run retries, and a sustained failure shows up red in Actions.
 if ($sRows.Count -lt 100) {
-    throw "Studio s_rows came back as $($sRows.Count) (expected ~1400). Aborting sync to avoid wiping Studio data — the gid=603796861 gviz fetch returned empty/partial."
+    throw "Studio s_rows came back as $($sRows.Count) (expected ~1600). Aborting sync to avoid wiping Studio data — studio_card.json (Metabase card 12114 feed) was missing/empty. Run the 'Fetch Studio rooftops' workflow first."
 }
 
 # --- Manual JSON build (avoid PowerShell serializer quirks) ---

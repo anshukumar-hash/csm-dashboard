@@ -1,0 +1,67 @@
+name: Fetch Studio rooftops from Metabase
+
+# Builds studio_card.json (Studio rooftop universe + VINs + CARR from Metabase
+# card 12114, ARR from sheet gid=1341638818 split per rooftop). sync.ps1 reads
+# this file to build s_rows — it replaces the empty Google Sheet gid=603796861.
+# studio_card.json is an intermediate build artifact (NOT served to the browser),
+# so we commit only the repo-root copy; the next "Sync dashboard" run embeds it.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+    - cron: '17 9 * * *'
+    - cron: '17 15 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: studio-card
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      METABASE_API_KEY:   ${{ secrets.METABASE_API_KEY }}
+      METABASE_BASE_URL:  ${{ secrets.METABASE_BASE_URL }}
+      METABASE_STUDIO_CARD: ${{ secrets.METABASE_STUDIO_CARD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Guard — require the Metabase API key
+        run: |
+          if [ -z "${METABASE_API_KEY}" ]; then
+            echo "::error::METABASE_API_KEY not set. Add it under Settings → Secrets and variables → Actions (same key as .env.local)."
+            exit 1
+          fi
+
+      - name: Fetch card 12114 + ARR sheet → studio_card.json
+        working-directory: metabase
+        run: |
+          if node fetch-studio-card.mjs; then
+            echo "Studio card fetch OK"
+          else
+            echo "::warning::Studio card fetch failed — keeping the last-good studio_card.json."
+          fi
+
+      - name: Commit studio_card.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain studio_card.json)" ]]; then
+            git add studio_card.json
+            git commit -m "Update studio_card.json (Studio rooftops from Metabase 12114 + ARR sheet) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+          else
+            echo "studio_card.json unchanged — no commit"
+          fi
