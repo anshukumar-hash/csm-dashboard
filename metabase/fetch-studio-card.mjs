@@ -68,13 +68,21 @@ const KEEP_STAGE = new Set(['Live', 'Future Churn']);
 // Full per-enterprise record (arr + identity) so we can both (a) supply ARR to
 // card rooftops and (b) add Live/Future-Churn accounts that card 12114 is
 // MISSING as their own rows (else those live accounts vanish from the view).
-const arrByEid = {}, arrRecByEid = {};
+const arrByEid = {}, arrRecByEid = {}, prodByEid = {};
 for (const r of (arrJson.table.rows || []).slice(1)) {   // row 0 = header
   const c = r.c || [];
-  if (S(cellV(c[2])).trim().toLowerCase() !== 'studio') continue;
+  const eid = S(cellV(c[0])).trim(); if (!eid) continue;
+  // Product CLASSIFICATION across ALL rows/stages (authoritative product for the
+  // enterprise). Combos like "Studio+Vini" set both flags. Used to drop rooftops
+  // that card 12114 wrongly lists but are actually Vini-only accounts.
+  const pl = S(cellV(c[2])).toLowerCase();
+  const cls = prodByEid[eid] || (prodByEid[eid] = { studio: false, vini: false });
+  if (pl.includes('stud')) cls.studio = true;
+  if (pl.includes('vin')) cls.vini = true;
+  // Studio ARR (Live/Future-Churn) — powers arr/mrr + the union of missing accts.
+  if (!pl.includes('stud')) continue;
   const stage = S(cellV(c[3])).trim();
   if (!KEEP_STAGE.has(stage)) continue;
-  const eid = S(cellV(c[0])).trim(); if (!eid) continue;
   const arr = num(c[ARR_COL] ? (c[ARR_COL].v ?? c[ARR_COL].f) : 0);
   arrByEid[eid] = arr;
   arrRecByEid[eid] = {
@@ -84,15 +92,22 @@ for (const r of (arrJson.table.rows || []).slice(1)) {   // row 0 = header
     seg: S(cellV(c[8])).trim(), csm: S(cellV(c[9])).trim(), region: S(cellV(c[12])).trim(),
   };
 }
+// eids the ARR sheet marks Vini-only (Vini, no Studio) → NOT Studio rooftops.
+const isViniOnly = eid => { const p = prodByEid[eid]; return !!(p && p.vini && !p.studio); };
 console.error(`ARR sheet: ${Object.keys(arrByEid).length} Studio Live/Future-Churn enterprises.`);
 
-// ---- 3. rooftop count per enterprise (from card) → equal ARR split ----
+// ---- 3. drop card rooftops that are Vini-only per the ARR sheet (card 12114
+// wrongly lists some Vini accounts as Studio rooftops), then count rooftops per
+// enterprise for the equal ARR split ----
+let dropped = 0;
+const cardStudio = card.filter(r => { if (isViniOnly(S(r.enterprise_id).trim())) { dropped++; return false; } return true; });
+console.error(`Dropped ${dropped} Vini-only rooftops that card 12114 mislabelled as Studio.`);
 const rcByEid = {};
-card.forEach(r => { const e = S(r.enterprise_id).trim(); rcByEid[e] = (rcByEid[e] || 0) + 1; });
+cardStudio.forEach(r => { const e = S(r.enterprise_id).trim(); rcByEid[e] = (rcByEid[e] || 0) + 1; });
 
 // ---- 4. build rows (identity/usage/carr from card; arr/mrr split from sheet) ----
 let matched = 0, totArr = 0;
-const rows = card.map(r => {
+const rows = cardStudio.map(r => {
   const eid = S(r.enterprise_id).trim();
   const entArr = arrByEid[eid];
   const arr = (entArr != null) ? entArr / (rcByEid[eid] || 1) : 0;
@@ -116,7 +131,7 @@ const rows = card.map(r => {
 // card 12114 (billing-only rooftops the usage registry doesn't have). Add each
 // as its own row keyed by eid so no live account disappears from the view. They
 // carry ARR/MRR but no VINs/CARR (card has none for them).
-const cardEidSet = new Set(card.map(r => S(r.enterprise_id).trim()));
+const cardEidSet = new Set(cardStudio.map(r => S(r.enterprise_id).trim()));
 let added = 0;
 for (const eid of Object.keys(arrRecByEid)) {
   if (cardEidSet.has(eid)) continue;
