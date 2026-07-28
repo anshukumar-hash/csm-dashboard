@@ -31,17 +31,24 @@ const QUESTION = Number(process.env.METABASE_COMM_QUESTION || 358);
 // instead (preferred once the embedding secret is rotated).
 const COMM_TOKEN_DEFAULT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZXNvdXJjZSI6eyJxdWVzdGlvbiI6MzU4fSwicGFyYW1zIjp7fSwiZXhwIjoxODQ3MzUxODAyLCJpYXQiOjE3ODQyNzk4MDF9.th8bDn6aoYRzVonZD7S8kutohgCKIzTOMOXrRNNSigw';
 
-// ---- 1) obtain the embed JWT: mint from SECRET if present, else use the token ----
+// ---- 1) obtain the embed JWT ----
+// PREFER the pre-signed read-only token (env METABASE_COMM_TOKEN or the embedded
+// long-lived default) — it's known-valid. Only mint from a signing SECRET when
+// NO pre-signed token is available. (The old embedding secret in CI is stale and
+// mints tokens Metabase rejects with 400 "corrupt or manipulated", so we do not
+// let its mere presence override a working token.)
 const b64url = buf => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const PRESIGNED = (process.env.METABASE_COMM_TOKEN || COMM_TOKEN_DEFAULT || '').trim();
 let token;
-if (SECRET) {
+if (PRESIGNED) {
+  token = PRESIGNED;
+} else if (SECRET) {
   const now = Math.floor(Date.now() / 1000);
   const signingInput = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' })) + '.'
     + b64url(JSON.stringify({ resource: { question: QUESTION }, params: {}, iat: now, exp: now + 600, _embedding_params: {} }));
   token = signingInput + '.' + b64url(crypto.createHmac('sha256', SECRET).update(signingInput).digest());
 } else {
-  token = (process.env.METABASE_COMM_TOKEN || COMM_TOKEN_DEFAULT).trim();
-  if (!token) { console.error('ERROR: no METABASE_SECRET_KEY to mint and no METABASE_COMM_TOKEN / embedded token.'); process.exit(1); }
+  console.error('ERROR: no METABASE_COMM_TOKEN / embedded token and no METABASE_SECRET_KEY to mint.'); process.exit(1);
 }
 
 // ---- 2) query the embed endpoint (/query/json → array of row OBJECTS; unlike
