@@ -282,6 +282,25 @@
   .ca-pill{font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg);color:var(--text-2);cursor:pointer;font-weight:600;line-height:1.2;white-space:nowrap}
   .ca-pill:hover{border-color:var(--blue,#2563EB);color:var(--text)}
   .ca-pill.active{background:var(--blue,#2563EB);border-color:var(--blue,#2563EB);color:#fff}
+  /* Retention Explorer */
+  .ret-head h2{margin:0;font-size:17px;font-weight:800;color:var(--text)}
+  .ret-head .sub{font-size:12px;color:var(--text-3);line-height:1.5;max-width:920px;margin-top:4px}
+  .ret-toggle-bar{display:flex;align-items:center;gap:10px;margin:14px 0 16px}
+  .ret-toggle-bar .lbl{font-size:10.5px;font-weight:700;letter-spacing:.5px;color:var(--text-3);text-transform:uppercase}
+  .ret-seg{display:inline-flex;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:3px;gap:2px}
+  .ret-seg button{border:0;background:transparent;padding:6px 16px;border-radius:8px;font-size:12.5px;font-weight:700;color:var(--text-2);cursor:pointer}
+  .ret-seg button.active{background:var(--blue,#4F46E5);color:#fff}
+  .ret-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px}
+  .ret-tbl-wrap{overflow-x:auto;margin-top:4px}
+  .ret-tbl{border-collapse:separate;border-spacing:3px;font-size:12px;white-space:nowrap}
+  .ret-tbl th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);padding:6px 8px;text-align:center}
+  .ret-tbl th.l,.ret-tbl td.l{text-align:left}
+  .ret-tbl td{padding:8px 10px;text-align:center;font-variant-numeric:tabular-nums}
+  .ret-tbl td.nm{font-weight:700;color:var(--text)}
+  .ret-tbl td.base{color:var(--text-2);font-weight:600}
+  .ret-tbl td.cell{font-weight:700;border-radius:8px;min-width:44px}
+  .ret-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--text-2)}
+  .ret-legend i{display:inline-block;width:22px;height:12px;border-radius:3px;margin-right:5px;vertical-align:middle}
   /* Multi-select checkbox dropdowns (Churn Month / CSM / Pod) */
   .ca-ms{position:relative}
   .ca-ms-btn{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);cursor:pointer;min-width:150px}
@@ -1192,6 +1211,7 @@
     <button class="top-tab" data-view="churn">Signal Intelligence</button>
     <button class="top-tab" data-view="churnanalysis">Churn Intelligence</button>
     <button class="top-tab" data-view="csmreport">RAG Intelligence</button>
+    <button class="top-tab" data-view="retention">Retention Explorer</button>
     <button class="top-tab" data-view="viewgroup">Views</button>
   </div>
 
@@ -1389,6 +1409,10 @@
       <button class="email-btn email-btn-ghost" id="csmr-copy">Copy</button>
     </div>
     <div id="csmr-snapshot"></div>
+  </div>
+
+  <div class="view" id="view-retention" style="display:none">
+    <div id="ret-host"></div>
   </div>
 
   <div class="view" id="view-ankit" style="display:none">
@@ -2108,6 +2132,7 @@ let state = {
   churnTab:'intelligence',   // active sub-tab inside the Signal Intelligence view
   csmReportMgr:'', csmReportPod:'',  // RAG Intelligence Manager / Pod scope ('' = all)
   csmReportCsm:'',           // selected CSM in the CSM Report tab ('' = all)
+  retMetric:'grr',           // Retention Explorer metric toggle (grr | nrr)
   churnSearch:'',            // case-insensitive company filter on churn tables
   ca: { mon:[], csm:[], pod:[], seg:[], prod:[] },  // Churn Intelligence filters — all multi-select arrays
   caTab: 'v1',                              // Churn Intelligence subtab (v1 | v2)
@@ -9127,6 +9152,78 @@ const MEETING_SEGMENTS = [
   {key:'studio',  label:'Studio',        accent:'#7C3AED', scope:'studio', base:6749214},
   {key:'vini',    label:'Vini',          accent:'#16A34A', scope:'vini',   base:1438180},
 ];
+
+// ============================================================
+// RETENTION EXPLORER — forward projection of GRR/NRR over 12 months
+// ============================================================
+// Not a historical cohort triangle (the dashboard has no per-account monthly
+// ARR history). Instead: take each scope's CURRENT monthly retention run-rate
+// (from the same base/loss/expansion the Meeting tiles use) and compound it —
+// retention at month k = rate^k. M0 = today = 100%; M12 = the annualised
+// GRR/NRR (Yr) shown on the Overview/Meeting tiles. GRR = churn+contraction only
+// (rate ≤ 1, caps at 100%); NRR adds expansion (can exceed 100%).
+function retentionScopeRates(){
+  const RES = D.reseller || {}, resArr = Number(RES.churnArr) || 0;
+  return MEETING_SEGMENTS.map(def => {
+    const { o } = computeMeetingSeg(def);          // restores state.filters internally
+    const keepRes = (def.key==='overall' || def.key==='partner' || def.key==='studio');
+    let loss = (o.churn && o.churn.arr) || 0;
+    if (!keepRes && def.key!=='vini') loss -= resArr;   // strip reseller churn from the direct cuts
+    const exp  = meetingExp(def.key);
+    const base = SEG_BASE_ARR[def.key] || 0;
+    const mGRR = base>0 ? Math.max(0, (base - loss) / base) : null;
+    const mNRR = (exp==null || base<=0) ? null : Math.max(0, (base + exp - loss) / base);
+    return { label: def.label, base, loss, exp, mGRR, mNRR };
+  });
+}
+// Colour band for a projected retention %. [bg, fg]. ≥100 handles NRR expansion.
+function retBand(v){
+  if (v==null) return ['transparent','var(--text-4)'];
+  if (v>=100) return ['#A7F3D0','#065F46'];
+  if (v>=97)  return ['#D1FAE5','#065F46'];
+  if (v>=90)  return ['#E7F6EC','#166534'];
+  if (v>=82)  return ['#FBE7D6','#92400E'];
+  if (v>=72)  return ['#F6D9C8','#9A3412'];
+  if (v>=60)  return ['#F1C9AE','#B45309'];
+  return ['#EFB4A8','#991B1B'];
+}
+function renderRetention(){
+  const host = document.getElementById('ret-host'); if(!host) return;
+  const metric = (state.retMetric==='nrr') ? 'nrr' : 'grr';
+  const rows = retentionScopeRates();
+  const MONTHS = 12;
+  const head = ['<th class="l">Scope</th>','<th class="l">Base ARR</th>','<th>Monthly</th>'];
+  for(let k=0;k<=MONTHS;k++) head.push('<th>M'+k+'</th>');
+  const body = rows.map(r => {
+    const rate = metric==='nrr' ? r.mNRR : r.mGRR;
+    const mCell = rate==null ? '—' : (rate*100).toFixed(1)+'%';
+    const cells = [];
+    for(let k=0;k<=MONTHS;k++){
+      if(rate==null){ cells.push('<td class="cell">—</td>'); continue; }
+      const v = Math.pow(rate,k)*100;
+      const [bg,fg] = retBand(v);
+      cells.push('<td class="cell" style="background:'+bg+';color:'+fg+'">'+v.toFixed(0)+'%</td>');
+    }
+    return '<tr><td class="l nm">'+cEsc(r.label)+'</td><td class="l base">'+fmtMoney(r.base)+'</td>'
+      + '<td class="base">'+mCell+'</td>'+cells.join('')+'</tr>';
+  }).join('');
+  const seg = (v,l)=>'<button class="'+(metric===v?'active':'')+'" data-ret="'+v+'">'+l+'</button>';
+  const legend = [['≥100%','#A7F3D0'],['≥97%','#D1FAE5'],['90–96%','#E7F6EC'],['82–89%','#FBE7D6'],['72–81%','#F6D9C8'],['60–71%','#F1C9AE'],['<60%','#EFB4A8']]
+    .map(([t,c])=>'<span><i style="background:'+c+'"></i>'+t+'</span>').join('');
+  const mname = metric==='nrr' ? 'Net revenue retention (NRR)' : 'Gross revenue retention (GRR)';
+  host.innerHTML =
+    '<div class="ret-head"><h2>Retention Explorer</h2>'
+    + '<div class="sub">'+mname+' projected forward at each scope\x27s current monthly run-rate — M0 = today (100%), each month = the previous × the monthly retention rate; M12 equals the annualised '+(metric==='nrr'?'NRR':'GRR')+' (Yr) on the Overview tiles. '
+    + (metric==='nrr' ? 'Includes expansion, so it can exceed 100%.' : 'Churn + contraction only (expansion excluded); caps at 100%.')
+    + ' This is a forward projection at the latest run-rate, not historical cohorts.</div></div>'
+    + '<div class="ret-toggle-bar"><span class="lbl">Metric</span><div class="ret-seg">'+seg('grr','GRR (gross)')+seg('nrr','NRR (net)')+'</div></div>'
+    + '<div class="ret-card"><div class="ret-tbl-wrap"><table class="ret-tbl"><thead><tr>'+head.join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>'
+    + '<div class="ret-legend">'+legend+'</div></div>';
+  if(!host._retWired){ host._retWired = true;
+    host.addEventListener('click', e=>{ const b = e.target.closest && e.target.closest('[data-ret]'); if(!b || !host.contains(b)) return;
+      state.retMetric = b.getAttribute('data-ret'); persistState&&persistState(); renderRetention(); });
+  }
+}
 // New-addition this month for a segment. Split by product (studio/vini) + reseller
 // exists in the embedded data; a pure Ent vs Mid+SMB split does NOT, so those
 // return null (rendered as "—" with a note).
@@ -10785,7 +10882,8 @@ function renderAll() {
   // full-bleed views: they hide the product sub-tabs AND the dimension filter-bar.
   const isAnkit = state.view === 'ankit';
   const isMeeting = state.view === 'meeting';
-  const isProductAgnostic = isOverall || isDisplay || isChurn || isChurnAnalysis || isEmail || isCsmReport || isAnkit || isMeeting;
+  const isRetention = state.view === 'retention';
+  const isProductAgnostic = isOverall || isDisplay || isChurn || isChurnAnalysis || isEmail || isCsmReport || isAnkit || isMeeting || isRetention;
   // Display / Email / CSM Performance / Ankit's View / Meeting are grouped under one
   // "Views" top tab with a secondary pill bar. It reads active whenever any is.
   const isViewGroup = isDisplay || isEmail || isAnkit || isMeeting;
@@ -10799,6 +10897,7 @@ function renderAll() {
   document.getElementById('view-churnanalysis').style.display = isChurnAnalysis ? 'block' : 'none';
   document.getElementById('view-email').style.display = isEmail ? 'block' : 'none';
   document.getElementById('view-csmreport').style.display = isCsmReport ? 'block' : 'none';
+  document.getElementById('view-retention').style.display = isRetention ? 'block' : 'none';
   document.getElementById('view-ankit').style.display = isAnkit ? 'block' : 'none';
   document.getElementById('view-meeting').style.display = isMeeting ? 'block' : 'none';
   // Hide the Overview/Rooftop sub-tabs + filter-bar on the product-agnostic views.
@@ -10818,10 +10917,12 @@ function renderAll() {
                  : t.dataset.view === 'churn' ? isChurn
                  : t.dataset.view === 'churnanalysis' ? isChurnAnalysis
                  : t.dataset.view === 'csmreport' ? isCsmReport
+                 : t.dataset.view === 'retention' ? isRetention
                  : (!isProductAgnostic && t.dataset.product === state.product);
     t.classList.toggle('active', active);
   });
   if (isOverall) { renderOverall(); return; }
+  if (isRetention) { renderRetention(); return; }
   if (isMeeting) { renderMeeting(); return; }
   if (isAnkit) { renderAnkit(); return; }
   if (isCsmReport) { renderCsmReport(); return; }
@@ -10885,6 +10986,12 @@ document.querySelectorAll('.top-tab').forEach(t => {
     }
     if (t.dataset.view === 'csmreport') {
       state.view = 'csmreport';
+      renderAll();
+      return;
+    }
+    if (t.dataset.view === 'retention') {
+      state.view = 'retention';
+      persistState && persistState();
       renderAll();
       return;
     }
