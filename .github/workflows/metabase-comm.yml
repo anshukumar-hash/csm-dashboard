@@ -30,12 +30,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Guard — require the embedding secret
-        run: |
-          if [ -z "${METABASE_SECRET_KEY}" ] && [ -z "${METABASE_EMBED_SECRET}" ]; then
-            echo "::error::Neither METABASE_SECRET_KEY nor METABASE_EMBED_SECRET is set. Add it under Settings → Secrets and variables → Actions."
-            exit 1
-          fi
+      # No secret guard: fetch-comm.mjs works with either a signing secret
+      # (METABASE_SECRET_KEY → mints a short-lived token) OR the long-lived
+      # read-only embed token baked into the script (exp 2028-07-16) /
+      # METABASE_COMM_TOKEN. So the fetch runs without any secret configured.
 
       - name: Fetch question 358 → comm_metabase.json
         working-directory: metabase
