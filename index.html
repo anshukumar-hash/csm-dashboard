@@ -1622,32 +1622,34 @@ function csvDownload(text, base) {
 // WEIGHTAGE INPUTS, so a Red account's drivers are visible. Studio weights =
 // usage/payment/ticket/comm; Vini weights = RoI + comm (the non-weight cells are
 // left blank per product). Basis/identity columns first, then the weight metrics.
-// Prescriptive "what would make this rooftop Green" action, derived from the
-// same weightage inputs shown in the CSV. Prioritises the hard Red-floor drivers
-// (Studio ≤10 VINs; Vini RoI-Amber-with-no-comms), then each Amber/Red signal.
+// Plain-language "what to do next" for a rooftop, built from its own weightage
+// inputs. ONLY Amber/Red rooftops get an action — Green and NA return '' (blank
+// cell). Written for a non-technical reader: no jargon (VINs → "cars uploaded",
+// CSAT → "feedback", MRR/RoI → "money they pay / return").
 function rooftopActionItem(kind, d) {
-  if (d.overall === 'Green') return 'Healthy — maintain cadence; watch for any signal slipping to Amber.';
+  if (d.overall !== 'Amber' && d.overall !== 'Red') return '';
   const a = [];
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   if (kind === 'Studio') {
-    if (d.lastMo <= 10) a.push('Usage critical — only ' + d.lastMo + ' VINs last completed month; re-onboard the team and drive daily uploads above 10/mo to clear the Red floor.');
-    else if (d.usage === 'Red') a.push('Usage declining (' + d.trend + ', ' + d.lastMo + ' VINs last mo) — reverse the drop with an enablement push / QBR.');
-    else if (d.usage === 'Amber') a.push('Usage flat (' + d.lastMo + ' VINs) — grow uploads to turn Green.');
-    if (d.payRag === 'Red') a.push('Payment Red — ' + d.overdue + ' invoices overdue; escalate collections / align on billing.');
-    else if (d.payRag === 'Amber') a.push('Clear the ' + d.overdue + ' overdue invoice(s).');
-    if (d.tixRag === 'Red') a.push('Tickets Red — ' + d.open + ' open/SLA-breached; drive resolution.');
-    else if (d.tixRag === 'Amber') a.push('Work down the ' + d.open + ' open ticket(s).');
-    if (d.comm === 'NA') a.push('No communication logged — book a check-in and capture CSAT.');
-    else if (d.comm === 'Red') a.push('Communication Red — low CSAT; schedule a recovery conversation.');
-    else if (d.comm === 'Amber') a.push('Lift CSAT — deepen the relationship.');
+    if (d.lastMo <= 10) a.push('Very low usage — only ' + plural(d.lastMo, 'car') + ' uploaded last month. Help the dealer start uploading regularly (aim for more than 10 a month).');
+    else if (d.usage === 'Red') a.push('Car uploads are dropping (' + d.lastMo + ' last month). Meet the dealer and get uploads back up.');
+    else if (d.usage === 'Amber') a.push('Car uploads are flat (' + d.lastMo + ' last month). Push the dealer to upload more.');
+    if (d.payRag === 'Red') a.push(plural(d.overdue, 'invoice') + ' overdue. Follow up and get the payment cleared.');
+    else if (d.payRag === 'Amber') a.push('Clear the ' + plural(d.overdue, 'overdue invoice') + '.');
+    if (d.tixRag === 'Red') a.push(plural(d.open, 'support ticket') + ' open for too long. Get them resolved.');
+    else if (d.tixRag === 'Amber') a.push('Close the ' + plural(d.open, 'open support ticket') + '.');
+    if (d.comm === 'NA') a.push('No recent conversations logged. Set up a call and note their feedback.');
+    else if (d.comm === 'Red') a.push('Customer seems unhappy (low feedback). Set up a call to sort it out.');
+    else if (d.comm === 'Amber') a.push('Check in with the customer to improve satisfaction.');
   } else {
-    const roi = d.roi != null ? Number(d.roi).toFixed(2) + 'x' : '—';
-    if (d.roiRag === 'Red') a.push('RoI Red (' + roi + ') — grow appointment volume/quality so value covers MRR (target ≥3x).');
-    else if (d.roiRag === 'Amber') a.push('RoI Amber (' + roi + ') — push appointments toward the 3x Green line.');
-    if (d.comm === 'NA') a.push('No communication logged — establish a regular cadence and capture CSAT' + (d.roiRag === 'Amber' ? ' (RoI-Amber + no comms is what holds this at Red).' : '.'));
-    else if (d.comm === 'Red') a.push('Communication Red — low CSAT; schedule a recovery conversation.');
-    else if (d.comm === 'Amber') a.push('Lift CSAT.');
+    const roi = d.roi != null ? Number(d.roi).toFixed(1) + 'x' : '—';
+    if (d.roiRag === 'Red') a.push('Low return on what they pay (' + roi + '). Book more and better appointments for them.');
+    else if (d.roiRag === 'Amber') a.push('Return is okay but not strong (' + roi + '). Increase appointments to improve it.');
+    if (d.comm === 'NA') a.push('No recent conversations logged. Set up a regular call and note their feedback.');
+    else if (d.comm === 'Red') a.push('Customer seems unhappy. Set up a call to sort it out.');
+    else if (d.comm === 'Amber') a.push('Check in with the customer to improve satisfaction.');
   }
-  return a.length ? a.join(' ') : 'Mixed signals — review the account.';
+  return a.join(' ');
 }
 function downloadAllRooftopsCsv() {
   const q = v => { const s = (v == null ? '' : String(v)); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
