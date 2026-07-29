@@ -8661,7 +8661,10 @@ function computeEmailSnapshot(csm){
   // matches the Overview tab. Skipped for CSM-specific reports (reseller churn
   // isn't CSM-attributed).
   if(!csmOK){ const _r=(D&&D.reseller)||null; if(_r){ const rc=Number(_r.churnArr)||0, rn=Number(_r.churnN)||0;
-    chS.arr+=rc; chS.n+=rn; chO.arr+=rc; chO.n+=rn; } }
+    chS.arr+=rc; chS.n+=rn; chO.arr+=rc; chO.n+=rn; }
+    // Manual D2D PAYG contraction — Studio (and therefore Overall); Vini unchanged.
+    chS.arr += PAYG_ADJ.contraction; chS.n += 1;
+    chO.arr += PAYG_ADJ.contraction; chO.n += 1; }
 
   // ---- Signals last 7 days (from the SIGNAL stream, if loaded) ----
   let sig = null;
@@ -8747,7 +8750,8 @@ function buildSnapshotHtml(m, opts){
   const naVarr = isCsm ? 0 : (NA ? (NA.vini.arr||0)   : ((naVcr.arr!=null)?naVcr.arr : (EM_LARR_NEW - naSarr)));
   // overall new = Studio + Vini (the real Live-This-Month total) + reseller
   const larrNewNum   = (isCsm ? 0 : (NA ? ((NA.studio.arr||0)+(NA.vini.arr||0)) : ((__emLarr&&__emLarr.live!=null)?__emLarr.live:EM_LARR_NEW))) + resNew;
-  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum+larrNewNum-larrChurnNum);   // base + new − this-month churn (per user request)
+  const larrExpNum   = isCsm ? 0 : PAYG_ADJ.expansion;   // manual D2D PAYG expansion (Overall book)
+  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum+larrNewNum+larrExpNum-larrChurnNum);   // base + new + PAYG expansion − this-month churn (incl. PAYG contraction)
   // per-product new-addition counts (rooftops + enterprises)
   const naSroof = (isCsm?0:(NA?(NA.studio.rooftops||0):0)) + resN, naVroof = isCsm?0:(NA?(NA.vini.rooftops||0):0);
   const naSent  = isCsm?0:(NA?(NA.studio.ents||0):0),     naVent  = isCsm?0:(NA?(NA.vini.ents||0):0);
@@ -8784,7 +8788,7 @@ function buildSnapshotHtml(m, opts){
     larrSub = 'S $'+Math.round(O.sArr||0).toLocaleString()+' · V $'+Math.round(O.vArr||0).toLocaleString();
   } else {
     larrVal = cMoney(larrTotalNum);
-    larrSub = 'Base $'+larrBaseNum.toLocaleString()+' <span style="color:#15803D;font-weight:700">+$'+larrNewNum.toLocaleString()+'</span> <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>';
+    larrSub = 'Base $'+larrBaseNum.toLocaleString()+' <span style="color:#15803D;font-weight:700">+$'+larrNewNum.toLocaleString()+'</span> <span style="color:#15803D;font-weight:700">+$'+larrExpNum.toLocaleString()+' exp</span> <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>';
   }
   // New additions fold into the enterprise/rooftop counts so the card matches
   // the Accounts table row.
@@ -8917,6 +8921,13 @@ function nrrYearly(base, exp, loss){
   const r=(base+(exp||0)-(loss||0))/base;
   return Math.pow(Math.max(0,r),12)*100;
 }
+// ── Manual D2D PAYG adjustment (2026-07, per user) — STUDIO (→ Overall). ──
+// Expansion / contraction from Studio D2D PAYG accounts not captured by the
+// churn or expansion feeds. Applied to Studio and Overall (Overall = Studio +
+// Vini) so it flows to: the Churn figure, Live ARR / Total LARR, GRR, and NRR.
+// Vini is intentionally left unchanged (user: "Studio only"). Applied in chAgg
+// (email), computeOverview (Overview tab), ovNrr (NRR), and the LARR card.
+const PAYG_ADJ = { expansion: 17404, contraction: 6551 };
 // Churn ARR counts every churn/contraction row EXCEPT the churn sheet's
 // "Leader Approved" (r.appr) states below — i.e. revived / deferred / prevented
 // accounts are not real losses. Everything else counts (Confirmed, New, Under
@@ -8949,6 +8960,8 @@ function computeOverview(scope){
   const bands={Green:{n:0,arr:0},Amber:{n:0,arr:0},Red:{n:0,arr:0},NA:{n:0,arr:0}};
   let liveArr=0;
   accounts.forEach(a=>{ liveArr+=a.arr; const b=ovBand(a.overall); bands[b].n++; bands[b].arr+=a.arr; });
+  // Manual D2D PAYG net ARR change — Studio (and therefore Overall); Vini unchanged.
+  if(scope!=='vini'){ liveArr += PAYG_ADJ.expansion - PAYG_ADJ.contraction; }
 
   // Net New (live this month) from D.new_addition — product-level, not
   // re-scoped by dimension filters (no per-account month ARR exists).
@@ -8984,6 +8997,9 @@ function computeOverview(scope){
     newArr += resNewArr;  newN += resNewN;
     churn.arr += resChurnArr;  churn.n += resChurnN;
   }
+  // Manual D2D PAYG contraction — Studio (and therefore Overall); Vini unchanged.
+  // Keeps Overview churn / GRR / Live ARR in step with the CS-Report email cards.
+  if(scope!=='vini'){ churn.arr += PAYG_ADJ.contraction; churn.n += 1; }
   // D2D (direct) vs Reseller split for the New Addition & Churn scorecards.
   const newReseller={arr:resNewArr,n:resNewN}, newD2D={arr:newArr-resNewArr,n:newN-resNewN};
   const churnReseller={arr:resChurnArr,n:resChurnN}, churnD2D={arr:churn.arr-resChurnArr,n:churn.n-resChurnN};
@@ -9151,8 +9167,12 @@ function ovNrr(scope){
   const exp  = scope==='studio' ? (Number(EXP.studio)||0) : scope==='vini' ? (Number(EXP.vini)||0) : (Number(EXP.arr)||0);
   const expN = scope==='studio' ? (Number(EXP.studioN)||0) : scope==='vini' ? (Number(EXP.viniN)||0) : (Number(EXP.n)||0);
   const loss = scope==='studio' ? lossStudio : scope==='vini' ? lossVini : (lossStudio+lossVini);
-  const pct  = nrrYearly(base, exp, loss);   // annualized (compounded), matches Proj. GRR (Yr)
-  return { pct, base, exp, expN, loss };
+  // Manual D2D PAYG adjustment — Studio (and therefore Overall); Vini unchanged.
+  const _payg = (scope!=='vini');
+  const expAdj  = exp  + (_payg ? PAYG_ADJ.expansion   : 0);
+  const lossAdj = loss + (_payg ? PAYG_ADJ.contraction : 0);
+  const pct  = nrrYearly(base, expAdj, lossAdj);   // annualized (compounded), matches Proj. GRR (Yr)
+  return { pct, base, exp:expAdj, expN, loss:lossAdj };
 }
 // Product section — ARR Snapshot only (product header + ARR tiles). The
 // Operational Snapshot is a separate section (ovOpsSection) so the Overall view
