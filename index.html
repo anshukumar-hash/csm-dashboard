@@ -62,7 +62,7 @@
   header.page{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:16px;flex-wrap:wrap}
   .page-title{font-size:18px;font-weight:700;letter-spacing:-0.02em;margin:0 0 4px}
   .page-sub{font-size:12px;color:var(--text-3);margin:0}
-  .top-meta{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--text-3);flex-wrap:wrap}
+  .top-meta{display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:11.5px;color:var(--text-3);flex-wrap:wrap;margin-left:auto;text-align:right}
   .pill-btn{padding:5px 12px;border-radius:6px;font-size:12px;font-weight:500;border:1px solid var(--border-strong);background:var(--surface);cursor:pointer;color:var(--text-2);transition:all .12s}
   .pill-btn.small{padding:3px 9px;font-size:11px}
   .date-range{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:2px 6px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface)}
@@ -581,6 +581,21 @@
   .ent-search .hint{font-size:10.5px;color:var(--text-3);font-style:italic;flex-shrink:0}
   .filter-label{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
   .filter-select{padding:6px 10px;font-size:12.5px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;outline:none;min-height:30px}
+  /* Checkbox-dropdown multi-select (RAG Intelligence filter bar). */
+  .ms{position:relative;display:inline-block;vertical-align:middle}
+  .ms-btn{font-size:12.5px;padding:6px 26px 6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;text-align:left;position:relative;min-height:30px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+  .ms-btn::after{content:'▾';position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--text-3);font-size:10px}
+  .ms-btn:hover{border-color:var(--text-4)}
+  .ms.open .ms-btn{border-color:var(--blue)}
+  .ms-pop{position:absolute;z-index:70;top:calc(100% + 4px);left:0;min-width:100%;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);padding:6px}
+  .ms-search{width:100%;box-sizing:border-box;font-size:12px;padding:6px 8px;margin-bottom:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);outline:none}
+  .ms-list{max-height:230px;overflow:auto}
+  .ms-opt{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;font-size:12.5px;color:var(--text-2);cursor:pointer;white-space:nowrap}
+  .ms-opt:hover{background:var(--bg)}
+  .ms-opt input{accent-color:var(--blue);cursor:pointer;margin:0}
+  .ms-actions{display:flex;justify-content:space-between;gap:8px;padding:6px 6px 2px;border-top:1px solid var(--border);margin-top:4px}
+  .ms-actions button{font-size:11.5px;background:transparent;border:none;color:var(--blue);cursor:pointer;padding:2px 4px;font-weight:600}
+  .ms-actions button:hover{text-decoration:underline}
   .filter-select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
   .filter-reset{margin-left:auto;align-self:flex-end;padding:7px 14px;font-size:12px;color:var(--text-3);background:transparent;border:1px solid var(--border-strong);border-radius:6px;cursor:pointer}
   .filter-reset:hover{background:var(--bg);color:var(--text)}
@@ -874,6 +889,11 @@
   .rt-ic{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:5px;color:var(--text-2);text-decoration:none;cursor:pointer}
   .rt-ic:hover{border-color:var(--border-strong);color:var(--text-1);background:var(--surface)}
   .rt-ic svg{width:12px;height:12px;display:block}
+  /* Copy-ID button (sits before rooftop / enterprise names). Subtle until hover. */
+  .rt-copy{background:transparent;padding:0;width:18px;height:18px;font-family:inherit;line-height:1;color:var(--text-4)}
+  .rt-copy svg{width:11px;height:11px}
+  .rt-copy:hover{color:var(--brand,#6366f1);border-color:var(--brand,#6366f1);background:var(--surface)}
+  .rt-copy.rt-copy-done{color:#16a34a;border-color:#16a34a;font-size:12px;font-weight:700}
   .rt-ic-fav{overflow:hidden}
   .rt-ic-fav img{width:14px;height:14px;border-radius:3px;display:block;object-fit:contain}
   .rt-ic-off{color:var(--text-4);border-style:dashed;cursor:default;opacity:.55}
@@ -1433,16 +1453,18 @@
        buckets), scoped by a CSM picker. -->
   <div class="view" id="view-csmreport" style="display:none">
     <div class="csmp-bar">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;column-gap:12px;row-gap:6px;flex-wrap:wrap">
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">Manager:</label>
-        <select class="filter-select" id="csmr-mgr-select" style="min-width:180px"></select>
+        <div class="ms" id="csmr-mgr-ms"></div>
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">Pod:</label>
-        <select class="filter-select" id="csmr-pod-select" style="min-width:160px"></select>
+        <div class="ms" id="csmr-pod-ms"></div>
         <label style="font-size:13px;font-weight:700;color:var(--text-3)">CSM:</label>
-        <select class="filter-select" id="csmr-select" style="min-width:200px"></select>
-        <button class="email-btn email-btn-ghost" id="csmr-reset" title="Reset to All Managers / Pods / CSMs" style="display:none">✕ Reset</button>
+        <div class="ms" id="csmr-csm-ms"></div>
+        <div style="flex-basis:100%;height:0"></div>
+        <label style="font-size:13px;font-weight:700;color:var(--text-3)">Account:</label>
+        <div class="ms" id="csmr-acct-ms"></div>
+        <button class="email-btn email-btn-ghost" id="csmr-reset" title="Reset to All Managers / Pods / CSMs / Accounts" style="display:none">✕ Reset</button>
       </div>
-      <button class="email-btn email-btn-ghost" id="csmr-copy">Copy</button>
     </div>
     <div id="csmr-snapshot"></div>
   </div>
@@ -2166,8 +2188,10 @@ let state = {
   viewSub:'display',         // last-used sub-view inside the grouped "View" tab
   ankitMgr:'', ankitPod:'', ankitCsm:'', ankitMetric:'ticket_sla',  // Ankit's View filter + selected scorecard
   churnTab:'intelligence',   // active sub-tab inside the Signal Intelligence view
-  csmReportMgr:'', csmReportPod:'',  // RAG Intelligence Manager / Pod scope ('' = all)
-  csmReportCsm:'',           // selected CSM in the CSM Report tab ('' = all)
+  // RAG Intelligence filters — MULTI-select (arrays). Empty array = "all".
+  // Scope = union of the CSMs implied by selected Managers + Pods + CSMs; the
+  // Account list then narrows to that scope and further filters the snapshot.
+  csmReportMgrs:[], csmReportPods:[], csmReportCsms:[], csmReportAccts:[],
   retMetric:'grr',           // Retention Explorer metric toggle (grr | nrr)
   retCut:'Grand Total',      // Retention Explorer segment/product filter
   churnSearch:'',            // case-insensitive company filter on churn tables
@@ -2210,9 +2234,10 @@ let _restoreScrollY = 0;
     if (saved.ankitCsm != null) state.ankitCsm = saved.ankitCsm;
     if (saved.ankitMetric) state.ankitMetric = saved.ankitMetric;
     if (saved.churnTab) state.churnTab = saved.churnTab;
-    if (saved.csmReportMgr != null) state.csmReportMgr = saved.csmReportMgr;
-    if (saved.csmReportPod != null) state.csmReportPod = saved.csmReportPod;
-    if (saved.csmReportCsm != null) state.csmReportCsm = saved.csmReportCsm;
+    if (Array.isArray(saved.csmReportMgrs))  state.csmReportMgrs  = saved.csmReportMgrs;
+    if (Array.isArray(saved.csmReportPods))  state.csmReportPods  = saved.csmReportPods;
+    if (Array.isArray(saved.csmReportCsms))  state.csmReportCsms  = saved.csmReportCsms;
+    if (Array.isArray(saved.csmReportAccts)) state.csmReportAccts = saved.csmReportAccts;
     if (saved.ca && typeof saved.ca === 'object') Object.assign(state.ca, saved.ca);
     if (saved.period)  state.period  = saved.period;
     state.customRange = saved.customRange || null;
@@ -2229,7 +2254,7 @@ function persistState(){
     sessionStorage.setItem(STATE_KEY, JSON.stringify({
       product: state.product, view: state.view, viewSub: state.viewSub, period: state.period,
       ankitMgr: state.ankitMgr, ankitPod: state.ankitPod, ankitCsm: state.ankitCsm, ankitMetric: state.ankitMetric,
-      churnTab: state.churnTab, csmReportMgr: state.csmReportMgr, csmReportPod: state.csmReportPod, csmReportCsm: state.csmReportCsm, ca: state.ca,
+      churnTab: state.churnTab, csmReportMgrs: state.csmReportMgrs, csmReportPods: state.csmReportPods, csmReportCsms: state.csmReportCsms, csmReportAccts: state.csmReportAccts, ca: state.ca,
       customRange: state.customRange, filters: state.filters, sort: state.sort,
       rooftopContext: state.rooftopContext, rooftopSearch: state.rooftopSearch,
       entListSearch: state.entListSearch || '', scrollY: window.scrollY
@@ -3608,6 +3633,26 @@ function pricePerVinCell(uMtd, mrr) {
 // when ws_link is present, else a muted, non-clickable globe.
 const ICON_CONSOLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
 const ICON_GLOBE   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/></svg>';
+const ICON_COPY    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+// Small copy-to-clipboard button rendered in FRONT of a rooftop / enterprise
+// name — copies the underlying rooftop_id / enterprise_id. Inline onclick so it
+// survives the tables' innerHTML re-renders (no delegation wiring needed).
+function copyIdIcon(id, kind){
+  id = id != null ? String(id).trim() : '';
+  if(!id) return '';
+  const safe = id.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<button type="button" class="rt-ic rt-copy" title="Copy ${cEsc(kind)} ID: ${cEsc(id)}" onclick="event.stopPropagation();copyId(this,'${safe}')">${ICON_COPY}</button>`;
+}
+window.copyId = function(btn, val){
+  val = String(val == null ? '' : val);
+  if(!val) return;
+  const old = btn.innerHTML;
+  const flash = ok => { btn.innerHTML = ok ? '✓' : '✕'; btn.classList.add('rt-copy-done'); setTimeout(()=>{ btn.innerHTML = old; btn.classList.remove('rt-copy-done'); }, 900); };
+  const legacy = () => { try{ const ta=document.createElement('textarea'); ta.value=val; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); const ok=document.execCommand('copy'); ta.remove(); flash(ok); }catch(e){ flash(false); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(val).then(()=>flash(true)).catch(legacy);  // fall back if the async API is blocked
+  } else { legacy(); }
+};
 // Website URL by enterprise_id, built from the Studio rows (the only feed that
 // carries ws_link). Lets Vini rooftops reuse their enterprise's website favicon.
 const WEBSITE_BY_EID = (function(){ const m={}; if (S_COL.ws_link!=null) (D.s_rows||[]).forEach(r=>{ const e=r[S_COL.eid], w=r[S_COL.ws_link]; if(e && w && !m[e]) m[e]=String(w).trim(); }); return m; })();
@@ -5001,7 +5046,7 @@ function renderEnterpriseList() {
       : '<span style="color:var(--text-4)">—</span>';
     html += `<tr>
       <td class="left idx ent-idx">${i+1}</td>
-      <td class="left ent-name">${e.en || e.eid}</td>
+      <td class="left ent-name"><span class="rt-name-wrap">${copyIdIcon(e.eid,'enterprise')}<span class="rt-name-txt">${e.en || e.eid}</span></span></td>
       <td class="ent-acct">${acctPill}</td>
       <td class="ent-money">${e.mrr ? fmtMoney(e.mrr) : '—'}</td>
       <td class="ent-money">${e.arr ? fmtMoney(e.arr) : '—'}</td>
@@ -5959,8 +6004,8 @@ function renderRooftop() {
       const rowTix = aggregateTicketsForEids([rowEidT], STUDIO_TIX);
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
-        <td class="left frozen frozen-2"><span class="rt-name-wrap"><span class="rt-name-txt">${r[S_COL.rn]||'—'}</span>${rooftopLinkIcons(r)}</span></td>
-        <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r[S_COL.en]||'—'}</td>
+        <td class="left frozen frozen-2"><span class="rt-name-wrap">${copyIdIcon(r[S_COL.rid],'rooftop')}<span class="rt-name-txt">${r[S_COL.rn]||'—'}</span>${rooftopLinkIcons(r)}</span></td>
+        <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px"><span class="rt-name-wrap">${copyIdIcon(r[S_COL.eid],'enterprise')}<span class="rt-name-txt">${r[S_COL.en]||'—'}</span></span></td>
         <td class="left frozen frozen-csm" style="color:var(--text-2);font-size:10.5px">${firstNameCsm(r[S_COL.csm])||'—'}</td>
         <td class="frozen frozen-4 cell-acct">${acctTypePill(r[S_COL.ct], r[S_COL.cst])}</td>
         <td class="frozen frozen-5">${r[S_COL.mrr]?fmtMoney(r[S_COL.mrr]):'—'}</td>
@@ -6186,8 +6231,8 @@ function renderRooftop() {
       incCount(tMbr, mbrStat(r.eid, MBR_MONTHS[0])); incCount(tCf, r.cf);
       html += `<tr>
         <td class="left idx frozen frozen-1">${i+1}</td>
-        <td class="left frozen frozen-2"><span class="rt-name-wrap"><span class="rt-name-txt">${r.rn||'—'}</span>${rtLinkIcons(r.eid, r.rid, WEBSITE_BY_EID[r.eid])}</span></td>
-        <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px">${r.en||'—'}</td>
+        <td class="left frozen frozen-2"><span class="rt-name-wrap">${copyIdIcon(r.rid,'rooftop')}<span class="rt-name-txt">${r.rn||'—'}</span>${rtLinkIcons(r.eid, r.rid, WEBSITE_BY_EID[r.eid])}</span></td>
+        <td class="left frozen frozen-3" style="color:var(--text-3);font-size:10.5px"><span class="rt-name-wrap">${copyIdIcon(r.eid,'enterprise')}<span class="rt-name-txt">${r.en||'—'}</span></span></td>
         <td class="left frozen frozen-csm" style="color:var(--text-2);font-size:10.5px">${firstNameCsm(r.csm)||'—'}</td>
         <td class="left frozen frozen-4 cell-acct">${acctTypePill(r.ct, r.cst)}</td>
         <td class="left frozen frozen-5">${r.agent||'—'}<span class="csm-mgr">${r.seg?' · '+r.seg:''}</span></td>
@@ -8525,6 +8570,7 @@ function computeEmailSnapshot(csm){
   // ---- STUDIO (full book) ----
   let sAll = D.s_rows || [];
   if(csmOK) sAll = sAll.filter(r=>csmOK(r[S_COL.csm]));
+  if(_csmReportAccts && _csmReportAccts.length){ const _as=new Set(_csmReportAccts); sAll = sAll.filter(r=>_as.has(r[S_COL.eid]||r[S_COL.en])); }
   const sActive = sAll.filter(r=>!String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
   const sRooftops = sActive.length;
   const sEids = [...new Set(sActive.map(r=>r[S_COL.eid]||r[S_COL.en]).filter(Boolean))];
@@ -8554,6 +8600,7 @@ function computeEmailSnapshot(csm){
   // ---- VINI (full book) ----
   let vAll = (typeof viniAggregateRooftops==='function') ? viniAggregateRooftops() : [];
   if(csmOK) vAll = vAll.filter(r=>csmOK(r.csm));
+  if(_csmReportAccts && _csmReportAccts.length){ const _av=new Set(_csmReportAccts); vAll = vAll.filter(r=>_av.has(r.eid)); }
   const vActive = vAll.filter(r=>String(r.stage||'').toLowerCase()!=='churned');
   const vAgents = vActive.length;
   const vRooftops = new Set(vActive.map(r=>r.rid).filter(Boolean)).size;
@@ -9730,63 +9777,144 @@ function csmReportRoster(){
   // Exclude Greeva and Jatin from the CSM Performance dropdown (per request).
   return [...set].filter(c=>c && !/unassigned|not assigned/i.test(c) && !/^(greeva|jatin)\b/i.test(c) && !/casupriya/i.test(c.replace(/\s+/g,''))).sort();
 }
+// RAG Intelligence account filter — set ONLY while rendering the RAG Intelligence
+// snapshot (computeEmailSnapshot / csmPerfData honour it), then cleared, so the
+// Email View (which shares computeEmailSnapshot) is never account-scoped.
+// RAG Intelligence account filter — an ARRAY of eids set ONLY while rendering the
+// RAG Intelligence snapshot (computeEmailSnapshot / csmPerfData honour it), then
+// cleared, so the Email View (shares computeEmailSnapshot) is never account-scoped.
+let _csmReportAccts = [];
+// Enterprises (eid → name) owned by a CSM scope (string / array / null=all),
+// across Studio + Vini — powers the Account dropdown's options.
+function csmReportAccounts(scopeCsm){
+  const ok = csmScopeOK(scopeCsm), m = {};
+  (D.s_rows||[]).forEach(r=>{ if(ok && !ok(r[S_COL.csm])) return; const e=r[S_COL.eid]||r[S_COL.en]; if(e && !m[e]) m[e]=r[S_COL.en]||r[S_COL.rn]||e; });
+  ((typeof viniAggregateRooftops==='function')?viniAggregateRooftops():[]).forEach(r=>{ if(ok && !ok(r.csm)) return; const e=r.eid; if(e && !m[e]) m[e]=r.en||r.rn||e; });
+  return Object.keys(m).map(e=>({eid:e, name:m[e]})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+}
+// PERSON scope = union of the CSMs implied by the selected Managers + Pods +
+// CSMs (normalized). Returns null when nothing is selected (= whole book).
+function csmrPersonScope(){
+  const mgrs=state.csmReportMgrs||[], pods=state.csmReportPods||[], csms=state.csmReportCsms||[];
+  if(!mgrs.length && !pods.length && !csms.length) return null;
+  const s=new Set();
+  mgrs.forEach(m=>csmsForManager(m).forEach(c=>s.add(normalizeCSM(c))));
+  if(pods.length) csmsForPods(pods).forEach(c=>s.add(normalizeCSM(c)));
+  csms.forEach(c=>s.add(normalizeCSM(c)));
+  return [...s];
+}
+// Reusable checkbox-dropdown multi-select. Renders into `host` (.ms div); builds
+// its DOM once and preserves the open popup across re-renders (so ticking a box
+// doesn't close it). cfg: { allLabel, noun, options:[{value,text}], selected:[],
+// searchable, onChange(newArray) }.
+function csmrMultiSelect(host, cfg){
+  if(!host) return;
+  const selSet = new Set(cfg.selected||[]);
+  let inst = host._ms;
+  if(!inst){
+    host.innerHTML = '<button type="button" class="ms-btn"></button><div class="ms-pop" style="display:none"></div>';
+    inst = host._ms = { btn:host.querySelector('.ms-btn'), pop:host.querySelector('.ms-pop'), open:false };
+    inst.btn.addEventListener('click', e=>{ e.stopPropagation();
+      document.querySelectorAll('.ms.open').forEach(m=>{ if(m!==host){ m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; if(m._ms) m._ms.open=false; } });
+      inst.open=!inst.open; host.classList.toggle('open', inst.open); inst.pop.style.display=inst.open?'':'none';
+      if(inst.open){ const s=inst.pop.querySelector('.ms-search'); if(s) s.focus(); }
+    });
+    inst.pop.addEventListener('click', e=>e.stopPropagation());  // clicks inside stay open
+  }
+  inst.cfg = cfg;
+  const chosen = (cfg.options||[]).filter(o=>selSet.has(o.value));
+  inst.btn.textContent = !chosen.length ? cfg.allLabel : (chosen.length===1 ? chosen[0].text : (chosen.length+' '+cfg.noun+' selected'));
+  inst.btn.title = chosen.length ? chosen.map(o=>o.text).join(', ') : cfg.allLabel;
+  if(inst.open){
+    // Popup is open (this is the dropdown being interacted with) — DON'T rebuild
+    // the list, just reconcile the checkbox states with the selection set.
+    inst.pop.querySelectorAll('.ms-opt input').forEach(cb=>{ cb.checked = selSet.has(cb.value); });
+    return;
+  }
+  const searchBox = (cfg.searchable && (cfg.options||[]).length>8) ? '<input type="text" class="ms-search" placeholder="Search…">' : '';
+  inst.pop.innerHTML = searchBox
+    + '<div class="ms-list">'
+    + (cfg.options||[]).map(o=>`<label class="ms-opt"><input type="checkbox" value="${cEsc(o.value)}"${selSet.has(o.value)?' checked':''}><span>${cEsc(o.text)}</span></label>`).join('')
+    + '</div>'
+    + '<div class="ms-actions"><button type="button" data-act="all">Select all</button><button type="button" data-act="clear">Clear</button></div>';
+  inst.pop.querySelectorAll('.ms-opt input').forEach(cb=>{
+    cb.addEventListener('change', ()=>{ if(cb.checked) selSet.add(cb.value); else selSet.delete(cb.value); cfg.onChange([...selSet]); });
+  });
+  const sb=inst.pop.querySelector('.ms-search');
+  if(sb) sb.addEventListener('input', ()=>{ const t=sb.value.toLowerCase(); inst.pop.querySelectorAll('.ms-opt').forEach(op=>{ op.style.display = op.textContent.toLowerCase().indexOf(t)>=0?'':'none'; }); });
+  inst.pop.querySelectorAll('.ms-actions button').forEach(b=>{
+    b.addEventListener('click', e=>{ e.stopPropagation();
+      if(b.dataset.act==='all'){ (cfg.options||[]).forEach(o=>selSet.add(o.value)); } else { selSet.clear(); }
+      cfg.onChange([...selSet]);
+    });
+  });
+}
+// Close any open multi-select popup when clicking elsewhere (wired once).
+if(!window._msOutsideWired){ window._msOutsideWired = true;
+  document.addEventListener('click', ()=>{ document.querySelectorAll('.ms.open').forEach(m=>{ m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; if(m._ms) m._ms.open=false; }); });
+}
 function renderCsmReport(){
   if(_churnState==='idle') loadChurn();
-  const mgr = state.csmReportMgr || '';
-  // Manager dropdown (All Managers + each manager). Selecting one scopes the CSM
-  // dropdown to that team and shows the aggregated manager view until a specific
-  // CSM is picked.
-  const mgrSel = document.getElementById('csmr-mgr-select');
-  if(mgrSel){
-    if(!mgrSel._wired){ mgrSel._wired = true;
-      const managers = [...new Set(Object.values(MANAGER_MAP))].sort();
-      mgrSel.innerHTML = '<option value="">All Managers</option>' + managers.map(m=>`<option value="${cEsc(m)}">${cEsc(m)}</option>`).join('');
-      mgrSel.addEventListener('change', e=>{ state.csmReportMgr = e.target.value; state.csmReportPod = ''; state.csmReportCsm = ''; persistState&&persistState(); renderCsmReport(); });
-    }
-    mgrSel.value = mgr;
-  }
-  // Pod dropdown (All Pods + each pod lead). Selecting one scopes to that pod's
-  // lead + members; clears any CSM pick. Sits between Manager and CSM in priority.
-  const pod = state.csmReportPod || '';
-  const podSel = document.getElementById('csmr-pod-select');
-  if(podSel){
-    if(!podSel._wired){ podSel._wired = true;
-      podSel.innerHTML = '<option value="">All Pods</option>' + Object.keys(POD_MAP).map(p=>`<option value="${cEsc(p)}">${cEsc(podOptLabel(p))}</option>`).join('');
-      podSel.addEventListener('change', e=>{ state.csmReportPod = e.target.value; state.csmReportCsm = ''; state.csmReportMgr = ''; persistState&&persistState(); renderCsmReport(); });
-    }
-    podSel.value = pod;
-  }
-  // CSM dropdown ALWAYS lists every CSM (independent of the manager). Repopulate
-  // whenever the roster size changes so it fills once the data finishes loading.
-  const sel = document.getElementById('csmr-select');
-  if(sel){
-    const roster = csmReportRoster();
-    if(sel._rosterN !== roster.length){
-      sel._rosterN = roster.length;
-      sel.innerHTML = '<option value="">All CSMs</option>'
-        + roster.map(c=>`<option value="${cEsc(c)}">${cEsc(c)}</option>`).join('');
-    }
-    if(!sel._wired){ sel._wired = true;
-      sel.addEventListener('change', e=>{ state.csmReportCsm = e.target.value;
-        // Picking a CSM syncs the Manager dropdown to that CSM's manager and clears the Pod scope.
-        if(e.target.value){ const mg = getManager(e.target.value); if(mg) state.csmReportMgr = mg; state.csmReportPod = ''; }
-        persistState&&persistState(); renderCsmReport(); }); }
-    sel.value = state.csmReportCsm || '';
-  }
-  // Resolve scope: a specific CSM (string) > a pod (lead+members) > a manager's team > whole book.
-  let scope = null, scopeLabel = null;
-  if(state.csmReportCsm){ scope = state.csmReportCsm; }
-  else if(pod){ scope = csmsForPods([pod]); scopeLabel = pod + ' Pod'; }
-  else if(mgr){ scope = csmsForManager(mgr); scopeLabel = mgr; }
+  const setSel = (key, arr)=>{ state[key]=arr; persistState&&persistState(); renderCsmReport(); };
+  // Manager (multi) — full list of managers.
+  const managers = [...new Set(Object.values(MANAGER_MAP))].sort();
+  csmrMultiSelect(document.getElementById('csmr-mgr-ms'), {
+    allLabel:'All Managers', noun:'managers', searchable:true,
+    options: managers.map(m=>({value:m, text:m})),
+    selected: state.csmReportMgrs||[],
+    onChange: arr=>setSel('csmReportMgrs', arr),
+  });
+  // Pod (multi) — full list of pod leads.
+  csmrMultiSelect(document.getElementById('csmr-pod-ms'), {
+    allLabel:'All Pods', noun:'pods', searchable:true,
+    options: Object.keys(POD_MAP).map(p=>({value:p, text:podOptLabel(p)})),
+    selected: state.csmReportPods||[],
+    onChange: arr=>setSel('csmReportPods', arr),
+  });
+  // CSM (multi) — full roster (independent of manager/pod, additive).
+  csmrMultiSelect(document.getElementById('csmr-csm-ms'), {
+    allLabel:'All CSMs', noun:'CSMs', searchable:true,
+    options: csmReportRoster().map(c=>({value:c, text:c})),
+    selected: state.csmReportCsms||[],
+    onChange: arr=>setSel('csmReportCsms', arr),
+  });
+  // Resolve the PERSON scope (union of managers + pods + CSMs) → also drives the
+  // Account dropdown's options.
+  const scope = csmrPersonScope();
+  // Account (multi) — enterprises within the current person scope. Prune any
+  // selected eids that fell out of scope when the person filters changed.
+  const accts = csmReportAccounts(scope);
+  const acctSet = new Set(accts.map(a=>a.eid));
+  let selAccts = (state.csmReportAccts||[]).filter(e=>acctSet.has(e));
+  if(selAccts.length !== (state.csmReportAccts||[]).length) state.csmReportAccts = selAccts;
+  csmrMultiSelect(document.getElementById('csmr-acct-ms'), {
+    allLabel:'All Accounts'+(accts.length?' ('+accts.length+')':''), noun:'accounts', searchable:true,
+    options: accts.map(a=>({value:a.eid, text:a.name})),
+    selected: selAccts,
+    onChange: arr=>setSel('csmReportAccts', arr),
+  });
+  // Human-readable scope label for the snapshot header.
+  const mgrs=state.csmReportMgrs||[], pods=state.csmReportPods||[], csms=state.csmReportCsms||[];
+  const parts=[];
+  if(mgrs.length) parts.push(mgrs.length===1?mgrs[0]:mgrs.length+' managers');
+  if(pods.length) parts.push(pods.length===1?(pods[0]+' Pod'):pods.length+' pods');
+  if(csms.length) parts.push(csms.length===1?csms[0]:csms.length+' CSMs');
+  if(selAccts.length){ const nm=accts.find(a=>a.eid===selAccts[0]); parts.push(selAccts.length===1?(nm?nm.name:selAccts[0]):selAccts.length+' accounts'); }
+  const scopeLabel = parts.join(' + ') || null;
   const host = document.getElementById('csmr-snapshot');
-  if(host){ host.innerHTML = buildCsmPerfHtml(scope, scopeLabel); csmPerfWire(host); }
-  const cp = document.getElementById('csmr-copy');
-  if(cp && !cp._wired){ cp._wired = true; cp.addEventListener('click', ()=>emCopyHost('csmr-snapshot', cp)); }
-  // Reset button — clears Manager + CSM back to the whole book. Shown only when a filter is active.
+  if(host){
+    // Apply the account filter ONLY for this render, then clear it so the Email
+    // View (shares computeEmailSnapshot) is never account-scoped.
+    _csmReportAccts = selAccts.slice();
+    host.innerHTML = buildCsmPerfHtml(scope, scopeLabel);
+    _csmReportAccts = [];
+    csmPerfWire(host);
+  }
+  // Reset button — clears every RAG filter. Shown only when one is active.
   const rb = document.getElementById('csmr-reset');
   if(rb){
-    if(!rb._wired){ rb._wired = true; rb.addEventListener('click', ()=>{ state.csmReportMgr=''; state.csmReportPod=''; state.csmReportCsm=''; persistState&&persistState(); renderCsmReport(); }); }
-    rb.style.display = (state.csmReportMgr || state.csmReportPod || state.csmReportCsm) ? '' : 'none';
+    if(!rb._wired){ rb._wired = true; rb.addEventListener('click', ()=>{ state.csmReportMgrs=[]; state.csmReportPods=[]; state.csmReportCsms=[]; state.csmReportAccts=[]; persistState&&persistState(); renderCsmReport(); }); }
+    rb.style.display = (mgrs.length || pods.length || csms.length || selAccts.length) ? '' : 'none';
   }
 }
 // Expandable account lists (click a .csmp-link to toggle its sibling list).
@@ -10154,9 +10282,11 @@ function csmpLineChart(xLabels, series, opts){
 function csmPerfData(csm){
   const csmOK = csmScopeOK(csm);
   let sAll = (D.s_rows||[]); if(csmOK) sAll=sAll.filter(r=>csmOK(r[S_COL.csm]));
+  if(_csmReportAccts && _csmReportAccts.length){ const _as=new Set(_csmReportAccts); sAll = sAll.filter(r=>_as.has(r[S_COL.eid]||r[S_COL.en])); }
   const sActive = sAll.filter(r=>!String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
   const sChurned = sAll.filter(r=>String(r[S_COL.churn]||'').toLowerCase().includes('churn'));
   let vAll = (typeof viniAggregateRooftops==='function')?viniAggregateRooftops():[]; if(csmOK) vAll=vAll.filter(r=>csmOK(r.csm));
+  if(_csmReportAccts && _csmReportAccts.length){ const _av=new Set(_csmReportAccts); vAll = vAll.filter(r=>_av.has(r.eid)); }
   const vActive = vAll.filter(r=>String(r.stage||'').toLowerCase()!=='churned');
   const vChurned = vAll.filter(r=>String(r.stage||'').toLowerCase()==='churned');
   // "Studio usage" (VIN usage) is a STUDIO-only concept. A Vini enterprise
