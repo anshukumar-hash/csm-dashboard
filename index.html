@@ -1736,7 +1736,7 @@ function downloadAllRooftopsCsv() {
   const q = v => { const s = (v == null ? '' : String(v)); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const ovCnt = arr => arr.filter(x => String(x || '').toLowerCase() === 'overdue').length;
   const H = ['Product','Rooftop ID','Rooftop','Enterprise','Enterprise ID','CSM','Segment','Agent Type','Stage','Overall RAG',
-    'Usage RAG','Usage (VINs · trend)','Payment RAG','Payment (overdue)','Ticket RAG','Ticket (open)','Comm RAG','RoI RAG','RoI (factor)','App Adoption','Action item as per claude'];
+    'Usage RAG','Usage (VINs · trend)','Payment RAG','Payment (overdue)','Ticket RAG','Ticket (open)','Comm RAG','RoI RAG','RoI (factor)','App Adoption','Smart Campaign','Action item as per claude'];
   const rows = [H];
   (D.s_rows || []).forEach(r => {
     const eid = r[S_COL.eid] || '', en = r[S_COL.en] || '';
@@ -1751,6 +1751,7 @@ function downloadAllRooftopsCsv() {
     // App Adoption (Studio feature) — Yes/No from rooftop_adoption.json; blank when no adoption data for the rooftop.
     const _adopt = ROOFTOP_ADOPTION[String(r[S_COL.rid] || '')];
     const appAdoption = _adopt ? (_adopt.app ? 'Yes' : 'No') : '';
+    const smartCampaign = _adopt ? (_adopt.camp ? 'Yes' : 'No') : '';
     rows.push(['Studio', r[S_COL.rid] || '', r[S_COL.rn] || '', en, eid, r[S_COL.csm] || '', r[S_COL.seg] || '', '', churned ? 'Churned' : 'Live',
       overall,
       usageRag, lastMo + ' · ' + trend,
@@ -1759,6 +1760,7 @@ function downloadAllRooftopsCsv() {
       comm,
       '', '',
       appAdoption,
+      smartCampaign,
       rooftopActionItem('Studio', { overall, usage: usageRag, trend, lastMo, payRag, overdue, tixRag, open: (tix.op || 0), comm })]);
   });
   (typeof viniAggregateRooftops === 'function' ? viniAggregateRooftops() : []).forEach(r => {
@@ -1769,7 +1771,7 @@ function downloadAllRooftopsCsv() {
       '', '', '', '', '', '',
       commRag,
       roiRag, (r.roi_mtd != null ? Number(r.roi_mtd).toFixed(2) + 'x' : ''),
-      '',
+      '', '',
       rooftopActionItem('Vini', { overall, roiRag, roi: r.roi_mtd, comm: commRag })]);
   });
   csvDownload(rows.map(row => row.map(q).join(',')).join('\n'), 'csm_rooftops_studio_vini');
