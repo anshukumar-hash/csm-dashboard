@@ -596,6 +596,37 @@
   .ms-actions{display:flex;justify-content:space-between;gap:8px;padding:6px 6px 2px;border-top:1px solid var(--border);margin-top:4px}
   .ms-actions button{font-size:11.5px;background:transparent;border:none;color:var(--blue);cursor:pointer;padding:2px 4px;font-weight:600}
   .ms-actions button:hover{text-decoration:underline}
+  /* ── Payment Analysis tab ── */
+  .pay-subtabs{display:flex;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;width:fit-content}
+  .pay-subtab{padding:7px 18px;font-size:13px;font-weight:600;color:var(--text-3);background:transparent;border:none;border-radius:6px;cursor:pointer}
+  .pay-subtab.active{background:var(--blue);color:#fff}
+  .pay-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:16px}
+  .pay-fg{display:flex;flex-direction:column;gap:4px}
+  .pay-fg label{font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px}
+  .pay-fg select{font-size:12.5px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text-2);min-width:150px}
+  .pay-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+  .pay-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;border-top:3px solid var(--ov-accent,#4F46E5)}
+  .pay-card .lbl{font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
+  .pay-card .val{font-size:26px;font-weight:800;margin-top:6px;color:var(--text)}
+  .pay-card .sub{font-size:11.5px;color:var(--text-3);margin-top:3px}
+  .pay-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:18px}
+  .pay-chart{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .pay-chart h4{font-size:13px;font-weight:700;color:var(--text);margin:0 0 12px}
+  .pay-bar-row{display:grid;grid-template-columns:120px 1fr 90px;align-items:center;gap:8px;margin-bottom:7px;font-size:12px}
+  .pay-bar-row .bl{color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pay-bar-track{background:var(--bg);border-radius:5px;height:16px;overflow:hidden}
+  .pay-bar-fill{height:100%;border-radius:5px;background:var(--blue)}
+  .pay-bar-row .bv{text-align:right;color:var(--text);font-weight:700;font-variant-numeric:tabular-nums}
+  .pay-tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:auto;max-height:560px}
+  .pay-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .pay-tbl th{position:sticky;top:0;background:var(--surface);text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text-3);font-weight:700;white-space:nowrap;z-index:1}
+  .pay-tbl td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text-2);white-space:nowrap}
+  .pay-tbl td.num,.pay-tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pay-tbl tr:hover td{background:var(--bg)}
+  .pay-rag{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .pay-rag.Red{background:#DC2626} .pay-rag.Amber{background:#D97706} .pay-rag.Green{background:#16A34A}
+  .pay-in{font-size:12px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text-2);width:100%;box-sizing:border-box}
+  .pay-empty{background:var(--surface);border:1px dashed var(--border-strong);border-radius:12px;padding:36px 20px;text-align:center;color:var(--text-3);font-size:13px}
   .filter-select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.12)}
   .filter-reset{margin-left:auto;align-self:flex-end;padding:7px 14px;font-size:12px;color:var(--text-3);background:transparent;border:1px solid var(--border-strong);border-radius:6px;cursor:pointer}
   .filter-reset:hover{background:var(--bg);color:var(--text)}
@@ -1267,6 +1298,7 @@
     <button class="top-tab" data-view="churn">Signal Intelligence</button>
     <button class="top-tab" data-view="churnanalysis">Churn Intelligence</button>
     <button class="top-tab" data-view="csmreport">RAG Intelligence</button>
+    <button class="top-tab" data-view="payment">Payment Analysis</button>
     <button class="top-tab" data-view="retention">Retention Explorer</button>
     <button class="top-tab" data-view="viewgroup">Views</button>
   </div>
@@ -1470,6 +1502,12 @@
 
   <div class="view" id="view-retention" style="display:none">
     <div id="ret-host"></div>
+  </div>
+
+  <!-- PAYMENT ANALYSIS — product-agnostic (Studio + Vini). Shell only; the data
+       source, sheet reference and logic will be wired in later per user. -->
+  <div class="view" id="view-payment" style="display:none">
+    <div id="payment-host"></div>
   </div>
 
   <div class="view" id="view-ankit" style="display:none">
@@ -11104,6 +11142,185 @@ function emailDraftToInbox(){
   if(btn){ const o=btn.textContent; btn.textContent='Draft opened ✓'; setTimeout(()=>btn.textContent=o, 1800); }
 }
 
+// ============================================================
+// PAYMENT ANALYSIS  (source: payment_data.json ← ARR sheet gid 406922800)
+// ============================================================
+// Tracks outstanding balance (USD) + aging RAG per CSM / customer. CSM / segment /
+// manager / POD are joined from the dashboard's enterprise data via EnterprisesID.
+// RAG (open invoices): overdue & age>15d → Red, 7–15d → Amber, <7d → Green.
+let _paymentData = null, _payLoaded = false;
+let _paySub = 'summary';                                  // 'summary' | 'deepdive'
+const _payFilters = { segment:'', manager:'', pod:'', csm:'', customer:'' };
+const PAY_REASONS = ['Dispute - Invoice Amount','Dispute - Service Delivered','Customer Unresponsive','Payment in Progress','Credit Note / Adjustment Pending','Contract / PO Issue','Escalated to Management','Promised to Pay','Write-off Candidate','Legal / Collections','Others'];
+const PAY_NOTES_KEY = 'csm_payment_notes_v1';
+const PAY_RAG_COLOR = { Red:'#DC2626', Amber:'#D97706', Green:'#16A34A' };
+
+function loadPaymentData(){
+  fetch('./payment_data.json').then(r=>r.ok?r.json():null).then(d=>{ _paymentData=d; _payLoaded=true; if(state.view==='payment') renderPayment(); })
+    .catch(()=>{ _payLoaded=true; if(state.view==='payment') renderPayment(); });
+}
+function payNotesGet(){ try{ return JSON.parse(localStorage.getItem(PAY_NOTES_KEY)||'{}'); }catch(e){ return {}; } }
+function payNotesSet(o){ try{ localStorage.setItem(PAY_NOTES_KEY, JSON.stringify(o)); }catch(e){} }
+const payMoney = n => { n=Number(n)||0; const a=Math.abs(n); return '$'+(a>=1e6?(n/1e6).toFixed(2)+'M':a>=1e3?(n/1e3).toFixed(1)+'K':Math.round(n).toLocaleString()); };
+
+// eid → {csm, seg} from the dashboard's live Studio + Vini rows.
+function payEidMeta(){
+  const m={};
+  try{
+    (D.s_rows||[]).forEach(r=>{ const e=r[S_COL.eid]; if(e&&!m[e]) m[e]={csm:r[S_COL.csm]||'', seg:r[S_COL.seg]||''}; });
+    (typeof viniAggregateRooftops==='function'?viniAggregateRooftops():[]).forEach(r=>{ if(r.eid&&!m[r.eid]) m[r.eid]={csm:r.csm||'', seg:r.seg||''}; });
+  }catch(e){}
+  return m;
+}
+// All invoices, enriched with csm/manager/pod/segment + aging + RAG.
+function payAllRows(){
+  if(!_paymentData||!Array.isArray(_paymentData.rows)) return [];
+  const meta=payEidMeta(), now=Date.now();
+  return _paymentData.rows.map(r=>{
+    const mm=meta[r.eid]||{};
+    const csmRaw=mm.csm||'';
+    const csm = csmRaw ? ((typeof dispCsm==='function'?dispCsm(csmRaw):csmRaw)||csmRaw) : 'Unassigned';
+    const manager = (getManager(csmRaw)||getManager(csm)) || 'Unassigned';
+    const pod = (getPod(csmRaw)||getPod(csm)) || '—';
+    const seg = mm.seg || '—';
+    const age = r.raiseIso ? Math.max(0, Math.floor((now - Date.parse(r.raiseIso+'T00:00:00Z'))/86400000)) : null;
+    const outstanding = Number(r.outstandingUsd)||0;
+    const isOpen = outstanding>0.005;
+    let rag=null;
+    if(isOpen) rag = (String(r.status).toLowerCase()==='overdue') ? (age>15?'Red':(age>=7?'Amber':'Green')) : 'Green';
+    return Object.assign({}, r, {csm, csmRaw, manager, pod, seg, age, outstanding, isOpen, rag});
+  });
+}
+function payFiltered(){
+  const f=_payFilters;
+  return payAllRows().filter(r=>{
+    if(f.segment && r.seg!==f.segment) return false;
+    if(f.manager && r.manager!==f.manager) return false;
+    if(f.pod && r.pod!==f.pod) return false;
+    if(f.csm && r.csm!==f.csm) return false;
+    if(f.customer && r.customer!==f.customer) return false;
+    return true;
+  });
+}
+// Group OPEN invoices by customer (eid) → one aggregate per customer.
+function payByCustomer(rows){
+  const m={};
+  rows.forEach(r=>{
+    if(!r.isOpen) return;
+    const k=r.eid||r.customer;
+    const g=m[k]||(m[k]={eid:r.eid, customer:r.customer, csm:r.csm, manager:r.manager, pod:r.pod, seg:r.seg, country:r.country, total:0, Red:0, Amber:0, Green:0, ageSum:0, n:0});
+    g.total+=r.outstanding; g[r.rag]=(g[r.rag]||0)+r.outstanding; g.ageSum+=(r.age||0); g.n++;
+  });
+  return Object.values(m).map(g=>({...g, avgAge: g.n?Math.round(g.ageSum/g.n):0})).sort((a,b)=>b.total-a.total);
+}
+function paySumBy(rows, key){
+  const m={}; rows.forEach(r=>{ if(!r.isOpen) return; const k=r[key]||'—'; m[k]=(m[k]||0)+r.outstanding; });
+  return Object.entries(m).map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
+}
+function payBarChart(title, items, max){
+  const mx = max || Math.max(1, ...items.map(i=>i.value));
+  const rows = items.slice(0,8).map(i=>`<div class="pay-bar-row"><span class="bl" title="${cEsc(i.label)}">${cEsc(i.label)}</span><div class="pay-bar-track"><div class="pay-bar-fill" style="width:${Math.max(2,i.value/mx*100)}%${i.color?';background:'+i.color:''}"></div></div><span class="bv">${payMoney(i.value)}</span></div>`).join('');
+  return `<div class="pay-chart"><h4>${cEsc(title)}</h4>${items.length?rows:'<div style="color:var(--text-4);font-size:12px">No open outstanding.</div>'}</div>`;
+}
+function payDistinct(rows, sel){ return [...new Set(rows.map(sel).filter(v=>v&&v!=='—'))].sort((a,b)=>String(a).localeCompare(String(b))); }
+
+function renderPayment(){
+  const host=document.getElementById('payment-host'); if(!host) return;
+  if(!_payLoaded){ loadPaymentData(); host.innerHTML='<div class="pay-empty">Loading payment data…</div>'; return; }
+  const all=payAllRows();
+  if(!all.length){ host.innerHTML='<div class="pay-subtabs"><button class="pay-subtab active">Summary</button><button class="pay-subtab">Payment Deep-Dive</button></div><div class="pay-empty">No payment records yet in the sheet (gid 406922800). This view will populate automatically as invoices are added.</div>'; return; }
+
+  // Subtab nav
+  const nav='<div class="pay-subtabs">'
+    + `<button class="pay-subtab${_paySub==='summary'?' active':''}" data-ps="summary">Summary</button>`
+    + `<button class="pay-subtab${_paySub==='deepdive'?' active':''}" data-ps="deepdive">Payment Deep-Dive</button>`
+    + '</div>';
+
+  // Filters (options come from the UNfiltered rows so you can always widen).
+  const opt=(cur,vals,allLbl)=>`<option value="">${allLbl}</option>`+vals.map(v=>`<option value="${cEsc(v)}"${v===cur?' selected':''}>${cEsc(v)}</option>`).join('');
+  const filters='<div class="pay-filters">'
+    + `<div class="pay-fg"><label>Customer Segment</label><select data-pf="segment">${opt(_payFilters.segment, payDistinct(all,r=>r.seg),'All Segments')}</select></div>`
+    + `<div class="pay-fg"><label>Manager</label><select data-pf="manager">${opt(_payFilters.manager, payDistinct(all,r=>r.manager),'All Managers')}</select></div>`
+    + `<div class="pay-fg"><label>POD</label><select data-pf="pod">${opt(_payFilters.pod, payDistinct(all,r=>r.pod),'All PODs')}</select></div>`
+    + `<div class="pay-fg"><label>CSM Name</label><select data-pf="csm">${opt(_payFilters.csm, payDistinct(all,r=>r.csm),'All CSMs')}</select></div>`
+    + `<div class="pay-fg"><label>Customer Name</label><select data-pf="customer">${opt(_payFilters.customer, payDistinct(all,r=>r.customer),'All Customers')}</select></div>`
+    + '</div>';
+
+  const rows=payFiltered();
+  host.innerHTML = nav + filters + (_paySub==='deepdive' ? payDeepDiveHtml(rows) : paySummaryHtml(rows));
+
+  // wire subtabs + filters
+  host.querySelectorAll('.pay-subtab[data-ps]').forEach(b=>b.addEventListener('click',()=>{ _paySub=b.dataset.ps; renderPayment(); }));
+  host.querySelectorAll('.pay-filters select[data-pf]').forEach(s=>s.addEventListener('change',()=>{ _payFilters[s.dataset.pf]=s.value; renderPayment(); }));
+  if(_paySub==='deepdive') payWireDeepDive(host);
+}
+
+function paySummaryHtml(rows){
+  const open=rows.filter(r=>r.isOpen);
+  const total=open.reduce((s,r)=>s+r.outstanding,0);
+  const red=open.filter(r=>r.rag==='Red'), amber=open.filter(r=>r.rag==='Amber'), green=open.filter(r=>r.rag==='Green');
+  const sum=a=>a.reduce((s,r)=>s+r.outstanding,0);
+  const custN=new Set(open.map(r=>r.eid||r.customer)).size;
+  const card=(lbl,val,sub,accent)=>`<div class="pay-card" style="--ov-accent:${accent}"><div class="lbl">${lbl}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`;
+  const cards='<div class="pay-cards">'
+    + card('Total Outstanding', payMoney(total), open.length+' open invoices', '#4F46E5')
+    + card('At Risk (Red)', payMoney(sum(red)), red.length+' invoices · overdue &gt;15d', '#DC2626')
+    + card('Amber', payMoney(sum(amber)), amber.length+' invoices · 7–15d', '#D97706')
+    + card('Green', payMoney(sum(green)), green.length+' invoices · &lt;7d', '#16A34A')
+    + card('Customers', fmtNum(custN), 'with open balance', '#0E7490')
+    + '</div>';
+
+  const ragItems=[{label:'Red',value:sum(red),color:PAY_RAG_COLOR.Red},{label:'Amber',value:sum(amber),color:PAY_RAG_COLOR.Amber},{label:'Green',value:sum(green),color:PAY_RAG_COLOR.Green}].filter(i=>i.value>0);
+  const charts='<div class="pay-charts">'
+    + payBarChart('Outstanding by Segment', paySumBy(open,'seg'))
+    + payBarChart('Outstanding by POD', paySumBy(open,'pod'))
+    + payBarChart('Outstanding by RAG', ragItems)
+    + payBarChart('Top CSMs by Outstanding', paySumBy(open,'csm'))
+    + '</div>';
+
+  const cust=payByCustomer(open);
+  const th='<tr><th>Customer</th><th>CSM</th><th>Country</th><th class="num">Total Outstanding</th><th class="num">Red</th><th class="num">Amber</th><th class="num">Green</th><th class="num">Avg Aging (d)</th><th class="num">Invoices</th></tr>';
+  const body=cust.map(g=>`<tr><td>${cEsc(g.customer)}</td><td>${cEsc(g.csm)}</td><td>${cEsc(g.country||'—')}</td><td class="num">${payMoney(g.total)}</td><td class="num" style="color:#DC2626">${g.Red?payMoney(g.Red):'—'}</td><td class="num" style="color:#D97706">${g.Amber?payMoney(g.Amber):'—'}</td><td class="num" style="color:#16A34A">${g.Green?payMoney(g.Green):'—'}</td><td class="num">${g.avgAge}</td><td class="num">${g.n}</td></tr>`).join('');
+  const table=`<div class="pay-tbl-wrap"><table class="pay-tbl"><thead>${th}</thead><tbody>${body||'<tr><td colspan="9" style="text-align:center;color:var(--text-4);padding:20px">No open outstanding for this filter.</td></tr>'}</tbody></table></div>`;
+  return cards+charts+table;
+}
+
+function payDeepDiveHtml(rows){
+  const cust=payByCustomer(rows.filter(r=>r.isOpen));
+  const notes=payNotesGet();
+  const reasonOpts=v=>'<option value="">—</option>'+PAY_REASONS.map(o=>`<option value="${cEsc(o)}"${o===v?' selected':''}>${cEsc(o)}</option>`).join('');
+  const th='<tr><th>Customer</th><th>CSM</th><th class="num">Outstanding</th><th class="num">Avg Aging</th><th>RAG</th><th style="min-width:190px">Reason Category</th><th style="min-width:200px">Notes</th><th style="min-width:140px">Action Owner</th><th style="min-width:140px">Next Action Date</th></tr>';
+  const worst=g=>g.Red>0?'Red':g.Amber>0?'Amber':'Green';
+  const body=cust.map(g=>{ const k=g.eid||g.customer; const n=notes[k]||{}; return `<tr data-k="${cEsc(k)}">`
+    + `<td>${cEsc(g.customer)}</td><td>${cEsc(g.csm)}</td><td class="num">${payMoney(g.total)}</td><td class="num">${g.avgAge}</td>`
+    + `<td><span class="pay-rag ${worst(g)}"></span>${worst(g)}</td>`
+    + `<td><select class="pay-in" data-fld="reason">${reasonOpts(n.reason||'')}</select></td>`
+    + `<td><input class="pay-in" data-fld="notes" value="${cEsc(n.notes||'')}" placeholder="Add note…"></td>`
+    + `<td><input class="pay-in" data-fld="owner" value="${cEsc(n.owner||'')}" placeholder="Owner"></td>`
+    + `<td><input class="pay-in" type="date" data-fld="nextDate" value="${cEsc(n.nextDate||'')}"></td>`
+    + `</tr>`; }).join('');
+  const hdr='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:13px;color:var(--text-3)">CSM follow-up tracker — entries save to this browser. <b>'+cust.length+'</b> customers with open balance.</div><button class="email-btn email-btn-ghost" id="pay-dd-csv">↓ Download CSV</button></div>';
+  return hdr+`<div class="pay-tbl-wrap"><table class="pay-tbl"><thead>${th}</thead><tbody>${body||'<tr><td colspan="9" style="text-align:center;color:var(--text-4);padding:20px">No open outstanding for this filter.</td></tr>'}</tbody></table></div>`;
+}
+function payWireDeepDive(host){
+  host.querySelectorAll('.pay-tbl tbody tr[data-k]').forEach(tr=>{
+    const k=tr.dataset.k;
+    tr.querySelectorAll('[data-fld]').forEach(el=>{
+      const ev = el.tagName==='SELECT'||el.type==='date' ? 'change':'input';
+      el.addEventListener(ev, ()=>{ const o=payNotesGet(); const rec=o[k]||(o[k]={}); rec[el.dataset.fld]=el.value; payNotesSet(o); });
+    });
+  });
+  const csv=host.querySelector('#pay-dd-csv');
+  if(csv) csv.addEventListener('click', ()=>{
+    const notes=payNotesGet();
+    const cust=payByCustomer(payFiltered().filter(r=>r.isOpen));
+    const q=v=>{ const s=(v==null?'':String(v)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+    const H=['Customer','CSM','Manager','POD','Segment','Country','Outstanding USD','Red','Amber','Green','Avg Aging (days)','No. of Invoices','Reason Category','Notes','Action Owner','Next Action Date'];
+    const lines=[H.join(',')];
+    cust.forEach(g=>{ const n=notes[g.eid||g.customer]||{}; lines.push([g.customer,g.csm,g.manager,g.pod,g.seg,g.country,Math.round(g.total),Math.round(g.Red),Math.round(g.Amber),Math.round(g.Green),g.avgAge,g.n,n.reason||'',n.notes||'',n.owner||'',n.nextDate||''].map(q).join(',')); });
+    if(typeof csvDownload==='function') csvDownload(lines.join('\n'),'payment_deep_dive');
+  });
+}
 function renderAll() {
   const isDisplay = state.view === 'display';
   const isChurn = state.view === 'churn';
@@ -11116,7 +11333,8 @@ function renderAll() {
   const isAnkit = state.view === 'ankit';
   const isMeeting = state.view === 'meeting';
   const isRetention = state.view === 'retention';
-  const isProductAgnostic = isOverall || isDisplay || isChurn || isChurnAnalysis || isEmail || isCsmReport || isAnkit || isMeeting || isRetention;
+  const isPayment = state.view === 'payment';
+  const isProductAgnostic = isOverall || isDisplay || isChurn || isChurnAnalysis || isEmail || isCsmReport || isAnkit || isMeeting || isRetention || isPayment;
   // Display / Email / CSM Performance / Ankit's View / Meeting are grouped under one
   // "Views" top tab with a secondary pill bar. It reads active whenever any is.
   const isViewGroup = isDisplay || isEmail || isAnkit || isMeeting;
@@ -11131,6 +11349,7 @@ function renderAll() {
   document.getElementById('view-email').style.display = isEmail ? 'block' : 'none';
   document.getElementById('view-csmreport').style.display = isCsmReport ? 'block' : 'none';
   document.getElementById('view-retention').style.display = isRetention ? 'block' : 'none';
+  document.getElementById('view-payment').style.display = isPayment ? 'block' : 'none';
   document.getElementById('view-ankit').style.display = isAnkit ? 'block' : 'none';
   document.getElementById('view-meeting').style.display = isMeeting ? 'block' : 'none';
   // Hide the Overview/Rooftop sub-tabs + filter-bar on the product-agnostic views.
@@ -11151,10 +11370,12 @@ function renderAll() {
                  : t.dataset.view === 'churnanalysis' ? isChurnAnalysis
                  : t.dataset.view === 'csmreport' ? isCsmReport
                  : t.dataset.view === 'retention' ? isRetention
+                 : t.dataset.view === 'payment' ? isPayment
                  : (!isProductAgnostic && t.dataset.product === state.product);
     t.classList.toggle('active', active);
   });
   if (isOverall) { renderOverall(); return; }
+  if (isPayment) { renderPayment(); return; }
   if (isRetention) { renderRetention(); return; }
   if (isMeeting) { renderMeeting(); return; }
   if (isAnkit) { renderAnkit(); return; }
@@ -11219,6 +11440,12 @@ document.querySelectorAll('.top-tab').forEach(t => {
     }
     if (t.dataset.view === 'csmreport') {
       state.view = 'csmreport';
+      renderAll();
+      return;
+    }
+    if (t.dataset.view === 'payment') {
+      state.view = 'payment';
+      persistState && persistState();
       renderAll();
       return;
     }
@@ -11676,6 +11903,7 @@ fetchJsonInto('vins_buckets.json', VINS_BUCKETS);
 fetchJsonInto('vins_image_buckets.json', VINS_IMAGE_BUCKETS);
 fetchJsonInto('csm_action_trend.json', CSM_ACTION_TREND);
 fetchCommMetabase();
+loadPaymentData();
 </script>
 
 </body>

@@ -1,0 +1,54 @@
+name: Fetch Payment Analysis data
+
+# Builds payment_data.json for the Payment Analysis tab from the invoices tab of
+# the ARR sheet (gid 406922800). Public sheet via gviz — no secret needed. Commits
+# the repo-root + vercel_deploy copies (the dashboard fetches ./payment_data.json).
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+    - cron: '23 17 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: payment-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch payment sheet → payment_data.json
+        working-directory: metabase
+        run: |
+          if node fetch-payment.mjs; then
+            echo "Payment fetch OK"
+          else
+            echo "::warning::Payment fetch failed — keeping the last-good payment_data.json."
+          fi
+
+      - name: Commit payment_data.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          FILES="payment_data.json vercel_deploy/payment_data.json"
+          if [[ -n "$(git status --porcelain $FILES)" ]]; then
+            git add $FILES
+            git commit -m "Update payment_data.json (Payment Analysis) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin main && break || sleep 5
+            done
+          else
+            echo "payment_data.json unchanged — no commit"
+          fi
