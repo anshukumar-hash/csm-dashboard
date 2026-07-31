@@ -31,6 +31,10 @@ const repoRoot = path.resolve(here, '..');
 
 const SHEET = '1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A';
 const GID = '406922800';
+// Write-off / exclusion tab — its column G (invoice_number) lists invoices to
+// IGNORE from the main payment feed.
+const EXCLUDE_GID = '274080915';
+const EXCLUDE_INVOICE_COL = 6; // column G
 
 const S = v => (v == null ? '' : String(v));
 const num = v => { if (v == null || v === '') return 0; const n = (typeof v === 'number') ? v : Number(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
@@ -44,12 +48,28 @@ const gdate = v => {
 };
 const cell = (c, i) => (c && c[i] ? (c[i].v != null ? c[i].v : (c[i].f != null ? c[i].f : null)) : null);
 
-const url = `https://docs.google.com/spreadsheets/d/${SHEET}/gviz/tq?tqx=out:json&gid=${GID}&_cb=${Date.now()}`;
+const gviz = async gid => {
+  const u = `https://docs.google.com/spreadsheets/d/${SHEET}/gviz/tq?tqx=out:json&gid=${gid}&_cb=${Date.now()}`;
+  const t = await (await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' } })).text();
+  return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
+};
+
+// Exclusion set — invoice numbers written off (exclusion tab, column G).
+console.error(`Fetching exclusion tab gid=${EXCLUDE_GID} …`);
+const exclude = new Set();
+try {
+  const ex = await gviz(EXCLUDE_GID);
+  for (const r of (ex.table.rows || [])) {
+    const inv = S(cell(r.c || [], EXCLUDE_INVOICE_COL)).trim();
+    if (inv) exclude.add(inv);
+  }
+} catch (e) { console.error('WARN: exclusion tab fetch failed — proceeding without exclusions.', e.message); }
+console.error(`Exclusion list: ${exclude.size} invoice numbers.`);
+
 console.error(`Fetching payment sheet gid=${GID} …`);
-const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-const txt = await res.text();
-const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+const json = await gviz(GID);
 const rowsIn = json.table.rows || [];
+let excluded = 0;
 
 const rows = [];
 for (const r of rowsIn) {
@@ -57,6 +77,7 @@ for (const r of rowsIn) {
   const customer = S(cell(c, 1)).trim();      // B
   const invoice = S(cell(c, 5)).trim();        // F
   if (!customer && !invoice) continue;
+  if (invoice && exclude.has(invoice)) { excluded++; continue; }  // written-off → ignore
   const total = num(cell(c, 12));              // M
   const balance = num(cell(c, 13));            // N
   const finalUsd = num(cell(c, 26));           // AA
@@ -87,6 +108,8 @@ const out = {
   _meta: {
     gid: GID,
     rows: rows.length,
+    excluded,
+    exclude_gid: EXCLUDE_GID,
     generated: new Date().toISOString(),
     note: 'Payment invoices from ARR sheet gid 406922800. outstandingUsd = (balance/total)×FinalUSD. RAG (aging) + CSM/segment/manager/POD join are computed client-side.',
   },

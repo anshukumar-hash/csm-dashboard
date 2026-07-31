@@ -609,9 +609,19 @@
   .pay-card .lbl{font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
   .pay-card .val{font-size:26px;font-weight:800;margin-top:6px;color:var(--text)}
   .pay-card .sub{font-size:11.5px;color:var(--text-3);margin-top:3px}
-  .pay-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:18px}
+  .pay-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}
+  @media (max-width:900px){ .pay-charts{grid-template-columns:1fr} }
   .pay-chart{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
-  .pay-chart h4{font-size:13px;font-weight:700;color:var(--text);margin:0 0 12px}
+  .pay-chart h4{font-size:13px;font-weight:700;color:var(--text);margin:0 0 6px}
+  .pay-svg{width:100%;height:auto;display:block}
+  .pay-chart-empty{color:var(--text-4);font-size:12px;padding:34px 0;text-align:center}
+  /* Chart hover — dim siblings, highlight + outline the hovered mark. */
+  .pay-mark{transition:opacity .12s;cursor:pointer}
+  .pay-svg:hover .pay-mark{opacity:.38}
+  .pay-mark:hover{opacity:1;stroke:var(--text);stroke-width:1.5}
+  .pay-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:#111827;color:#fff;font-size:12px;font-weight:600;padding:6px 9px;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.25);white-space:nowrap}
+  .pay-reset-btn{padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--blue);border-radius:6px;background:var(--surface);color:var(--blue);cursor:pointer}
+  .pay-reset-btn:hover{background:var(--blue);color:#fff}
   .pay-bar-row{display:grid;grid-template-columns:120px 1fr 90px;align-items:center;gap:8px;margin-bottom:7px;font-size:12px}
   .pay-bar-row .bl{color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pay-bar-track{background:var(--bg);border-radius:5px;height:16px;overflow:hidden}
@@ -1614,6 +1624,7 @@ const POD_MAP = {
   'Ritika': ['Ritika Agarwal','Abhijeet Mitra'],
   'Prabha': ['Prabha Kumari','Zeeshana Aijaz'],
   'Rupesh': ['Rupesh Rawat','Manpreet Kaur','Prathamesh Prashant','Anuj Tewatia','Vishal Singh','Vishal Singh1','Sanyam Tyagi'],
+  'Jatin':  ['Akash Jaiswal','Vedant Choudhary'],
 };
 // Reverse index: canonical CSM display name → pod key. Built once.
 const CSM_POD = {}; Object.keys(POD_MAP).forEach(p => POD_MAP[p].forEach(c => { CSM_POD[c] = p; }));
@@ -11179,10 +11190,10 @@ function payAllRows(){
   return _paymentData.rows.map(r=>{
     const mm=meta[r.eid]||{};
     const csmRaw=mm.csm||'';
-    const csm = csmRaw ? ((typeof dispCsm==='function'?dispCsm(csmRaw):csmRaw)||csmRaw) : 'Unassigned';
-    const manager = (getManager(csmRaw)||getManager(csm)) || 'Unassigned';
-    const pod = (getPod(csmRaw)||getPod(csm)) || '—';
-    const seg = mm.seg || '—';
+    const csm = csmRaw ? (normalizeCSM(csmRaw)||csmRaw) : 'Not Assigned';
+    const manager = (getManager(csmRaw)||getManager(csm)) || 'Not Assigned';
+    const pod = (getPod(csmRaw)||getPod(csm)) || 'Not Assigned';
+    const seg = mm.seg || 'Not Assigned';
     const age = r.raiseIso ? Math.max(0, Math.floor((now - Date.parse(r.raiseIso+'T00:00:00Z'))/86400000)) : null;
     const outstanding = Number(r.outstandingUsd)||0;
     const isOpen = outstanding>0.005;
@@ -11191,17 +11202,17 @@ function payAllRows(){
     return Object.assign({}, r, {csm, csmRaw, manager, pod, seg, age, outstanding, isOpen, rag});
   });
 }
-function payFiltered(){
+const PAY_FKEY = { segment:'seg', manager:'manager', pod:'pod', csm:'csm', customer:'customer' };
+// Rows matching every active filter EXCEPT `skip` — powers linked dropdowns
+// (each filter's options reflect the other selected filters). skip=null → all.
+function payFilteredExcept(skip){
   const f=_payFilters;
   return payAllRows().filter(r=>{
-    if(f.segment && r.seg!==f.segment) return false;
-    if(f.manager && r.manager!==f.manager) return false;
-    if(f.pod && r.pod!==f.pod) return false;
-    if(f.csm && r.csm!==f.csm) return false;
-    if(f.customer && r.customer!==f.customer) return false;
+    for(const k in PAY_FKEY){ if(k!==skip && f[k] && r[PAY_FKEY[k]]!==f[k]) return false; }
     return true;
   });
 }
+function payFiltered(){ return payFilteredExcept(null); }
 // Group OPEN invoices by customer (eid) → one aggregate per customer.
 function payByCustomer(rows){
   const m={};
@@ -11223,6 +11234,46 @@ function payBarChart(title, items, max){
   return `<div class="pay-chart"><h4>${cEsc(title)}</h4>${items.length?rows:'<div style="color:var(--text-4);font-size:12px">No open outstanding.</div>'}</div>`;
 }
 function payDistinct(rows, sel){ return [...new Set(rows.map(sel).filter(v=>v&&v!=='—'))].sort((a,b)=>String(a).localeCompare(String(b))); }
+// ── SVG chart helpers (value-graded vertical bars + a donut) ──
+function payLerpHex(a,b,t){ t=Math.max(0,Math.min(1,t));
+  const p=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+  const A=p(a),B=p(b); return '#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('');
+}
+function payNiceMax(v){ if(v<=0) return 1; const p=Math.pow(10,Math.floor(Math.log10(v))); const n=v/p; const m=n<=1?1:n<=2?2:n<=5?5:10; return m*p; }
+function payAxisMoney(n){ n=Number(n)||0; const a=Math.abs(n); return a>=1e6?(+(n/1e6).toFixed(1))+'M':a>=1e3?(+(n/1e3).toFixed(0))+'K':String(Math.round(n)); }
+function paySvgBar(title, items, palette){
+  items=(items||[]).slice(0,11);
+  if(!items.length) return `<div class="pay-chart"><h4>${cEsc(title)}</h4><div class="pay-chart-empty">No open outstanding.</div></div>`;
+  const W=580,H=320,padL=58,padR=14,padT=26,padB=98, plotW=W-padL-padR, plotH=H-padT-padB, y0=padT+plotH;
+  const maxV=Math.max(...items.map(i=>i.value)), nm=payNiceMax(maxV), slot=plotW/items.length, bw=Math.min(54, slot*0.62);
+  let s=`<svg viewBox="0 0 ${W} ${H}" class="pay-svg" preserveAspectRatio="xMidYMid meet">`;
+  [0,.25,.5,.75,1].forEach(f=>{ const t=f*nm, y=y0-f*plotH; s+=`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1"/><text x="${padL-7}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-4)">${payAxisMoney(t)}</text>`; });
+  items.forEach((it,i)=>{ const x=padL+slot*i+(slot-bw)/2, h=Math.max(1,it.value/nm*plotH), y=y0-h, col=it.color||payLerpHex(palette[0],palette[1], maxV?it.value/maxV:0);
+    s+=`<rect class="pay-mark" data-tip="${cEsc(it.label)}: ${payMoney(it.value)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${col}"></rect>`;
+    s+=`<text x="${(x+bw/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="var(--text-2)">${payMoney(it.value)}</text>`;
+    const lx=(x+bw/2).toFixed(1), ly=y0+13, lbl=String(it.label).length>16?String(it.label).slice(0,15)+'…':it.label;
+    s+=`<text x="${lx}" y="${ly}" text-anchor="end" font-size="10" fill="var(--text-3)" transform="rotate(-35 ${lx} ${ly})">${cEsc(lbl)}</text>`;
+  });
+  return `<div class="pay-chart"><h4>${cEsc(title)}</h4>${s}</svg></div>`;
+}
+function payDonut(title, items){
+  items=(items||[]).filter(i=>i.value>0);
+  const total=items.reduce((a,i)=>a+i.value,0);
+  if(!total) return `<div class="pay-chart"><h4>${cEsc(title)}</h4><div class="pay-chart-empty">No open outstanding.</div></div>`;
+  const cx=96,cy=112,r=80,ir=50; let a0=-Math.PI/2;
+  let s=`<svg viewBox="0 0 340 232" class="pay-svg" preserveAspectRatio="xMidYMid meet">`;
+  items.forEach(it=>{ const frac=it.value/total, a1=a0+frac*2*Math.PI, big=frac>0.5?1:0;
+    const X=(rr,a)=>cx+rr*Math.cos(a), Y=(rr,a)=>cy+rr*Math.sin(a);
+    s+=`<path class="pay-mark" data-tip="${cEsc(it.label)}: ${payMoney(it.value)} (${Math.round(frac*100)}%)" d="M${X(r,a0).toFixed(1)} ${Y(r,a0).toFixed(1)} A${r} ${r} 0 ${big} 1 ${X(r,a1).toFixed(1)} ${Y(r,a1).toFixed(1)} L${X(ir,a1).toFixed(1)} ${Y(ir,a1).toFixed(1)} A${ir} ${ir} 0 ${big} 0 ${X(ir,a0).toFixed(1)} ${Y(ir,a0).toFixed(1)} Z" fill="${it.color}"></path>`;
+    a0=a1;
+  });
+  s+=`<text x="${cx}" y="${cy-1}" text-anchor="middle" font-size="15" font-weight="800" fill="var(--text)">${payMoney(total)}</text><text x="${cx}" y="${cy+15}" text-anchor="middle" font-size="9" fill="var(--text-4)">TOTAL</text>`;
+  // Legend — label on line 1, amount·% on line 2 (no overlap).
+  let ly=44; items.forEach(it=>{ s+=`<rect x="208" y="${ly-10}" width="12" height="12" rx="2" fill="${it.color}"/>`
+    + `<text x="226" y="${ly}" font-size="12" font-weight="700" fill="var(--text-2)">${cEsc(it.label)}</text>`
+    + `<text x="226" y="${ly+16}" font-size="11.5" font-weight="700" fill="var(--text)">${payMoney(it.value)} · ${Math.round(it.value/total*100)}%</text>`; ly+=42; });
+  return `<div class="pay-chart"><h4>${cEsc(title)}</h4>${s}</svg></div>`;
+}
 
 function renderPayment(){
   const host=document.getElementById('payment-host'); if(!host) return;
@@ -11236,14 +11287,17 @@ function renderPayment(){
     + `<button class="pay-subtab${_paySub==='deepdive'?' active':''}" data-ps="deepdive">Payment Deep-Dive</button>`
     + '</div>';
 
-  // Filters (options come from the UNfiltered rows so you can always widen).
+  // Linked filters — each dropdown's options reflect the OTHER active filters.
+  // The current selection is always kept (via payFilteredExcept skipping itself).
   const opt=(cur,vals,allLbl)=>`<option value="">${allLbl}</option>`+vals.map(v=>`<option value="${cEsc(v)}"${v===cur?' selected':''}>${cEsc(v)}</option>`).join('');
+  const fopt=(key,sel,allLbl)=>opt(_payFilters[key], payDistinct(payFilteredExcept(key), sel), allLbl);
   const filters='<div class="pay-filters">'
-    + `<div class="pay-fg"><label>Customer Segment</label><select data-pf="segment">${opt(_payFilters.segment, payDistinct(all,r=>r.seg),'All Segments')}</select></div>`
-    + `<div class="pay-fg"><label>Manager</label><select data-pf="manager">${opt(_payFilters.manager, payDistinct(all,r=>r.manager),'All Managers')}</select></div>`
-    + `<div class="pay-fg"><label>POD</label><select data-pf="pod">${opt(_payFilters.pod, payDistinct(all,r=>r.pod),'All PODs')}</select></div>`
-    + `<div class="pay-fg"><label>CSM Name</label><select data-pf="csm">${opt(_payFilters.csm, payDistinct(all,r=>r.csm),'All CSMs')}</select></div>`
-    + `<div class="pay-fg"><label>Customer Name</label><select data-pf="customer">${opt(_payFilters.customer, payDistinct(all,r=>r.customer),'All Customers')}</select></div>`
+    + `<div class="pay-fg"><label>Customer Segment</label><select data-pf="segment">${fopt('segment',r=>r.seg,'All Segments')}</select></div>`
+    + `<div class="pay-fg"><label>Manager</label><select data-pf="manager">${fopt('manager',r=>r.manager,'All Managers')}</select></div>`
+    + `<div class="pay-fg"><label>POD</label><select data-pf="pod">${fopt('pod',r=>r.pod,'All PODs')}</select></div>`
+    + `<div class="pay-fg"><label>CSM Name</label><select data-pf="csm">${fopt('csm',r=>r.csm,'All CSMs')}</select></div>`
+    + `<div class="pay-fg"><label>Customer Name</label><select data-pf="customer">${fopt('customer',r=>r.customer,'All Customers')}</select></div>`
+    + `<div class="pay-fg"><label>&nbsp;</label><button class="pay-reset-btn" id="pay-reset">✕ Reset filters</button></div>`
     + '</div>';
 
   const rows=payFiltered();
@@ -11252,7 +11306,21 @@ function renderPayment(){
   // wire subtabs + filters
   host.querySelectorAll('.pay-subtab[data-ps]').forEach(b=>b.addEventListener('click',()=>{ _paySub=b.dataset.ps; renderPayment(); }));
   host.querySelectorAll('.pay-filters select[data-pf]').forEach(s=>s.addEventListener('change',()=>{ _payFilters[s.dataset.pf]=s.value; renderPayment(); }));
+  const rb=host.querySelector('#pay-reset'); if(rb) rb.addEventListener('click',()=>{ Object.keys(_payFilters).forEach(k=>_payFilters[k]=''); renderPayment(); });
+  payWireCharts(host);
   if(_paySub==='deepdive') payWireDeepDive(host);
+}
+// Hover tooltip for the SVG charts (bars + donut) — shows the value + highlights.
+function payWireCharts(host){
+  let tip=document.getElementById('pay-tip');
+  if(!tip){ tip=document.createElement('div'); tip.id='pay-tip'; tip.className='pay-tip'; document.body.appendChild(tip); }
+  host.querySelectorAll('.pay-svg').forEach(svg=>{
+    svg.addEventListener('mousemove', e=>{ const m=e.target.closest('.pay-mark');
+      if(m&&m.dataset.tip){ tip.textContent=m.dataset.tip; tip.style.display='block'; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; }
+      else tip.style.display='none';
+    });
+    svg.addEventListener('mouseleave', ()=>{ tip.style.display='none'; });
+  });
 }
 
 function paySummaryHtml(rows){
@@ -11270,12 +11338,11 @@ function paySummaryHtml(rows){
     + card('Customers', fmtNum(custN), 'with open balance', '#0E7490')
     + '</div>';
 
-  const ragItems=[{label:'Red',value:sum(red),color:PAY_RAG_COLOR.Red},{label:'Amber',value:sum(amber),color:PAY_RAG_COLOR.Amber},{label:'Green',value:sum(green),color:PAY_RAG_COLOR.Green}].filter(i=>i.value>0);
   const charts='<div class="pay-charts">'
-    + payBarChart('Outstanding by Segment', paySumBy(open,'seg'))
-    + payBarChart('Outstanding by POD', paySumBy(open,'pod'))
-    + payBarChart('Outstanding by RAG', ragItems)
-    + payBarChart('Top CSMs by Outstanding', paySumBy(open,'csm'))
+    + paySvgBar('Outstanding by Segment', paySumBy(open,'seg'), ['#c7d2fe','#3730a3'])
+    + paySvgBar('Outstanding by POD', paySumBy(open,'pod'), ['#bae6fd','#075985'])
+    + payDonut('Outstanding by RAG (aging)', [{label:'Red',value:sum(red),color:PAY_RAG_COLOR.Red},{label:'Amber',value:sum(amber),color:PAY_RAG_COLOR.Amber},{label:'Green',value:sum(green),color:PAY_RAG_COLOR.Green}])
+    + paySvgBar('Top CSMs by Outstanding', paySumBy(open,'csm'), ['#fecaca','#7f1d1d'])
     + '</div>';
 
   const cust=payByCustomer(open);
