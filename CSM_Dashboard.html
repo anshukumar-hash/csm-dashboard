@@ -9890,7 +9890,7 @@ function csmrMultiSelect(host, cfg){
     host.innerHTML = '<button type="button" class="ms-btn"></button><div class="ms-pop" style="display:none"></div>';
     inst = host._ms = { btn:host.querySelector('.ms-btn'), pop:host.querySelector('.ms-pop'), open:false };
     inst.btn.addEventListener('click', e=>{ e.stopPropagation();
-      document.querySelectorAll('.ms.open').forEach(m=>{ if(m!==host){ m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; if(m._ms) m._ms.open=false; } });
+      document.querySelectorAll('.ms.open').forEach(m=>{ if(m!==host && m._ms){ m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; m._ms.open=false; } });  // only close OUR (csmr) multi-selects, never the main filter bar
       inst.open=!inst.open; host.classList.toggle('open', inst.open); inst.pop.style.display=inst.open?'':'none';
       if(inst.open){ const s=inst.pop.querySelector('.ms-search'); if(s) s.focus(); }
     });
@@ -9924,9 +9924,11 @@ function csmrMultiSelect(host, cfg){
     });
   });
 }
-// Close any open multi-select popup when clicking elsewhere (wired once).
+// Close any open csmr multi-select popup when clicking elsewhere (wired once).
+// Scoped to OUR instances (m._ms) so it never touches the main filter bar's
+// own .ms dropdowns (which manage visibility via the .open class + CSS).
 if(!window._msOutsideWired){ window._msOutsideWired = true;
-  document.addEventListener('click', ()=>{ document.querySelectorAll('.ms.open').forEach(m=>{ m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; if(m._ms) m._ms.open=false; }); });
+  document.addEventListener('click', ()=>{ document.querySelectorAll('.ms.open').forEach(m=>{ if(!m._ms) return; m.classList.remove('open'); const p=m.querySelector('.ms-pop'); if(p) p.style.display='none'; m._ms.open=false; }); });
 }
 function renderCsmReport(){
   if(_churnState==='idle') loadChurn();
