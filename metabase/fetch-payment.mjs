@@ -103,6 +103,17 @@ for (const r of rowsIn) {
   });
 }
 
+// Guard: refuse to overwrite last-good with a suspiciously small pull. The
+// invoice book is thousands of rows; a tiny result means the source sheet is
+// mid-edit / incomplete. Keep the committed last-good file (mirrors sync.ps1's
+// s_rows<100 guard). Exit 0 so CI stays green and the "commit if changed" step
+// finds no change.
+const MIN_ROWS = 1000;
+if (rows.length < MIN_ROWS) {
+  console.error(`ABORT: only ${rows.length} invoices (< ${MIN_ROWS}) — source sheet looks incomplete/mid-edit. Keeping last-good payment_data.json (not overwriting).`);
+  process.exit(0);
+}
+
 const out = {
   rows,
   _meta: {
