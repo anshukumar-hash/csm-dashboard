@@ -36,14 +36,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Guard — require the Metabase API key
-        run: |
-          if [ -z "${METABASE_API_KEY}" ]; then
-            echo "::error::METABASE_API_KEY not set. Add it under Settings → Secrets and variables → Actions (same key as .env.local)."
-            exit 1
-          fi
+      # No API-key guard — the Studio feed now reads a PUBLIC Metabase question
+      # (Studio Dump_Console), so no METABASE_API_KEY is required.
 
-      - name: Fetch card 12114 + ARR sheet → studio_card.json
+      - name: Fetch Studio public question + ARR sheet → studio_card.json
         working-directory: metabase
         run: |
           if node fetch-studio-card.mjs; then

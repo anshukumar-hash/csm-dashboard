@@ -36,25 +36,24 @@ if (fs.existsSync(envPath)) {
   }
 }
 const get = k => process.env[k] || envFile[k] || '';
-const KEY  = get('METABASE_API_KEY');
 const BASE = (get('METABASE_BASE_URL') || 'https://metabase.spyne.ai').replace(/\/+$/, '');
-const CARD = (get('METABASE_STUDIO_CARD') || '12114').replace(/\D/g, '');
+// Public Metabase question ("Studio Dump_Console") — no auth. Same 20-column
+// grain as card 12114 (enterprise/rooftop identity + monthly VINs + pendency +
+// score + contracted_arr). Env STUDIO_PUBLIC_UUID overrides.
+const PUBLIC_UUID = get('STUDIO_PUBLIC_UUID') || '81af28d2-cd3e-431c-8380-8f3eae935084';
 const ARR_SHEET = '1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A';
 const ARR_GID = '1341638818';
-if (!KEY) { console.error('ERROR: METABASE_API_KEY not set (.env.local locally, or GitHub secret in CI).'); process.exit(1); }
 
 const S = v => v == null ? '' : String(v);
 const num = v => { if (v == null) return 0; const n = (typeof v === 'number') ? v : Number(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
 
-// ---- 1. Metabase card 12114 → Studio rooftop universe ----
-console.error(`Querying ${BASE}/api/card/${CARD} …`);
-const res = await fetch(`${BASE}/api/card/${CARD}/query/json`, {
-  method: 'POST', headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' }, body: '{}',
-});
-if (!res.ok) { console.error(`ERROR: card ${CARD} → ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
+// ---- 1. Public Metabase question → Studio rooftop universe ----
+console.error(`Querying public question ${PUBLIC_UUID} …`);
+const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+if (!res.ok) { console.error(`ERROR: public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
 const card = await res.json();
-if (!Array.isArray(card) || !card.length) { console.error('ERROR: card returned no rows.'); process.exit(1); }
-console.error(`Card ${CARD}: ${card.length} rooftops.`);
+if (!Array.isArray(card) || card.length < 100) { console.error(`ERROR: public question returned ${Array.isArray(card)?card.length:'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
+console.error(`Studio public question: ${card.length} rooftops.`);
 
 // ---- 2. ARR sheet → eid → ARR (Studio, Live/Future Churn, col Q index 16) ----
 const arrUrl = `https://docs.google.com/spreadsheets/d/${ARR_SHEET}/gviz/tq?tqx=out:json&gid=${ARR_GID}&_cb=${Date.now()}`;
@@ -150,10 +149,10 @@ console.error(`Added ${added} ARR-sheet Live/Future-Churn accounts missing from 
 const out = {
   rows,
   _meta: {
-    card: CARD, arr_gid: ARR_GID,
+    source: 'public_question', public_uuid: PUBLIC_UUID, arr_gid: ARR_GID,
     rooftops: rows.length, arr_matched: matched, arr_unmatched: rows.length - matched,
     total_arr: Math.round(totArr),
-    generated_note: 'Studio feed — identity/VINs/CARR from Metabase card 12114; ARR from sheet gid 1341638818 (Studio, Live/Future Churn), split equally across each enterprise’s rooftops; MRR = ARR/12.',
+    generated_note: 'Studio feed — identity/VINs/CARR from public Metabase question (Studio Dump_Console); ARR from sheet gid 1341638818 (Studio, Live/Future Churn), split equally across each enterprise’s rooftops; MRR = ARR/12.',
   },
 };
 const outPath = path.join(repoRoot, 'studio_card.json');

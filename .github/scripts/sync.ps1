@@ -1388,11 +1388,9 @@ function New-MetabaseJwt($secret, $questionId) {
 }
 $accountStatusJson = $null
 try {
-    $mbSecret = $env:METABASE_SECRET_KEY
-    if (-not $mbSecret) { throw "METABASE_SECRET_KEY env not set" }
-    $mbTok = New-MetabaseJwt $mbSecret 12436
-    $metaCsv = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/embed/card/$mbTok/query/csv" -TimeoutSec 90
-    $asRows = $metaCsv | ConvertFrom-Csv
+    # Public Metabase question "Account_Clean_up" — no auth (was embed card 12436).
+    # Same columns: enterprise_id/enterprise_name/team_id/team_name/stage/cs_poc_email.
+    $asRows = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/public/card/3eb517f0-dd89-4dcd-b986-49e3fac8baeb/query/json" -TimeoutSec 90 -Headers @{ "User-Agent" = "Mozilla/5.0" }
     if ($asRows.Count -lt 100) { throw "only $($asRows.Count) rows" }
     # Detect name columns once (flexible — fall back to id when absent) so the
     # OB / Contracted popups can show enterprise_name / team_name, not just ids.

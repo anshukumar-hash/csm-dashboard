@@ -33,14 +33,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Guard — require the Metabase API key
-        run: |
-          if [ -z "${METABASE_API_KEY}" ]; then
-            echo "::error::METABASE_API_KEY not set. Add it under Settings → Secrets and variables → Actions (same key as .env.local)."
-            exit 1
-          fi
+      # No API-key guard — the Vini feed now reads a PUBLIC Metabase question
+      # (Vini Dump_Console), so no METABASE_API_KEY is required.
 
-      - name: Fetch card 12755 → vini_card.json
+      - name: Fetch Vini public question → vini_card.json
         working-directory: metabase
         # Tolerate a Metabase failure so a persistently-broken fetch does NOT
         # fail the whole run (which would email on every cron). On failure we

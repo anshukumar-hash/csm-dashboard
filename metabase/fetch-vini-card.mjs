@@ -33,22 +33,21 @@ if (fs.existsSync(envPath)) {
   }
 }
 const get = k => process.env[k] || envFile[k] || '';
-const KEY  = get('METABASE_API_KEY');
 const BASE = (get('METABASE_BASE_URL') || 'https://metabase.spyne.ai').replace(/\/+$/, '');
-const CARD = (get('METABASE_VINI_CARD') || '12755').replace(/\D/g, '');
-if (!KEY) { console.error('ERROR: METABASE_API_KEY not set (.env.local locally, or GitHub secret in CI).'); process.exit(1); }
+// Public Metabase question ("Vini Dump_Console") — no auth. Same daily grain as
+// card 12755 (day · agent_type · rooftop_stage · team_id · arr · touched/qualified/
+// appointments/conversion_rate + identity). Env VINI_PUBLIC_UUID overrides.
+const PUBLIC_UUID = get('VINI_PUBLIC_UUID') || 'f53df14b-56d8-4fb4-a5d9-de4d694a33a3';
 
 const S = v => v == null ? '' : String(v);
 const isLive = v => S(v).toLowerCase() === 'live';
 
-// ---- fetch card 12755 ----
-console.error(`Querying ${BASE}/api/card/${CARD} …`);
-const res = await fetch(`${BASE}/api/card/${CARD}/query/json`, {
-  method: 'POST', headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' }, body: '{}',
-});
-if (!res.ok) { console.error(`ERROR: ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
+// ---- fetch public Vini question ----
+console.error(`Querying public question ${PUBLIC_UUID} …`);
+const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+if (!res.ok) { console.error(`ERROR: public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
 const raw = await res.json();
-if (!Array.isArray(raw)) { console.error('Unexpected (non-array) response.'); process.exit(1); }
+if (!Array.isArray(raw) || raw.length < 100) { console.error(`ERROR: public question returned ${Array.isArray(raw)?raw.length:'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
 console.error(`Fetched ${raw.length} rows.`);
 
 // ---- daily (Live only) + unique (team_id, agent_type) grain ----
@@ -109,7 +108,7 @@ try {
 const payload = JSON.stringify({
   grain, daily,
   churned_arr_vini: churnedArrVini, churned_rows_vini: churnedRowsVini,
-  _meta: { card: CARD, base: BASE, generated: new Date().toISOString(),
+  _meta: { source: 'public_question', public_uuid: PUBLIC_UUID, base: BASE, generated: new Date().toISOString(),
            grain_rows: grain.length, rooftops, daily_rows: daily.length, non_live_skipped: nonLive,
            churned_arr_vini: Math.round(churnedArrVini), churned_rows_vini: churnedRowsVini },
 });
