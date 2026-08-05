@@ -8453,11 +8453,12 @@ const EM_DASH = '<span style="color:#CBD5E1">—</span>';
 const EM_LARR_BASE = 8187394;   // July-starting LARR base (per CS tracker)
 const EM_LARR_NEW  = 413104;
 // CARR (Contracted ARR) walk — Aug start baked in from the CARR walk:
-//   Last-month CARR 14,188,934 − Jul churn 339,309 + New Sales (Jul) 963,392
-//   − Sales drop 36,000 = 14,777,017. Live CARR = base − this-month churn.
-//   Jul churn restated 319,551 → 339,309 (+19,758 Studio churn logged late).
+//   Last-month CARR 14,188,934 − Jul loss 339,943 + New Sales (Jul) 963,392
+//   − Sales drop 36,000 = 14,776,383. Live CARR = base − this-month churn.
+//   Jul loss 339,943 = D2D 314,141 (Studio 249,385 + Vini 64,756)
+//   + Reseller 18,468 (Studio) + PAYG 7,334 (Studio).
 //   Roll this base forward on the 1st of each month.
-const EM_CARR_BASE = 14777017;
+const EM_CARR_BASE = 14776383;
 // Live Total-LARR fetch from the Spyne onboarding dashboard. That app embeds its
 // data and computes LARR client-side (no JSON API), so we fetch its HTML (its
 // Vercel host sends Access-Control-Allow-Origin: *), run it in a hidden
