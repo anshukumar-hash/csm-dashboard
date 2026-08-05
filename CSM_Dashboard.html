@@ -8450,7 +8450,7 @@ const EM_DASH = '<span style="color:#CBD5E1">—</span>';
 //     = Jun'26 End 8,233,215.
 //   Current ARR = this base + July new − July churn (computed live below).
 //   Roll forward MANUALLY on the 1st of each month.
-const EM_LARR_BASE = 8734719;   // Jul'26 month-end LARR = Aug opening book (roll forward monthly)
+const EM_LARR_BASE = 8187394;   // July-starting LARR base (per CS tracker)
 const EM_LARR_NEW  = 413104;
 // CARR (Contracted ARR) walk — Aug start baked in from the CARR walk:
 //   Last-month CARR 14,188,934 − Jul churn 319,551 + New Sales (Jul) 963,392
@@ -8837,9 +8837,9 @@ function buildSnapshotHtml(m, opts){
   rowsHtml += row('Report Sent (3d)', emRsCell(S.sRs), emRsCell(V.vRs), emRsCell(O.oRs));
 
   // GRR / NRR computed here for the scorecard cards (they are no longer table rows).
-  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 8,734,719 (Aug start),
+  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 8,187,394 (July starting),
   // Studio/Vini share by current ARR. Uses LIVE churn so it tracks as churn moves.
-  const GRR_START_ALL = 8734719;   // rebased to Aug start (Jul month-end LARR)
+  const GRR_START_ALL = 8187394;   // July-starting LARR base (per CS tracker)
   const arrSV = (S.sArr||0)+(V.vArr||0) || 1;
   const sStart = GRR_START_ALL*(S.sArr||0)/arrSV, vStart = GRR_START_ALL*(V.vArr||0)/arrSV;
   const grrFmt = (start,churn) => { const g=projGrrYearly(start,churn); return g==null?'—':g.toFixed(1)+'%'; };
@@ -9003,7 +9003,7 @@ function nrrYearly(base, exp, loss){
 // Vini) so it flows to: the Churn figure, Live ARR / Total LARR, GRR, and NRR.
 // Vini is intentionally left unchanged (user: "Studio only"). Applied in chAgg
 // (email), computeOverview (Overview tab), ovNrr (NRR), and the LARR card.
-const PAYG_ADJ = { expansion: 17404, contraction: 6551 };
+const PAYG_ADJ = { expansion: 17404, contraction: 0 };   // contraction retired — CS-tracker churn excludes it (was 6551)
 // Churn ARR counts every churn/contraction row EXCEPT the churn sheet's
 // "Leader Approved" (r.appr) states below — i.e. revived / deferred / prevented
 // accounts are not real losses. Everything else counts (Confirmed, New, Under
@@ -9091,10 +9091,10 @@ function computeOverview(scope){
   const grrStart=liveArr-newArr+lost;
   const retained=grrStart-lost;
   // Projected GRR (Yearly), compounded. The unfiltered Overall headline uses the
-  // fixed book starting ARR (8,734,719, Aug start) so it matches the Email & CSM cards;
+  // fixed book starting ARR (8,187,394, July starting) so it matches the Email & CSM cards;
   // filtered / Studio / Vini scopes annualize off their reconstructed start.
   const _noFilt = !(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length||(state.filters.agent&&state.filters.agent.length));
-  const grrBase = (scope==='overall' && _noFilt) ? 8734719 : grrStart;   // Aug start (Jul month-end LARR)
+  const grrBase = (scope==='overall' && _noFilt) ? 8187394 : grrStart;   // July-starting LARR base (per CS tracker)
   const grr=projGrrYearly(grrBase, lost);
 
   return { scope, curMonth, monthLabel:ovMonthLabel(curMonth), accounts, rooftopCount, liveArr,
@@ -9204,18 +9204,16 @@ function ovOpsCards(m, scope){
 // Opening ("Base") ARR per segment — the manually-maintained book at the start of
 // the period. Actual/Live ARR = Base + New Addition − Churn. These reconcile:
 // D2D + Reseller = Studio + Vini = Overall; Ent + Mid+SMB = D2D.
-// Rebased to the AUGUST start (= Jul month-end LARR $8,734,719). Overall / D2D /
-// Reseller are exact from the LARR walk; Studio/Vini split D2D by Vini's 21.93%
-// D2D share (Vini is all-D2D; Reseller is Studio-product); Ent/Mid+SMB split D2D
-// by their July ratio. All invariants hold: D2D+Reseller = Studio+Vini = Overall.
+// July-starting LARR base (per CS tracker). Invariants hold:
+// D2D + Reseller = Studio + Vini = Overall; Ent + Mid+SMB = D2D.
 const SEG_BASE_ARR = {
-  overall: 8734719,
-  d2d:     6957044,
-  partner: 1777675,
-  ent:     5224128,
-  midsmb:  1732916,
-  studio:  7209134,
-  vini:    1525585,
+  overall: 8187394,
+  d2d:     6558363,
+  partner: 1629031,
+  ent:     4924244,
+  midsmb:  1634118,
+  studio:  6749214,
+  vini:    1438180,
 };
 function ovArrDisplay(scope){
   const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length);
@@ -9238,7 +9236,7 @@ function ovArrDisplay(scope){
 // upsell this month (D.expansion); Revenue Loss = churn-tracker figure split by
 // Product (D2D + partner, D.revenue_loss). Fallbacks hold until first sync.
 function ovNrr(scope){
-  const NRR_BASE = {overall:8734719, studio:7209134, vini:1525585};   // rebased to Aug start (Jul month-end LARR)
+  const NRR_BASE = {overall:8187394, studio:6749214, vini:1438180};   // July-starting LARR base (per CS tracker)
   const EXP = Object.assign({arr:303852, studio:27564, vini:276288, n:39, studioN:7, viniN:32}, D.expansion||{});
   const RL  = Object.assign({d2dStudio:215170, d2dVini:0, partnerStudio:1920, partnerVini:0}, D.revenue_loss||{});
   const lossStudio = (Number(RL.d2dStudio)||0)+(Number(RL.partnerStudio)||0);
@@ -9331,13 +9329,13 @@ function renderOverall(){
 // churn. Naming note: live accounts tag partners as "Resellers" while
 // CHURN_ANALYSIS uses "Reseller", so the partner/D2D filters list both spellings.
 const MEETING_SEGMENTS = [
-  {key:'overall', label:'Overall', accent:'#4F46E5', scope:'overall', base:8734719},
+  {key:'overall', label:'Overall', accent:'#4F46E5', scope:'overall', base:8187394},
   {key:'d2d',     label:'D2D (Direct)',  accent:'#2563EB', segFilter:['Ent','Mid','SMB','Other']},
   {key:'partner', label:'Partner',       accent:'#B45309', segFilter:['Resellers','Reseller']},
   {key:'ent',     label:'Enterprise',    accent:'#7C3AED', segFilter:['Ent']},
   {key:'midsmb',  label:'Mid + SMB',     accent:'#0891B2', segFilter:['Mid','SMB']},
-  {key:'studio',  label:'Studio',        accent:'#7C3AED', scope:'studio', base:7209134},
-  {key:'vini',    label:'Vini',          accent:'#16A34A', scope:'vini',   base:1525585},
+  {key:'studio',  label:'Studio',        accent:'#7C3AED', scope:'studio', base:6749214},
+  {key:'vini',    label:'Vini',          accent:'#16A34A', scope:'vini',   base:1438180},
 ];
 
 // ============================================================
@@ -10704,7 +10702,7 @@ function csmActionCounts(csm, m, p){
 function csmScorecardData(csm, m){
   m = m || computeEmailSnapshot(csm||null);
   const O=m.overall, V=m.vini;
-  const GRR_STARTING_ALL=8734719;   // rebased to Aug start (Jul month-end LARR)
+  const GRR_STARTING_ALL=8187394;   // July-starting LARR base (per CS tracker)
   const grrRec=csmGrrRec(csm);
   const churnAmt=(O.chO&&O.chO.arr)||0;
   let grr=null, nrr=null;
@@ -10776,10 +10774,10 @@ function buildCsmPerfHtml(csm, scopeLabel){
   const card=(l,v,s,c)=>`<div class="csmp-card" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><div class="l" style="color:${c.a}">${l}</div><div class="v" style="color:${c.a}">${v}</div><div class="s">${s||'&nbsp;'}</div></div>`;
   const bucket=(title,body,c,wide,act,seg)=>`<div class="csmp-bucket${wide?' wide':''}" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><h3 style="color:${c.a}"><span class="t">${title}</span>${actBadge(act,seg,title)}</h3>${body}</div>`;
   // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12, compounded.
-  //   Starting ARR: overall = fixed 8,734,719 (Aug start); per-CSM = that CSM's summed book
+  //   Starting ARR: overall = fixed 8,187,394 (July starting); per-CSM = that CSM's summed book
   //     ARR (gid=1436275090). Churn = O.chO.arr (this month's churned ARR from
   //     __CHURN_ANALYSIS__, already scoped to the CSM) → annualized by compounding.
-  const GRR_STARTING_ALL = 8734719;   // rebased to Aug start (Jul month-end LARR)
+  const GRR_STARTING_ALL = 8187394;   // July-starting LARR base (per CS tracker)
   const grrRec = csmGrrRec(csm);
   const churnAmt = (O.chO && O.chO.arr) || 0;
   let grrPct='—', grrSub = csm?'pending':'org';
@@ -10790,7 +10788,7 @@ function buildCsmPerfHtml(csm, scopeLabel){
     grrSub = cMoney(startArr)+' start · −'+cMoney(churnAmt)+'/mo churn';
   }
   // NRR (Net Revenue Retention) = current book ARR / starting ARR — at ORG level
-  // vs the 8,734,719 starting balance (current book nets churn AND any expansion
+  // vs the 8,187,394 starting balance (current book nets churn AND any expansion
   // already reflected in ARR, so NRR ≥ GRR). Per-CSM NRR needs a per-CSM starting
   // balance / expansion feed we don't have yet → shown as pending.
   let nrrPct='—', nrrSub = csm?'pending (per-CSM start ARR)':'book ÷ starting ARR';
