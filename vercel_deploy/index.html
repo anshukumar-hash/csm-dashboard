@@ -8863,10 +8863,7 @@ function buildSnapshotHtml(m, opts){
     larrSub = 'S $'+Math.round(O.sArr||0).toLocaleString()+' · V $'+Math.round(O.vArr||0).toLocaleString();
   } else {
     larrVal = cMoney(larrTotalNum);
-    larrSub = '$'+larrBaseNum.toLocaleString()
-      +' <span style="color:#15803D;font-weight:700">+$'+larrJulNew.toLocaleString()+'</span>'
-      +' <span style="color:#B91C1C;font-weight:700">−$'+larrJulChurn.toLocaleString()+'</span><span style="color:#94A3B8"> Jul</span>'
-      +' <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>'
+    larrSub = '<span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>'
       +' <span style="color:#15803D;font-weight:700">+$'+larrNewAug.toLocaleString()+'</span><span style="color:#94A3B8"> Aug</span>';
   }
   // New additions fold into the enterprise/rooftop counts so the card matches
