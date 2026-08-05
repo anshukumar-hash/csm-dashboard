@@ -8819,10 +8819,10 @@ function buildSnapshotHtml(m, opts){
   // per-product new-addition ARR
   const naSarr = (isCsm ? 0 : (NA ? (NA.studio.arr||0) : ((naScr.arr!=null)?naScr.arr : Math.round(EM_LARR_NEW*(S.sArr||0)/arrTot)))) + resNew;
   const naVarr = isCsm ? 0 : (NA ? (NA.vini.arr||0)   : ((naVcr.arr!=null)?naVcr.arr : (EM_LARR_NEW - naSarr)));
-  // overall new = Studio + Vini (the real Live-This-Month total) + reseller
-  const larrNewNum   = (isCsm ? 0 : (NA ? ((NA.studio.arr||0)+(NA.vini.arr||0)) : ((__emLarr&&__emLarr.live!=null)?__emLarr.live:EM_LARR_NEW))) + resNew;
-  const larrExpNum   = isCsm ? 0 : PAYG_ADJ.expansion;   // manual D2D PAYG expansion (Overall book)
-  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum+larrNewNum+larrExpNum-larrChurnNum);   // base + new + PAYG expansion − this-month churn (incl. PAYG contraction)
+  // Live ARR added since the July base. Aug has no D2D new-live yet, so this
+  // carries the July figure ($866,876) — update monthly. Expansion is included.
+  const larrNewNum   = isCsm ? 0 : 866876;
+  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum+larrNewNum-larrChurnNum);   // base + live ARR − this-month churn
   // per-product new-addition counts (rooftops + enterprises)
   const naSroof = (isCsm?0:(NA?(NA.studio.rooftops||0):0)) + resN, naVroof = isCsm?0:(NA?(NA.vini.rooftops||0):0);
   const naSent  = isCsm?0:(NA?(NA.studio.ents||0):0),     naVent  = isCsm?0:(NA?(NA.vini.ents||0):0);
@@ -8859,7 +8859,7 @@ function buildSnapshotHtml(m, opts){
     larrSub = 'S $'+Math.round(O.sArr||0).toLocaleString()+' · V $'+Math.round(O.vArr||0).toLocaleString();
   } else {
     larrVal = cMoney(larrTotalNum);
-    larrSub = 'Base $'+larrBaseNum.toLocaleString()+' <span style="color:#15803D;font-weight:700">+$'+larrNewNum.toLocaleString()+'</span> <span style="color:#15803D;font-weight:700">+$'+larrExpNum.toLocaleString()+' exp</span> <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>';
+    larrSub = 'Base $'+larrBaseNum.toLocaleString()+' <span style="color:#15803D;font-weight:700">+$'+larrNewNum.toLocaleString()+' live</span> <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>';
   }
   // New additions fold into the enterprise/rooftop counts so the card matches
   // the Accounts table row.
@@ -8872,7 +8872,7 @@ function buildSnapshotHtml(m, opts){
     : ('Base $'+carrBaseNum.toLocaleString()+' <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>');
   const cards = `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed"><tr>`
     + emCard('Total LARR', larrVal, larrSub, '#1D4ED8', '#EAF2FF', '#E3EEFE,#F7FAFF')
-    + emCard('Total CARR', cMoney(carrTotalNum), carrSub, '#7C3AED', '#F4EDFF', '#EDE4FF,#FAF7FF')
+    + emCard('Total CARR', cMoney(carrTotalNum), '', '#7C3AED', '#F4EDFF', '#EDE4FF,#FAF7FF')
     + emCard('Churn · '+monShort, cMoney(O.chO.arr), 'S '+((S.chS&&S.chS.n)||0)+' · V '+((V.chV&&V.chV.n)||0)+' acct', '#B91C1C', '#FDECEC', '#FCE3E3,#FFF6F6')
     + emCard('Proj. GRR (Yr)', isCsm?EM_DASH:grrO, isCsm?'pending':'S '+grrS+' · V '+grrV, '#15803D', '#E9F7EF', '#E1F4EA,#F6FCF9')
     + emCard('Proj. NRR (Yr)', nrrCardVal, nrrCardSub, '#0E7490', '#ECFEFF', '#E0F7FA,#F7FEFF') + `</tr></table>`;
