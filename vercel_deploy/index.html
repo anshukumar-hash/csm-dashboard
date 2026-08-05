@@ -2387,6 +2387,12 @@ function viniAggregateRooftops() {
   const rngMTD = periodRange('MTD');
   const rngLM  = periodRange('LM');
   const rngL2L = periodRange('L2L');
+  // Rolling last-30-days window — the basis for the HEADLINE Vini RoI (roi_mtd
+  // / vRoiMtd). ISO yyyy-mm-dd to match periodRange()/inRange. 30 days ≈ a full
+  // month, so MRR (monthly) is used WITHOUT proration in the RoI below.
+  const _iso30 = d => d.toISOString().slice(0, 10);
+  const _now30 = new Date();
+  const rng30 = { from: _iso30(new Date(_now30.getTime() - 29 * 86400000)), to: _iso30(_now30) };
   const inRange = (day, r) => day >= r.from && day <= r.to;
 
   // Build a fast lookup: rid -> most-recent Customer Segment seen in viniRows.
@@ -2452,6 +2458,7 @@ function viniAggregateRooftops() {
         csm: (m.csm && m.csm.trim()) || VINI_RID_TO_CSM[g.rid] || 'Unassigned CSM',
         touched: 0, qualified: 0, appts: 0, apptValue: 0,
         appts_mtd: 0, appts_lm: 0, appts_l2l: 0, apptValue_mtd: 0, apptValue_lm: 0, apptValue_l2l: 0,
+        appts_30: 0, apptValue_30: 0,
         cr: 0, op: 0, otaMax: 0, resVals: [],
         rag: '', churn: '', rs: '', trag: '', red: '', mbr: '', cf: '', latestDay: ''
       };
@@ -2496,6 +2503,7 @@ function viniAggregateRooftops() {
       // agent type, so a group sum of appts can't be uniformly × $100.
       appts_mtd: 0, appts_lm: 0, appts_l2l: 0,
       apptValue_mtd: 0, apptValue_lm: 0, apptValue_l2l: 0,
+      appts_30: 0, apptValue_30: 0,
       cr: 0, op: 0, otaMax: 0, resVals: [],
       rag: '', churn: '', rs: '', trag: '', red: '', mbr: '', cf: '',
       latestDay: ''
@@ -2518,6 +2526,9 @@ function viniAggregateRooftops() {
     if (inRange(day, rngMTD)) { a.appts_mtd += apptsRow; a.apptValue_mtd += apptsRow * $perAppt; }
     if (inRange(day, rngLM))  { a.appts_lm  += apptsRow; a.apptValue_lm  += apptsRow * $perAppt; }
     if (inRange(day, rngL2L)) { a.appts_l2l += apptsRow; a.apptValue_l2l += apptsRow * $perAppt; }
+    // Rolling last-30-days — headline Vini RoI basis (fixed window, ignores the
+    // active period selection, same as the MTD/LM/L2L accumulators above).
+    if (inRange(day, rng30))  { a.appts_30  += apptsRow; a.apptValue_30  += apptsRow * $perAppt; }
     // Current-period accumulators (existing behavior)
     if (day < from || day > to) return;
     a.touched   += Number(r[V_COL.t])  || 0;
@@ -2552,15 +2563,12 @@ function viniAggregateRooftops() {
     a.apptValue = a.appts * $perAppt;
     a.convRate  = a.qualified > 0 ? a.appts/a.qualified : 0;
     a.roi       = a.mrr > 0 ? a.apptValue / a.mrr : 0;
-    // Per-period RoI (calendar MTD / Last Month / L2L Month). Numerator uses
-    // the period's apptValue (already weighted by agent type during fold).
-    // MTD prorates MRR by (days passed / total days in month) so the
-    // denominator matches the partial window the numerator covers — without
-    // this, MTD ROI looks artificially low early in the month.
-    const _today    = new Date();
-    const _mrrMtdFactor = _today.getDate() /
-      new Date(_today.getFullYear(), _today.getMonth()+1, 0).getDate();
-    a.roi_mtd = (a.mrr * _mrrMtdFactor) > 0 ? a.apptValue_mtd / (a.mrr * _mrrMtdFactor) : 0;
+    // Headline Vini RoI: rolling LAST 30 DAYS. apptValue_30 covers ~a full
+    // month, so MRR (monthly) is the correct denominator — no proration.
+    // (Kept the name roi_mtd so every downstream consumer — RAG, overall
+    // health, CSM cards, churn thresholds, CSV — picks up the 30-day basis.)
+    a.roi_mtd = a.mrr > 0 ? a.apptValue_30 / a.mrr : 0;
+    // Per-period RoI (calendar Last Month / L2L Month) — the trend comparators.
     a.roi_lm  = a.mrr > 0 ? a.apptValue_lm  / a.mrr : 0;
     a.roi_l2l = a.mrr > 0 ? a.apptValue_l2l / a.mrr : 0;
 
@@ -2945,8 +2953,8 @@ const TIPS = {
   usageTrend:  'Mini sparkline of monthly VINs (Jan→Jun). The final point is the current month prorated to month-end (MTD VINs × daysInMonth ÷ daysElapsed), so a partial month projects to its full-month run-rate. The line colour follows the trend: green Rising, red Declining, grey Steady. Hover the line to see the raw monthly values.',
   pricePerVin: 'Prorated full-month VIN projection ÷ MRR. The MTD VINs are scaled to a month-end run-rate (MTD × daysInMonth ÷ daysElapsed), then divided by full-month MRR — projected VINs delivered per recurring revenue dollar.',
   usageStatus: 'Usage Status over the last 3 months + current month prorated (Apr · May · Jun · Jul-projected): least-squares slope of monthly VINs, normalized by the mean. Rising > +5%/mo, Declining < −5%/mo, otherwise Steady. The sparkline still shows the full Jan→Jun trend line.',
-  overallRag:  'Account health rolled up from 3 signals: MTD RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
-  overallRagVini: 'Vini account health from 2 signals: MTD RoI Factor (weight 7) and Communication RAG (weight 3) — Payment is not a factor. Each scored G=100/A=60/R=20. Weighted avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
+  overallRag:  'Account health rolled up from 3 signals: last-30-day RoI Factor, Enterprise Payment RAG, and Communication RAG. Each scored G=100/A=60/R=20. Avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
+  overallRagVini: 'Vini account health from 2 signals: last-30-day RoI Factor (weight 7) and Communication RAG (weight 3) — Payment is not a factor. Each scored G=100/A=60/R=20. Weighted avg ≥80 Green, ≥60 Amber, <60 Red. NA signals are excluded.',
   churnedAgent:'Number of Churned agent contracts in this group (Stage = "Churned" in payment master).',
   openAgeing:  'Hours since each open ticket was created. Cross-enterprise avg here is ticket-weighted (sum of hours ÷ open-ticket count).',
   avgResCol:   'Avg resolution time (hours) across tickets created in the selected period and now Resolved/Closed. Ticket-weighted.',
@@ -8668,7 +8676,7 @@ function computeEmailSnapshot(csm){
   const vRoiL2l = vActiveMrr>0 ? sumBy(vActive, r=>r.apptValue_l2l||0)/vActiveMrr : null; // month-before-last (May) ROI
   const _t = new Date();
   const mtdFactor = _t.getDate() / new Date(_t.getFullYear(), _t.getMonth()+1, 0).getDate();
-  const vRoiMtd = (vActiveMrr*mtdFactor)>0 ? sumBy(vActive, r=>r.apptValue_mtd||0)/(vActiveMrr*mtdFactor) : null;   // prorated MTD ROI
+  const vRoiMtd = vActiveMrr>0 ? sumBy(vActive, r=>r.apptValue_30||0)/vActiveMrr : null;   // rolling last-30-days ROI (no proration — 30d ≈ full month)
   const seenVE = new Set();
   const vEntRows = vAll.filter(r=>{ if(!r.eid) return true; if(seenVE.has(r.eid)) return false; seenVE.add(r.eid); return true; });
   // Payment RAG from the source vs_rows (ps), deduped per enterprise — the
@@ -8824,9 +8832,9 @@ function buildSnapshotHtml(m, opts){
   rowsHtml += row('Report Sent (3d)', emRsCell(S.sRs), emRsCell(V.vRs), emRsCell(O.oRs));
 
   // GRR / NRR computed here for the scorecard cards (they are no longer table rows).
-  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 7,732,095,
+  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 8,734,719 (Aug start),
   // Studio/Vini share by current ARR. Uses LIVE churn so it tracks as churn moves.
-  const GRR_START_ALL = 7732095;
+  const GRR_START_ALL = 8734719;   // rebased to Aug start (Jul month-end LARR)
   const arrSV = (S.sArr||0)+(V.vArr||0) || 1;
   const sStart = GRR_START_ALL*(S.sArr||0)/arrSV, vStart = GRR_START_ALL*(V.vArr||0)/arrSV;
   const grrFmt = (start,churn) => { const g=projGrrYearly(start,churn); return g==null?'—':g.toFixed(1)+'%'; };
@@ -9071,10 +9079,10 @@ function computeOverview(scope){
   const grrStart=liveArr-newArr+lost;
   const retained=grrStart-lost;
   // Projected GRR (Yearly), compounded. The unfiltered Overall headline uses the
-  // fixed book starting ARR (7,732,095) so it matches the Email & CSM cards;
+  // fixed book starting ARR (8,734,719, Aug start) so it matches the Email & CSM cards;
   // filtered / Studio / Vini scopes annualize off their reconstructed start.
   const _noFilt = !(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length||(state.filters.agent&&state.filters.agent.length));
-  const grrBase = (scope==='overall' && _noFilt) ? 7732095 : grrStart;
+  const grrBase = (scope==='overall' && _noFilt) ? 8734719 : grrStart;   // Aug start (Jul month-end LARR)
   const grr=projGrrYearly(grrBase, lost);
 
   return { scope, curMonth, monthLabel:ovMonthLabel(curMonth), accounts, rooftopCount, liveArr,
@@ -9117,7 +9125,7 @@ function computeOvOps(){
   const vTix=aggregateTicketsForEids(vEids, VINI_TIX);
   const vRs=reportSent3dAvg(vAll.map(r=>r.rid), ridDailyStatusVini);
   const vMrr=sumBy(vAll,r=>r.mrr);
-  const vRoiMtd=(vMrr*mtdF)>0?sumBy(vAll,r=>r.apptValue_mtd||0)/(vMrr*mtdF):null;
+  const vRoiMtd=vMrr>0?sumBy(vAll,r=>r.apptValue_30||0)/vMrr:null;   // rolling last-30-days ROI
   const vRoiLm=vMrr>0?sumBy(vAll,r=>r.apptValue_lm||0)/vMrr:null;
   // --- Overall ---
   const oRs=reportSent3dAvgMulti([{keys:sAll.map(r=>r[S_COL.eid]||r[S_COL.en]), dailyFn:eidDailyStatus}, {keys:vAll.map(r=>r.rid), dailyFn:ridDailyStatusVini}]);
@@ -9168,7 +9176,7 @@ function ovOpsCards(m, scope){
   tiles+=t('Payment', pay, '', '💳');
   tiles+=t('Communication', comm, '', '💬');
   if(scope!=='vini') tiles+=t('Studio Usage', usage, (uProj!=null&&scope!=='vini')?'prorated · vs '+lastMon:'', '📊');
-  if(scope!=='studio') tiles+=t('Vini ROI', roiVal, (roi!=null&&scope!=='studio')?('prorated'+(roiLm!=null?' · '+lastMon+' '+roiLm.toFixed(2)+'x':'')):'', '📈');
+  if(scope!=='studio') tiles+=t('Vini ROI', roiVal, (roi!=null&&scope!=='studio')?('last 30 days'+(roiLm!=null?' · '+lastMon+' '+roiLm.toFixed(2)+'x':'')):'', '📈');
   if(scope!=='vini') tiles+=t('VIN Pendency', penVal, '', '⏳');
   tiles+=t('Tickets', fmtNum(tixN), 'unresolved', '🎫');
   tiles+=t('Arali Signals', sigVal, 'last 7d', '📡');
@@ -9184,14 +9192,18 @@ function ovOpsCards(m, scope){
 // Opening ("Base") ARR per segment — the manually-maintained book at the start of
 // the period. Actual/Live ARR = Base + New Addition − Churn. These reconcile:
 // D2D + Reseller = Studio + Vini = Overall; Ent + Mid+SMB = D2D.
+// Rebased to the AUGUST start (= Jul month-end LARR $8,734,719). Overall / D2D /
+// Reseller are exact from the LARR walk; Studio/Vini split D2D by Vini's 21.93%
+// D2D share (Vini is all-D2D; Reseller is Studio-product); Ent/Mid+SMB split D2D
+// by their July ratio. All invariants hold: D2D+Reseller = Studio+Vini = Overall.
 const SEG_BASE_ARR = {
-  overall: 8187394,
-  d2d:     6558363,
-  partner: 1629031,
-  ent:     4924244,
-  midsmb:  1634118,
-  studio:  6749214,
-  vini:    1438180,
+  overall: 8734719,
+  d2d:     6957044,
+  partner: 1777675,
+  ent:     5224128,
+  midsmb:  1732916,
+  studio:  7209134,
+  vini:    1525585,
 };
 function ovArrDisplay(scope){
   const isFiltered=(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length);
@@ -9214,7 +9226,7 @@ function ovArrDisplay(scope){
 // upsell this month (D.expansion); Revenue Loss = churn-tracker figure split by
 // Product (D2D + partner, D.revenue_loss). Fallbacks hold until first sync.
 function ovNrr(scope){
-  const NRR_BASE = {overall:8187394, studio:6749214, vini:1438180};
+  const NRR_BASE = {overall:8734719, studio:7209134, vini:1525585};   // rebased to Aug start (Jul month-end LARR)
   const EXP = Object.assign({arr:303852, studio:27564, vini:276288, n:39, studioN:7, viniN:32}, D.expansion||{});
   const RL  = Object.assign({d2dStudio:215170, d2dVini:0, partnerStudio:1920, partnerVini:0}, D.revenue_loss||{});
   const lossStudio = (Number(RL.d2dStudio)||0)+(Number(RL.partnerStudio)||0);
@@ -9307,13 +9319,13 @@ function renderOverall(){
 // churn. Naming note: live accounts tag partners as "Resellers" while
 // CHURN_ANALYSIS uses "Reseller", so the partner/D2D filters list both spellings.
 const MEETING_SEGMENTS = [
-  {key:'overall', label:'Overall', accent:'#4F46E5', scope:'overall', base:8187394},
+  {key:'overall', label:'Overall', accent:'#4F46E5', scope:'overall', base:8734719},
   {key:'d2d',     label:'D2D (Direct)',  accent:'#2563EB', segFilter:['Ent','Mid','SMB','Other']},
   {key:'partner', label:'Partner',       accent:'#B45309', segFilter:['Resellers','Reseller']},
   {key:'ent',     label:'Enterprise',    accent:'#7C3AED', segFilter:['Ent']},
   {key:'midsmb',  label:'Mid + SMB',     accent:'#0891B2', segFilter:['Mid','SMB']},
-  {key:'studio',  label:'Studio',        accent:'#7C3AED', scope:'studio', base:6749214},
-  {key:'vini',    label:'Vini',          accent:'#16A34A', scope:'vini',   base:1438180},
+  {key:'studio',  label:'Studio',        accent:'#7C3AED', scope:'studio', base:7209134},
+  {key:'vini',    label:'Vini',          accent:'#16A34A', scope:'vini',   base:1525585},
 ];
 
 // ============================================================
@@ -10680,7 +10692,7 @@ function csmActionCounts(csm, m, p){
 function csmScorecardData(csm, m){
   m = m || computeEmailSnapshot(csm||null);
   const O=m.overall, V=m.vini;
-  const GRR_STARTING_ALL=7732095;
+  const GRR_STARTING_ALL=8734719;   // rebased to Aug start (Jul month-end LARR)
   const grrRec=csmGrrRec(csm);
   const churnAmt=(O.chO&&O.chO.arr)||0;
   let grr=null, nrr=null;
@@ -10752,10 +10764,10 @@ function buildCsmPerfHtml(csm, scopeLabel){
   const card=(l,v,s,c)=>`<div class="csmp-card" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><div class="l" style="color:${c.a}">${l}</div><div class="v" style="color:${c.a}">${v}</div><div class="s">${s||'&nbsp;'}</div></div>`;
   const bucket=(title,body,c,wide,act,seg)=>`<div class="csmp-bucket${wide?' wide':''}" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><h3 style="color:${c.a}"><span class="t">${title}</span>${actBadge(act,seg,title)}</h3>${body}</div>`;
   // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12, compounded.
-  //   Starting ARR: overall = fixed 7,732,095; per-CSM = that CSM's summed book
+  //   Starting ARR: overall = fixed 8,734,719 (Aug start); per-CSM = that CSM's summed book
   //     ARR (gid=1436275090). Churn = O.chO.arr (this month's churned ARR from
   //     __CHURN_ANALYSIS__, already scoped to the CSM) → annualized by compounding.
-  const GRR_STARTING_ALL = 7732095;
+  const GRR_STARTING_ALL = 8734719;   // rebased to Aug start (Jul month-end LARR)
   const grrRec = csmGrrRec(csm);
   const churnAmt = (O.chO && O.chO.arr) || 0;
   let grrPct='—', grrSub = csm?'pending':'org';
@@ -10766,7 +10778,7 @@ function buildCsmPerfHtml(csm, scopeLabel){
     grrSub = cMoney(startArr)+' start · −'+cMoney(churnAmt)+'/mo churn';
   }
   // NRR (Net Revenue Retention) = current book ARR / starting ARR — at ORG level
-  // vs the 7,732,095 starting balance (current book nets churn AND any expansion
+  // vs the 8,734,719 starting balance (current book nets churn AND any expansion
   // already reflected in ARR, so NRR ≥ GRR). Per-CSM NRR needs a per-CSM starting
   // balance / expansion feed we don't have yet → shown as pending.
   let nrrPct='—', nrrSub = csm?'pending (per-CSM start ARR)':'book ÷ starting ARR';
@@ -10784,7 +10796,7 @@ function buildCsmPerfHtml(csm, scopeLabel){
     ['VIN Pendency', fmtCount(O.sPen), 'awaiting'],
     ['Proj. GRR (Yr)', grrPct, grrSub],
     ['NRR', nrrPct, nrrSub],
-    ['Vini ROI', V.vRoiMtd!=null?V.vRoiMtd.toFixed(2)+'x':'—', 'prorated'],
+    ['Vini ROI', V.vRoiMtd!=null?V.vRoiMtd.toFixed(2)+'x':'—', 'last 30 days'],
     ['Arali Open Signals', m.sig?fmtCount(m.sig.o):'—', 'last 7d'],
   ];
   const cards = '<div class="csmp-cards">' + tileDefs.map((t,i)=>card(t[0],t[1],t[2],PAL[i%PAL.length])).join('') + '</div>';
@@ -10911,7 +10923,7 @@ function buildCsmPerfHtml(csm, scopeLabel){
   let vIns,vRisk;
   if(!nTot){ vIns='No live Vini agents in scope.'; vRisk='—'; }
   else {
-    vIns=`Overall ROI <b>${V.vRoiMtd!=null?V.vRoiMtd.toFixed(2)+'x':'—'}</b> (MTD prorated) across <b>${nTot}</b> agent contract${nTot===1?'':'s'}.`;
+    vIns=`Overall ROI <b>${V.vRoiMtd!=null?V.vRoiMtd.toFixed(2)+'x':'—'}</b> (last 30 days) across <b>${nTot}</b> agent contract${nTot===1?'':'s'}.`;
     vRisk= nBelow
       ? `<b>${nBelow}</b> of ${nTot} agents below 1.5x ROI ${listLink('— view agents · rooftops','Agents below 1.5x ROI',p.vBelowRoi)} — appointment value isn't covering MRR. Action: review call volume / quality on the listed agent×rooftop pairs.`
       : `All ${nTot} agents ≥1.5x ROI — healthy.`;
