@@ -8839,9 +8839,9 @@ function buildSnapshotHtml(m, opts){
   rowsHtml += row('Report Sent (3d)', emRsCell(S.sRs), emRsCell(V.vRs), emRsCell(O.oRs));
 
   // GRR / NRR computed here for the scorecard cards (they are no longer table rows).
-  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 8,187,394 (July starting),
+  // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12; org start fixed at 7,732,095 (GRR denominator),
   // Studio/Vini share by current ARR. Uses LIVE churn so it tracks as churn moves.
-  const GRR_START_ALL = 8187394;   // July-starting LARR base (per CS tracker)
+  const GRR_START_ALL = 7732095;   // GRR denominator (hardcoded book start; distinct from NRR base)
   const arrSV = (S.sArr||0)+(V.vArr||0) || 1;
   const sStart = GRR_START_ALL*(S.sArr||0)/arrSV, vStart = GRR_START_ALL*(V.vArr||0)/arrSV;
   const grrFmt = (start,churn) => { const g=projGrrYearly(start,churn); return g==null?'—':g.toFixed(1)+'%'; };
@@ -9096,7 +9096,7 @@ function computeOverview(scope){
   // fixed book starting ARR (8,187,394, July starting) so it matches the Email & CSM cards;
   // filtered / Studio / Vini scopes annualize off their reconstructed start.
   const _noFilt = !(state.filters.region.length||state.filters.segment.length||state.filters.csm.length||state.filters.manager.length||(state.filters.pod&&state.filters.pod.length)||state.filters.acct.length||(state.filters.agent&&state.filters.agent.length));
-  const grrBase = (scope==='overall' && _noFilt) ? 8187394 : grrStart;   // July-starting LARR base (per CS tracker)
+  const grrBase = (scope==='overall' && _noFilt) ? 7732095 : grrStart;   // GRR denominator (hardcoded book start)
   const grr=projGrrYearly(grrBase, lost);
 
   return { scope, curMonth, monthLabel:ovMonthLabel(curMonth), accounts, rooftopCount, liveArr,
@@ -9241,18 +9241,25 @@ function ovNrr(scope){
   const NRR_BASE = {overall:8187394, studio:6749214, vini:1438180};   // July-starting LARR base (per CS tracker)
   const EXP = Object.assign({arr:303852, studio:27564, vini:276288, n:39, studioN:7, viniN:32}, D.expansion||{});
   const RL  = Object.assign({d2dStudio:215170, d2dVini:0, partnerStudio:1920, partnerVini:0}, D.revenue_loss||{});
-  const lossStudio = (Number(RL.d2dStudio)||0)+(Number(RL.partnerStudio)||0);
-  const lossVini   = (Number(RL.d2dVini)||0)+(Number(RL.partnerVini)||0);
+  // Reseller EXPANSION split by product (reseller sheet "Product" col). Dynamic
+  // from the feed once sync provides newArrStudio/newArrVini; fallback = last
+  // computed split (Studio 53,448 · Vini 106,788 = 160,236). Reseller CHURN is
+  // already split via RL.partnerStudio / partnerVini.
+  const RES = (D&&D.reseller)||{};
+  const resNewStudio = (RES.newArrStudio!=null) ? Number(RES.newArrStudio) : 53448;
+  const resNewVini   = (RES.newArrVini!=null)   ? Number(RES.newArrVini)   : 106788;
+  const lossStudio = (Number(RL.d2dStudio)||0)+(Number(RL.partnerStudio)||0);   // D2D Studio + reseller Studio churn
+  const lossVini   = (Number(RL.d2dVini)||0)+(Number(RL.partnerVini)||0);       // D2D Vini + reseller Vini churn
   const base = NRR_BASE[scope]||0;
-  const exp  = scope==='studio' ? (Number(EXP.studio)||0) : scope==='vini' ? (Number(EXP.vini)||0) : (Number(EXP.arr)||0);
+  // Expansion = D2D expansion (by product) + reseller expansion (by product).
+  // PAYG expansion retired — CS tracker counts D2D + reseller only.
+  const exp  = scope==='studio' ? ((Number(EXP.studio)||0)+resNewStudio)
+             : scope==='vini'   ? ((Number(EXP.vini)||0)+resNewVini)
+             :                    ((Number(EXP.arr)||0)+resNewStudio+resNewVini);
   const expN = scope==='studio' ? (Number(EXP.studioN)||0) : scope==='vini' ? (Number(EXP.viniN)||0) : (Number(EXP.n)||0);
   const loss = scope==='studio' ? lossStudio : scope==='vini' ? lossVini : (lossStudio+lossVini);
-  // Manual D2D PAYG adjustment — Studio (and therefore Overall); Vini unchanged.
-  const _payg = (scope!=='vini');
-  const expAdj  = exp  + (_payg ? PAYG_ADJ.expansion   : 0);
-  const lossAdj = loss + (_payg ? PAYG_ADJ.contraction : 0);
-  const pct  = nrrYearly(base, expAdj, lossAdj);   // annualized (compounded), matches Proj. GRR (Yr)
-  return { pct, base, exp:expAdj, expN, loss:lossAdj };
+  const pct  = nrrYearly(base, exp, loss);   // annualized (compounded), matches Proj. GRR (Yr)
+  return { pct, base, exp, expN, loss };
 }
 // Product section — ARR Snapshot only (product header + ARR tiles). The
 // Operational Snapshot is a separate section (ovOpsSection) so the Overall view
@@ -10704,7 +10711,7 @@ function csmActionCounts(csm, m, p){
 function csmScorecardData(csm, m){
   m = m || computeEmailSnapshot(csm||null);
   const O=m.overall, V=m.vini;
-  const GRR_STARTING_ALL=8187394;   // July-starting LARR base (per CS tracker)
+  const GRR_STARTING_ALL=7732095;   // GRR denominator (hardcoded book start)
   const grrRec=csmGrrRec(csm);
   const churnAmt=(O.chO&&O.chO.arr)||0;
   let grr=null, nrr=null;
@@ -10776,10 +10783,10 @@ function buildCsmPerfHtml(csm, scopeLabel){
   const card=(l,v,s,c)=>`<div class="csmp-card" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><div class="l" style="color:${c.a}">${l}</div><div class="v" style="color:${c.a}">${v}</div><div class="s">${s||'&nbsp;'}</div></div>`;
   const bucket=(title,body,c,wide,act,seg)=>`<div class="csmp-bucket${wide?' wide':''}" style="background:${c.s};background:linear-gradient(135deg,${c.g});border-color:${c.b}"><h3 style="color:${c.a}"><span class="t">${title}</span>${actBadge(act,seg,title)}</h3>${body}</div>`;
   // Projected GRR (Yearly) = (1 − monthlyChurnRate)^12, compounded.
-  //   Starting ARR: overall = fixed 8,187,394 (July starting); per-CSM = that CSM's summed book
+  //   Starting ARR: overall = fixed 7,732,095 (GRR denominator); per-CSM = that CSM's summed book
   //     ARR (gid=1436275090). Churn = O.chO.arr (this month's churned ARR from
   //     __CHURN_ANALYSIS__, already scoped to the CSM) → annualized by compounding.
-  const GRR_STARTING_ALL = 8187394;   // July-starting LARR base (per CS tracker)
+  const GRR_STARTING_ALL = 7732095;   // GRR denominator (hardcoded book start)
   const grrRec = csmGrrRec(csm);
   const churnAmt = (O.chO && O.chO.arr) || 0;
   let grrPct='—', grrSub = csm?'pending':'org';

@@ -1723,6 +1723,7 @@ try {
     if ($resDeltaIdx -lt 0) { $resDeltaIdx = 18 }   # positional fallback = column S
     Write-Host "  reseller cols (csv): 'Delta (M-1 to M)' idx=$resDeltaIdx, rows=$($resRecs.Count)"
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
+    $resNewStudio = 0.0; $resNewVini = 0.0   # Partner EXPANSION split by Product (col E) for per-product NRR
     $script:resChurnStudio = 0.0; $script:resChurnVini = 0.0   # Partner loss split by Product (col E) for per-product NRR
     for ($ri = 1; $ri -lt $resRecs.Count; $ri++) {   # row 0 = header; data from row 1
         $row = $resRecs[$ri]
@@ -1730,13 +1731,14 @@ try {
         $dRaw = [string]$row."c$resDeltaIdx"; if (-not $dRaw) { continue }
         $d = NA-Money $dRaw; if ($d -eq 0) { continue }
         $arr = $d * 12.0
-        if ($arr -gt 0) { $resNew += $arr; $resNewN++ }
+        if ($arr -gt 0) { $resNew += $arr; $resNewN++
+            if ((([string]$row."c4").Trim().ToLower()) -eq 'vini') { $resNewVini += $arr } else { $resNewStudio += $arr } }
         else {
             $resChurn += [math]::Abs($arr); $resChurnN++
             if ((([string]$row."c4").Trim().ToLower()) -eq 'vini') { $script:resChurnVini += [math]::Abs($arr) } else { $script:resChurnStudio += [math]::Abs($arr) }
         }
     }
-    $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + '}'
+    $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + ',"newArrStudio":' + ([string][math]::Round($resNewStudio)) + ',"newArrVini":' + ([string][math]::Round($resNewVini)) + ',"churnArrStudio":' + ([string][math]::Round($script:resChurnStudio)) + ',"churnArrVini":' + ([string][math]::Round($script:resChurnVini)) + '}'
     Write-Host "  reseller (all products, csv): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
 } catch {
     Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
