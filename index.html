@@ -8819,10 +8819,14 @@ function buildSnapshotHtml(m, opts){
   // per-product new-addition ARR
   const naSarr = (isCsm ? 0 : (NA ? (NA.studio.arr||0) : ((naScr.arr!=null)?naScr.arr : Math.round(EM_LARR_NEW*(S.sArr||0)/arrTot)))) + resNew;
   const naVarr = isCsm ? 0 : (NA ? (NA.vini.arr||0)   : ((naVcr.arr!=null)?naVcr.arr : (EM_LARR_NEW - naSarr)));
-  // Live ARR added since the July base. Aug has no D2D new-live yet, so this
-  // carries the July figure ($866,876) — update monthly. Expansion is included.
-  const larrNewNum   = isCsm ? 0 : 866876;
-  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum+larrNewNum-larrChurnNum);   // base + live ARR − this-month churn
+  // LARR walk (per CS tracker): July opening ($8,187,394) + July new-live
+  // ($866,876) − July churn ($339,943) = Aug opening; then − Aug MTD churn
+  // + Aug new-live. July figures are baked (update monthly); Aug is live.
+  const larrJulNew   = 866876;    // July new-live / expansion
+  const larrJulChurn = 339943;    // July total churn (D2D 314,141 + reseller 18,468 + PAYG 7,334)
+  const larrNewAug   = isCsm ? 0 : ((NA ? ((NA.studio.arr||0)+(NA.vini.arr||0)) : 0) + resNew);   // Aug new-live (D2D 0 + reseller)
+  const larrNewNum   = larrNewAug;
+  const larrTotalNum = isCsm ? (O.totalArr||0) : (larrBaseNum + larrJulNew - larrJulChurn - larrChurnNum + larrNewAug);
   // per-product new-addition counts (rooftops + enterprises)
   const naSroof = (isCsm?0:(NA?(NA.studio.rooftops||0):0)) + resN, naVroof = isCsm?0:(NA?(NA.vini.rooftops||0):0);
   const naSent  = isCsm?0:(NA?(NA.studio.ents||0):0),     naVent  = isCsm?0:(NA?(NA.vini.ents||0):0);
@@ -8859,7 +8863,11 @@ function buildSnapshotHtml(m, opts){
     larrSub = 'S $'+Math.round(O.sArr||0).toLocaleString()+' · V $'+Math.round(O.vArr||0).toLocaleString();
   } else {
     larrVal = cMoney(larrTotalNum);
-    larrSub = 'Base $'+larrBaseNum.toLocaleString()+' <span style="color:#15803D;font-weight:700">+$'+larrNewNum.toLocaleString()+' live</span> <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>';
+    larrSub = '$'+larrBaseNum.toLocaleString()
+      +' <span style="color:#15803D;font-weight:700">+$'+larrJulNew.toLocaleString()+'</span>'
+      +' <span style="color:#B91C1C;font-weight:700">−$'+larrJulChurn.toLocaleString()+'</span><span style="color:#94A3B8"> Jul</span>'
+      +' <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>'
+      +' <span style="color:#15803D;font-weight:700">+$'+larrNewAug.toLocaleString()+'</span><span style="color:#94A3B8"> Aug</span>';
   }
   // New additions fold into the enterprise/rooftop counts so the card matches
   // the Accounts table row.
