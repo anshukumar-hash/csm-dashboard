@@ -8450,8 +8450,13 @@ const EM_DASH = '<span style="color:#CBD5E1">—</span>';
 //     = Jun'26 End 8,233,215.
 //   Current ARR = this base + July new − July churn (computed live below).
 //   Roll forward MANUALLY on the 1st of each month.
-const EM_LARR_BASE = 8233215;   // Jun'26 End LARR (July opening book)
+const EM_LARR_BASE = 8734719;   // Jul'26 month-end LARR = Aug opening book (roll forward monthly)
 const EM_LARR_NEW  = 413104;
+// CARR (Contracted ARR) walk — Aug start baked in from the CARR walk:
+//   Last-month CARR 14,188,934 − Jul churn 319,551 + New Sales (Jul) 963,392
+//   − Sales drop 36,000 = 14,796,775. Live CARR = base − this-month churn.
+//   Roll this base forward on the 1st of each month.
+const EM_CARR_BASE = 14796775;
 // Live Total-LARR fetch from the Spyne onboarding dashboard. That app embeds its
 // data and computes LARR client-side (no JSON API), so we fetch its HTML (its
 // Vercel host sends Access-Control-Allow-Origin: *), run it in a hidden
@@ -8857,8 +8862,15 @@ function buildSnapshotHtml(m, opts){
   // New additions fold into the enterprise/rooftop counts so the card matches
   // the Accounts table row.
   const newEntTot = (naSent||0)+(naVent||0), newRoofTot = (naSroof||0)+(naVroof||0);
+  // CARR (Contracted ARR) walk — base (Aug start, baked in) − this-month churn
+  // (the SAME live churn as the LARR walk, so the two never drift).
+  const carrBaseNum  = EM_CARR_BASE;
+  const carrTotalNum = isCsm ? (O.totalArr||0) : (carrBaseNum - larrChurnNum);
+  const carrSub = isCsm ? ('S $'+Math.round(O.sArr||0).toLocaleString()+' · V $'+Math.round(O.vArr||0).toLocaleString())
+    : ('Base $'+carrBaseNum.toLocaleString()+' <span style="color:#B91C1C;font-weight:700">−$'+larrChurnNum.toLocaleString()+'</span>');
   const cards = `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed"><tr>`
     + emCard('Total LARR', larrVal, larrSub, '#1D4ED8', '#EAF2FF', '#E3EEFE,#F7FAFF')
+    + emCard('Total CARR', cMoney(carrTotalNum), carrSub, '#7C3AED', '#F4EDFF', '#EDE4FF,#FAF7FF')
     + emCard('Churn · '+monShort, cMoney(O.chO.arr), 'S '+((S.chS&&S.chS.n)||0)+' · V '+((V.chV&&V.chV.n)||0)+' acct', '#B91C1C', '#FDECEC', '#FCE3E3,#FFF6F6')
     + emCard('Proj. GRR (Yr)', isCsm?EM_DASH:grrO, isCsm?'pending':'S '+grrS+' · V '+grrV, '#15803D', '#E9F7EF', '#E1F4EA,#F6FCF9')
     + emCard('Proj. NRR (Yr)', nrrCardVal, nrrCardSub, '#0E7490', '#ECFEFF', '#E0F7FA,#F7FEFF') + `</tr></table>`;
