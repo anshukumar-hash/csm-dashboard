@@ -146,6 +146,7 @@ const rows = cardStudio.map(r => {
     ws: num(r.overall_score), ws_link: S(r.url), pen: num(r.pending_over_6h),
     u_jan: num(r["Jan'26"]), u_feb: num(r["Feb'26"]), u_mar: num(r["Mar'26"]),
     u_apr: num(r["Apr'26"]), u_may: num(r["May'26"]), u_jun: num(r["Jun'26"]),
+    u_jul: num(r["Jul'26"]), u_aug: num(r["Aug'26"]),
     u_mtd: num(r.mtd_vins),
     arr: Math.round(arr * 100) / 100, mrr: Math.round(arr / 12 * 100) / 100,
     carr: num(r.contracted_arr),
@@ -165,7 +166,7 @@ for (const eid of Object.keys(arrRecByEid)) {
     rid: eid, rn: a.cust, en: a.cust, eid,
     ct: a.ct, cst: a.cst, seg: a.seg, csm: a.csm || 'Unassigned CSM', region: a.region,
     ws: 0, ws_link: '', pen: 0,
-    u_jan: 0, u_feb: 0, u_mar: 0, u_apr: 0, u_may: 0, u_jun: 0, u_mtd: 0,
+    u_jan: 0, u_feb: 0, u_mar: 0, u_apr: 0, u_may: 0, u_jun: 0, u_jul: 0, u_aug: 0, u_mtd: 0,
     arr: Math.round(a.arr * 100) / 100, mrr: Math.round(a.arr / 12 * 100) / 100, carr: 0,
   });
   totArr += a.arr; added++;

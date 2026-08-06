@@ -4180,7 +4180,7 @@ const S_GROUPS = [
   { l:'RoI',          span:1, c:'g-roi' },         // Report Sent (7-day per-enterprise %)
   { l:'Enterprise-Level Payment', span:4, c:'g-payment' },  // T-1 · T-2 · T-3 · Score (count)
   { l:'Communication', span:3, c:'g-comm' },       // Interaction % · Comm. RAG · Sentiment (count stack)
-  { l:'Usage',        span:10, c:'g-usage' },      // Jan'26 … May'26 · Jun'26 · MTD VINs · Price/VIN · Usage Trend (sparkline) · Status
+  { l:'Usage',        span:12, c:'g-usage' },      // Jan'26 … Jun'26 · Jul'26 · Aug'26 · MTD VINs · Price/VIN · Usage Trend (sparkline) · Status
   { l:'Quality',      span:2, c:'g-quality' },     // Pendency (6h), Website RAG
   { l:'Tickets',      span:4, c:'g-tickets' },                // #Created · #Unresolved · Open Ageing (Hrs) · Ticket RAG
   { l:'Leadership',   span:1, c:'g-leader' },
@@ -4204,7 +4204,7 @@ const S_COLS_SHARED = [
   {l:'Sentiment', cc:'cell-comm', tip:'commScore'},
   // 8 Usage — monthly VINs (sheet cols M-R) + Usage Trend sparkline + Status.
   {l:"Jan'26", cc:'cell-usage'}, {l:"Feb'26", cc:'cell-usage'}, {l:"Mar'26", cc:'cell-usage'},
-  {l:"Apr'26", cc:'cell-usage'}, {l:"May'26", cc:'cell-usage'}, {l:"Jun'26", cc:'cell-usage'}, {l:'MTD VINs', cc:'cell-usage'},
+  {l:"Apr'26", cc:'cell-usage'}, {l:"May'26", cc:'cell-usage'}, {l:"Jun'26", cc:'cell-usage'}, {l:"Jul'26", cc:'cell-usage'}, {l:"Aug'26", cc:'cell-usage'}, {l:'MTD VINs', cc:'cell-usage'},
   {l:'Price/VIN', cc:'cell-usage', tip:'pricePerVin'},
   {l:'Trend (Prorated)', cc:'cell-usage', tip:'usageTrend'},
   {l:'Status', cc:'cell-usage', tip:'usageStatus'},
@@ -4245,6 +4245,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
   const uMtd = sumBy(active, r => r[S_COL.u_mtd]);
   const activeMrr = sumBy(active, r => r[S_COL.mrr]);   // for Price/VIN (prorated)
   const uJun = sumBy(active, r => r[S_COL.u_jun]);   // June actual (fixed col R), raw
+  const uJul = sumBy(active, r => r[S_COL.u_jul]);   // July actual
+  const uAug = sumBy(active, r => r[S_COL.u_aug]);   // August MTD
   const uTrend = usageTrend([uJan, uFeb, uMar, uApr, uMay, uJun]);                  // sparkline
   const uStatus = usageTrend([uApr, uMay, uJun, proratedMonthVins(uMtd)]);          // status pill (Apr→Jul-prorated)
   const pen = sumBy(active, r => r[S_COL.pen]);
@@ -4357,6 +4359,8 @@ function studioRow(label, rows, isTotal, drillKey, drillValue, idx) {
     <td class="cell-usage">${fmtNum(uJan)}</td><td class="cell-usage">${fmtNum(uFeb)}</td><td class="cell-usage">${fmtNum(uMar)}</td>
     <td class="cell-usage">${fmtNum(uApr)}</td><td class="cell-usage">${fmtNum(uMay)}</td>
     <td class="cell-usage">${fmtNum(uJun)}</td>
+    <td class="cell-usage">${fmtNum(uJul)}</td>
+    <td class="cell-usage">${fmtNum(uAug)}</td>
     <td class="cell-usage">${fmtNum(uMtd)}</td>
     <td class="cell-usage">${pricePerVinCell(uMtd, activeMrr)}</td>
     <td class="cell-usage">${sparklineCell([uJan,uFeb,uMar,uApr,uMay,uJun], uStatus)}</td>
@@ -6088,6 +6092,8 @@ function renderRooftop() {
         <td class="cell-usage">${fmtNum(r[S_COL.u_apr])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_may])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_jun])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_jul])}</td>
+        <td class="cell-usage">${fmtNum(r[S_COL.u_aug])}</td>
         <td class="cell-usage">${fmtNum(r[S_COL.u_mtd])}</td>
         <td class="cell-usage">${pricePerVinCell(r[S_COL.u_mtd], r[S_COL.mrr])}</td>
         <td class="cell-usage">${sparklineCell(rowUsageSeries(r), rowUStatus)}</td>

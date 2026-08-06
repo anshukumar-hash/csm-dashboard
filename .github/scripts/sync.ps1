@@ -1024,7 +1024,7 @@ Write-Host "  studio_tix: $($studioTix.Count) enterprises, $($kept.studio) ticke
 $sStudioSchema = @(
     'rid','rn','en',
     'mrr','arr',
-    'u_jan','u_feb','u_mar','u_apr','u_may','u_jun','u_mtd',
+    'u_jan','u_feb','u_mar','u_apr','u_may','u_jun','u_jul','u_aug','u_mtd',
     'pen','ws','ws_link',
     't1','t2','t3','prag',
     'unr','cr','ota','res','trag',
@@ -1071,6 +1071,8 @@ foreach ($row in $studioCardRows) {
     $r[$idx['u_apr']]   = $row.u_apr
     $r[$idx['u_may']]   = $row.u_may
     $r[$idx['u_jun']]   = $row.u_jun
+    $r[$idx['u_jul']]   = $row.u_jul
+    $r[$idx['u_aug']]   = $row.u_aug
     $r[$idx['u_mtd']]   = $row.u_mtd
     $r[$idx['pen']]     = $row.pen
     $r[$idx['ws']]      = $row.ws
