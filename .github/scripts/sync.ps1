@@ -1388,9 +1388,31 @@ function New-MetabaseJwt($secret, $questionId) {
 }
 $accountStatusJson = $null
 try {
-    # Public Metabase question "Account_Clean_up" — no auth (was embed card 12436).
-    # Same columns: enterprise_id/enterprise_name/team_id/team_name/stage/cs_poc_email.
-    $asRows = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/public/card/3eb517f0-dd89-4dcd-b986-49e3fac8baeb/query/json" -TimeoutSec 90 -Headers @{ "User-Agent" = "Mozilla/5.0" }
+    # Source = the CSM ClickHouse backend when configured (CSM_BACKEND_URL +
+    # CSM_BACKEND_TOKEN), else the public Metabase question "Account_Clean_up".
+    # The backend's `account_summary` query returns the SAME columns, so this is a
+    # transparent swap with automatic fallback — a backend blip won't break sync.
+    $backendUrl   = ($env:CSM_BACKEND_URL -replace '/+$', '')
+    $backendToken = $env:CSM_BACKEND_TOKEN
+    $asRows = $null
+    if ($backendUrl -and $backendToken) {
+        try {
+            Write-Host "  account_status: querying backend account_summary @ $backendUrl"
+            $resp = Invoke-RestMethod -Uri "$backendUrl/query" -Method Post -TimeoutSec 90 `
+                -Headers @{ "Authorization" = "Bearer $backendToken"; "User-Agent" = "Mozilla/5.0" } `
+                -ContentType "application/json" -Body '{"name":"account_summary"}'
+            if (-not $resp.success -or $null -eq $resp.rows) { throw "bad payload" }
+            $asRows = $resp.rows
+        } catch {
+            Write-Host "  account_status: WARNING — backend failed ($_) — falling back to public question."
+            $asRows = $null
+        }
+    }
+    if ($null -eq $asRows) {
+        # Public Metabase question "Account_Clean_up" — no auth (was embed card 12436).
+        # Same columns: enterprise_id/enterprise_name/team_id/team_name/stage/cs_poc_email.
+        $asRows = Invoke-RestMethod -Uri "https://metabase.spyne.ai/api/public/card/3eb517f0-dd89-4dcd-b986-49e3fac8baeb/query/json" -TimeoutSec 90 -Headers @{ "User-Agent" = "Mozilla/5.0" }
+    }
     if ($asRows.Count -lt 100) { throw "only $($asRows.Count) rows" }
     # Detect name columns once (flexible — fall back to id when absent) so the
     # OB / Contracted popups can show enterprise_name / team_name, not just ids.
