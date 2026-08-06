@@ -5950,7 +5950,7 @@ function renderRooftop() {
       '<th colspan="1" class="g-roi">RoI</th>' +
       '<th colspan="4" class="g-payment">Enterprise-Level Payment</th>' +
       '<th colspan="3" class="g-comm">Communication</th>' +    // Score + Interaction % + RAG
-      '<th colspan="10" class="g-usage">Usage</th>' +
+      '<th colspan="12" class="g-usage">Usage</th>' +
       '<th colspan="2" class="g-quality">Quality</th>' +
       '<th colspan="4" class="g-tickets">Tickets</th>' +       // # Created + # Unresolved + Open Ageing + Ticket RAG
       '<th colspan="'+mbrColCount()+'" class="g-leader">MBR</th>' +
@@ -5977,7 +5977,9 @@ function renderRooftop() {
       sortTh("Mar'26", 'u_mar', 'studioRooftop', 'cell-usage') +
       sortTh("Apr'26", 'u_apr', 'studioRooftop', 'cell-usage') +
       sortTh("May'26", 'u_may', 'studioRooftop', 'cell-usage') +
-      sortTh("Jun'26", 'u_mtd', 'studioRooftop', 'cell-usage') +
+      sortTh("Jun'26", 'u_jun', 'studioRooftop', 'cell-usage') +
+      sortTh("Jul'26", 'u_jul', 'studioRooftop', 'cell-usage') +
+      sortTh("Aug'26", 'u_aug', 'studioRooftop', 'cell-usage') +
       sortTh('MTD VINs', 'u_mtd', 'studioRooftop', 'cell-usage') +
       '<th class="cell-usage">Price/VIN' + tip('pricePerVin') + '</th>' +
       '<th class="cell-usage">Trend (Prorated)' + tip('usageTrend') + '</th>' +
@@ -5993,7 +5995,7 @@ function renderRooftop() {
     // Track aggregates for the TOTAL row at the bottom (Studio metrics).
     let sMrr=0, sArr=0, sPen=0;
     // Monthly usage VIN sums (Jan→May + MTD) for the TOTAL row + trend.
-    let sUJan=0, sUFeb=0, sUMar=0, sUApr=0, sUMay=0, sUJun=0, sUMtd=0;
+    let sUJan=0, sUFeb=0, sUMar=0, sUApr=0, sUMay=0, sUJun=0, sUJul=0, sUAug=0, sUMtd=0;
     // sIscVals no longer used — Inventory Score now renders as a RAG count
     // distribution (sIscRag below) matching the Website RAG pattern.
     // sTrag dropped — ticket RAG distribution now computed from STUDIO_TIX
@@ -6021,7 +6023,8 @@ function renderRooftop() {
       // Monthly usage VINs accumulate for the TOTAL row + its Usage Trend.
       sUJan += Number(r[S_COL.u_jan])||0; sUFeb += Number(r[S_COL.u_feb])||0;
       sUMar += Number(r[S_COL.u_mar])||0; sUApr += Number(r[S_COL.u_apr])||0;
-      sUMay += Number(r[S_COL.u_may])||0; sUJun += Number(r[S_COL.u_jun])||0; sUMtd += Number(r[S_COL.u_mtd])||0;
+      sUMay += Number(r[S_COL.u_may])||0; sUJun += Number(r[S_COL.u_jun])||0;
+      sUJul += Number(r[S_COL.u_jul])||0; sUAug += Number(r[S_COL.u_aug])||0; sUMtd += Number(r[S_COL.u_mtd])||0;
       sPen += Number(r[S_COL.pen])||0;
       // Ticket accumulators (sUnr/sCr/sOtaVals/sResVals) are NO LONGER summed
       // per-row — they're now derived from STUDIO_TIX at the Total row below
@@ -6151,6 +6154,8 @@ function renderRooftop() {
       <td class="cell-usage">${fmtNum(sUApr)}</td>
       <td class="cell-usage">${fmtNum(sUMay)}</td>
       <td class="cell-usage">${fmtNum(sUJun)}</td>
+      <td class="cell-usage">${fmtNum(sUJul)}</td>
+      <td class="cell-usage">${fmtNum(sUAug)}</td>
       <td class="cell-usage">${fmtNum(sUMtd)}</td>
       <td class="cell-usage">${pricePerVinCell(sUMtd, sMrr)}</td>
       <td class="cell-usage">${sparklineCell([sUJan,sUFeb,sUMar,sUApr,sUMay,sUJun], usageTrend([sUApr,sUMay,sUJun,proratedMonthVins(sUMtd)]))}</td>

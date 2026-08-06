@@ -66,9 +66,35 @@ async function fromBackend(name) {
   return j.rows;
 }
 async function fromPublic() {
-  const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!res.ok) throw new Error(`public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(() => '')).slice(0, 300)}`);
-  return res.json();
+  // The public Metabase question is a heavy query that intermittently 504s /
+  // times out under load. Retry with backoff so a transient gateway timeout
+  // can't fail the whole feed (which would silently keep stale month columns).
+  const MAX = 6;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX; attempt++) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 120000);
+      let res;
+      try {
+        res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: ctl.signal });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) {
+        const body = (await res.text().catch(() => '')).slice(0, 300);
+        // 5xx / 429 are transient; retry. 4xx (except 429) is fatal.
+        if (res.status >= 500 || res.status === 429) throw new Error(`public card ${PUBLIC_UUID} → ${res.status} (transient) — ${body}`);
+        throw Object.assign(new Error(`public card ${PUBLIC_UUID} → ${res.status} — ${body}`), { fatal: true });
+      }
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      if (e.fatal || attempt === MAX) throw e;
+      const wait = Math.min(30000, 3000 * attempt);
+      console.error(`WARN: public question attempt ${attempt}/${MAX} failed (${e.message}) — retrying in ${wait / 1000}s …`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
 }
 let card;
 if (BACKEND_URL && BACKEND_TOKEN) {
@@ -146,7 +172,7 @@ const rows = cardStudio.map(r => {
     ws: num(r.overall_score), ws_link: S(r.url), pen: num(r.pending_over_6h),
     u_jan: num(r["Jan'26"]), u_feb: num(r["Feb'26"]), u_mar: num(r["Mar'26"]),
     u_apr: num(r["Apr'26"]), u_may: num(r["May'26"]), u_jun: num(r["Jun'26"]),
-    u_jul: num(r["Jul'26"]), u_aug: num(r["Aug'26"]),
+    u_jul: num(r["Jul'26"] ?? r["Jul'26_MTD"]), u_aug: num(r["Aug'26_MTD"] ?? r["Aug'26"]),
     u_mtd: num(r.mtd_vins),
     arr: Math.round(arr * 100) / 100, mrr: Math.round(arr / 12 * 100) / 100,
     carr: num(r.contracted_arr),
