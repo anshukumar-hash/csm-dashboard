@@ -42,12 +42,38 @@ const PUBLIC_UUID = get('VINI_PUBLIC_UUID') || 'f53df14b-56d8-4fb4-a5d9-de4d694a
 const S = v => v == null ? '' : String(v);
 const isLive = v => S(v).toLowerCase() === 'live';
 
-// ---- fetch public Vini question ----
-console.error(`Querying public question ${PUBLIC_UUID} …`);
-const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-if (!res.ok) { console.error(`ERROR: public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
-const raw = await res.json();
-if (!Array.isArray(raw) || raw.length < 100) { console.error(`ERROR: public question returned ${Array.isArray(raw)?raw.length:'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
+// ---- fetch Vini daily grain ----
+// Source = the CSM ClickHouse backend when configured (CSM_BACKEND_URL +
+// CSM_BACKEND_TOKEN), else the public Metabase question. The backend's
+// `vini_daily` query returns the SAME columns, so this is a transparent source
+// swap with automatic fallback — a backend blip can never break the feed.
+const BACKEND_URL = get('CSM_BACKEND_URL').replace(/\/+$/, '');
+const BACKEND_TOKEN = get('CSM_BACKEND_TOKEN');
+async function fromBackend(name) {
+  const r = await fetch(`${BACKEND_URL}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BACKEND_TOKEN}`, 'User-Agent': 'Mozilla/5.0' },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) throw new Error(`backend ${name} → ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
+  const j = await r.json();
+  if (!j || j.success !== true || !Array.isArray(j.rows)) throw new Error(`backend ${name} → bad payload`);
+  return j.rows;
+}
+async function fromPublic() {
+  const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(() => '')).slice(0, 300)}`);
+  return res.json();
+}
+let raw;
+if (BACKEND_URL && BACKEND_TOKEN) {
+  try { console.error(`Querying backend vini_daily @ ${BACKEND_URL} …`); raw = await fromBackend('vini_daily'); }
+  catch (e) { console.error(`WARN: backend failed (${e.message}) — falling back to public question.`); raw = await fromPublic().catch(err => { console.error(`ERROR: public fallback also failed: ${err.message}`); process.exit(1); }); }
+} else {
+  console.error(`Querying public question ${PUBLIC_UUID} …`);
+  raw = await fromPublic().catch(err => { console.error(`ERROR: ${err.message}`); process.exit(1); });
+}
+if (!Array.isArray(raw) || raw.length < 100) { console.error(`ERROR: source returned ${Array.isArray(raw) ? raw.length : 'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
 console.error(`Fetched ${raw.length} rows.`);
 
 // ---- daily (Live only) + unique (team_id, agent_type) grain ----

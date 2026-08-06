@@ -47,12 +47,38 @@ const ARR_GID = '1341638818';
 const S = v => v == null ? '' : String(v);
 const num = v => { if (v == null) return 0; const n = (typeof v === 'number') ? v : Number(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
 
-// ---- 1. Public Metabase question → Studio rooftop universe ----
-console.error(`Querying public question ${PUBLIC_UUID} …`);
-const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-if (!res.ok) { console.error(`ERROR: public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(()=> '')).slice(0, 300)}`); process.exit(1); }
-const card = await res.json();
-if (!Array.isArray(card) || card.length < 100) { console.error(`ERROR: public question returned ${Array.isArray(card)?card.length:'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
+// ---- 1. Studio rooftop universe ----
+// Source = the CSM ClickHouse backend when configured (CSM_BACKEND_URL +
+// CSM_BACKEND_TOKEN), else the public Metabase question. The backend's
+// `studio_rooftops` query returns the SAME columns, so this is a transparent
+// source swap with automatic fallback — a backend blip can never break the feed.
+const BACKEND_URL = get('CSM_BACKEND_URL').replace(/\/+$/, '');
+const BACKEND_TOKEN = get('CSM_BACKEND_TOKEN');
+async function fromBackend(name) {
+  const r = await fetch(`${BACKEND_URL}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BACKEND_TOKEN}`, 'User-Agent': 'Mozilla/5.0' },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) throw new Error(`backend ${name} → ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
+  const j = await r.json();
+  if (!j || j.success !== true || !Array.isArray(j.rows)) throw new Error(`backend ${name} → bad payload`);
+  return j.rows;
+}
+async function fromPublic() {
+  const res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`public card ${PUBLIC_UUID} → ${res.status} — ${(await res.text().catch(() => '')).slice(0, 300)}`);
+  return res.json();
+}
+let card;
+if (BACKEND_URL && BACKEND_TOKEN) {
+  try { console.error(`Querying backend studio_rooftops @ ${BACKEND_URL} …`); card = await fromBackend('studio_rooftops'); }
+  catch (e) { console.error(`WARN: backend failed (${e.message}) — falling back to public question.`); card = await fromPublic().catch(err => { console.error(`ERROR: public fallback also failed: ${err.message}`); process.exit(1); }); }
+} else {
+  console.error(`Querying public question ${PUBLIC_UUID} …`);
+  card = await fromPublic().catch(err => { console.error(`ERROR: ${err.message}`); process.exit(1); });
+}
+if (!Array.isArray(card) || card.length < 100) { console.error(`ERROR: source returned ${Array.isArray(card) ? card.length : 'non-array'} rows (<100) — keeping last-good.`); process.exit(1); }
 console.error(`Studio public question: ${card.length} rooftops.`);
 
 // ---- 2. ARR sheet → eid → ARR (Studio, Live/Future Churn, col Q index 16) ----
