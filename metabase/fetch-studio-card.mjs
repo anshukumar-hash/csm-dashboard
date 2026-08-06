@@ -69,12 +69,15 @@ async function fromPublic() {
   // The public Metabase question is a heavy query that intermittently 504s /
   // times out under load. Retry with backoff so a transient gateway timeout
   // can't fail the whole feed (which would silently keep stale month columns).
-  const MAX = 6;
+  // Keep the total bounded well under the CI job timeout: 3 attempts × 90s +
+  // short backoff ≈ 5 min worst case. If the public question is down that long
+  // the workflow guard keeps the last-good studio_card.json rather than hanging.
+  const MAX = 3;
   let lastErr;
   for (let attempt = 1; attempt <= MAX; attempt++) {
     try {
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 120000);
+      const timer = setTimeout(() => ctl.abort(), 90000);
       let res;
       try {
         res = await fetch(`${BASE}/api/public/card/${PUBLIC_UUID}/query/json`, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: ctl.signal });
