@@ -1850,9 +1850,10 @@ try {
             $cv += $val.Trim()
         }
         if ($cv[10].ToLower() -ne 'live') { continue }
-        # [eid, en, region, country, state, city, acctType, subType] — eid drives
-        # the client-side Segment/CSM/ARR join against s_rows / vs_rows.
-        $ordered = @($cv[0], $cv[1], $cv[6], $cv[7], $cv[8], $cv[9], $cv[5], $cv[4])
+        # [eid, en, rid, rn, region, country, state, city, acctType, subType] —
+        # rooftop grain: rid+eid drive the client-side ARR/Segment/CSM join
+        # (rid-primary, eid fallback) against s_rows / vs_rows.
+        $ordered = @($cv[0], $cv[1], $cv[2], $cv[3], $cv[6], $cv[7], $cv[8], $cv[9], $cv[5], $cv[4])
         $esc = $ordered | ForEach-Object { JsEscape $_ }
         $geoParts.Add('[' + ($esc -join ',') + ']')
     }
