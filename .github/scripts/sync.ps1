@@ -1832,6 +1832,32 @@ try {
     Write-Host "  revenue_loss: WARNING — fetch/parse failed ($_). Preserving existing block."
 }
 
+# --- Geo Country/State/City for the Map Overview tab (live accounts, RAW) ----
+# Separate spreadsheet (1H5cBuWmLD...) gid=1199679978. Columns: 0 Enterprise_Id,
+# 1 Enterprise_Name, 4 account_sub_type, 5 account_type, 6 Region, 7 Country,
+# 8 State, 9 City, 10 Status. Emit RAW [en,region,country,state,city,at,ast] for
+# Status='Live'; the dashboard normalises country/state client-side (canonical
+# names live with the embedded map geometry, so this stays dumb).
+$geoRowsJson = $null
+try {
+    $geoTable = Fetch-Gviz 'https://docs.google.com/spreadsheets/d/1H5cBuWmLD_roF_LV3foWII37PHbTqqNdzCcVGeAGU8A/gviz/tq?tqx=out:json&gid=1199679978' 500
+    $geoParts = New-Object System.Collections.Generic.List[string]
+    foreach ($gr in $geoTable.rows) {
+        $cv = @()
+        for ($ci = 0; $ci -le 10; $ci++) {
+            $c = $gr.c[$ci]; $val = ''
+            if ($c) { if ($null -ne $c.f) { $val = [string]$c.f } elseif ($null -ne $c.v) { $val = [string]$c.v } }
+            $cv += $val.Trim()
+        }
+        if ($cv[10].ToLower() -ne 'live') { continue }
+        $ordered = @($cv[1], $cv[6], $cv[7], $cv[8], $cv[9], $cv[5], $cv[4])
+        $esc = $ordered | ForEach-Object { JsEscape $_ }
+        $geoParts.Add('[' + ($esc -join ',') + ']')
+    }
+    if ($geoParts.Count -ge 100) { $geoRowsJson = '[' + ($geoParts -join ',') + ']'; Write-Host "  geo_rows: $($geoParts.Count) live accounts (Map Overview)" }
+    else { Write-Host "  geo_rows: only $($geoParts.Count) rows (<100) — keeping last-good" }
+} catch { Write-Host "  geo_rows: WARNING — fetch failed ($_). Keeping last-good." }
+
 $json=$origJson
 $asKeys = @('v_rows','vini_stage','csat_by_eid','csat_by_name','csat_all_by_eid','csat_all_by_name','vini_tix','studio_tix','s_rows','s_schema','report_coverage','report_tracking')
 if ($accountStatusJson) { $asKeys += 'account_status' }   # only strip when we have a fresh value to replace it
@@ -1842,6 +1868,7 @@ if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-
 if ($expansionJson)     { $asKeys += 'expansion' }        # existing-customer upsell ARR (NRR)
 if ($revenueLossJson)   { $asKeys += 'revenue_loss' }     # D2D churn/contraction total for the LARR
 if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
+if ($geoRowsJson)       { $asKeys += 'geo_rows' }         # Map Overview geo (live accounts, raw)
 foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
@@ -1864,6 +1891,7 @@ if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
 if ($expansionJson)     { $inserted += ',"expansion":' + $expansionJson }
 if ($revenueLossJson)   { $inserted += ',"revenue_loss":' + $revenueLossJson }
 if ($payOverdueJson)    { $inserted += ',"pay_overdue":' + $payOverdueJson }
+if ($geoRowsJson)       { $inserted += ',"geo_rows":' + $geoRowsJson }
 $json = $json.Substring(0,$lastBrace) + $inserted + $json.Substring($lastBrace)
 
 # --- Churn-analysis records → window.__CHURN_ANALYSIS__ ---------------------
