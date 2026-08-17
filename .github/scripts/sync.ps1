@@ -1843,6 +1843,10 @@ if ($expansionJson)     { $asKeys += 'expansion' }        # existing-customer up
 if ($revenueLossJson)   { $asKeys += 'revenue_loss' }     # D2D churn/contraction total for the LARR
 if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
 
+# Strip the previous copy of every key BEFORE inserting the fresh one. Without
+# this line each sync APPENDS another full copy of all 19 keys — the file grew
+# ~5MB per run to 99MB and GitHub rejected the push (>100MB), freezing all data.
+foreach ($k in $asKeys) { $json=StripKey $json $k }
 $lastBrace=$json.LastIndexOf('}')
 $inserted = ',"v_rows":' + $jsonVRows +
             ',"vini_stage":' + $jsonStage +
