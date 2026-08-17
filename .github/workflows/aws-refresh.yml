@@ -1,0 +1,89 @@
+name: Refresh AWS from this repo (every 4h)
+
+# WHY THIS LIVES HERE AND NOT IN THE ORG REPO
+# ------------------------------------------
+# AWS (csm-dashboard.spyne.ai) builds from the ORG repo's `aws-prod` branch, and
+# the org has its own aws-promote.yml to advance it. But GitHub Actions for
+# spyne-ai-agentic-dev is billing-suspended — every org workflow dies at startup
+# with "The job was not started because recent account payments have failed",
+# so org data froze and nothing promotes.
+#
+# This repo's Actions still work and its sync is healthy, so this job carries the
+# freshly-synced page + JSON feeds over to the org repo and fast-forwards
+# aws-prod, which triggers AWS CodePipeline (AWS-side, unaffected by GitHub
+# billing). Once org billing is restored this becomes redundant — the org's own
+# aws-promote.yml takes over and this can be disabled.
+#
+# REQUIRES secret ORG_SYNC_TOKEN: a token with contents:write on
+# spyne-ai-agentic-dev/csm-dashboard. Without it the job exits cleanly (no-op)
+# rather than failing every 4 hours.
+
+on:
+  schedule:
+    - cron: '35 */4 * * *'   # every 4 hours
+  workflow_dispatch: {}
+
+concurrency:
+  group: aws-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      ORG_SYNC_TOKEN: ${{ secrets.ORG_SYNC_TOKEN }}
+    steps:
+      - name: Checkout this repo (source of truth for data)
+        uses: actions/checkout@v4
+
+      - name: Skip cleanly if the token is not configured
+        id: gate
+        run: |
+          if [ -z "${ORG_SYNC_TOKEN}" ]; then
+            echo "::warning::ORG_SYNC_TOKEN not set — skipping AWS refresh. Add a token with contents:write on spyne-ai-agentic-dev/csm-dashboard."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Copy fresh build + feeds into the org repo and promote aws-prod
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${ORG_SYNC_TOKEN}@github.com/spyne-ai-agentic-dev/csm-dashboard.git" /tmp/org
+          # The dashboard page (3 byte-identical copies) …
+          cp index.html /tmp/org/index.html
+          cp index.html /tmp/org/vercel_deploy/index.html
+          cp index.html /tmp/org/CSM_Dashboard.html
+          # … and every JSON feed the container serves at runtime.
+          for f in churn_data.json cohort_data.json payment_data.json comm_metabase.json \
+                   vini_card.json vini_report_tracking.json studio_card.json rooftop_adoption.json; do
+            [ -f "$f" ] && cp "$f" "/tmp/org/$f" && cp "$f" "/tmp/org/vercel_deploy/$f" || true
+          done
+          cd /tmp/org
+          # Guard: never ship a bloated page (the StripKey regression produced a
+          # 99MB file that GitHub rejected). 20MB is far above the ~6MB norm.
+          SZ=$(stat -c%s index.html)
+          if [ "$SZ" -gt 20971520 ]; then
+            echo "::error::index.html is ${SZ} bytes (>20MB) — refusing to push a bloated build."
+            exit 1
+          fi
+          if git diff --quiet; then
+            echo "org already matches this repo — nothing to copy."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -q -m "Refresh data from the upstream sync [skip ci]"
+            git push origin HEAD:main
+            echo "pushed refreshed data to org main"
+          fi
+          # Fast-forward aws-prod -> main so CodePipeline rebuilds the image.
+          MAIN=$(git rev-parse HEAD)
+          PROD=$(git ls-remote origin refs/heads/aws-prod | cut -f1)
+          if [ "$MAIN" = "$PROD" ]; then
+            echo "aws-prod already current — no deploy needed."
+          else
+            git push origin "$MAIN":refs/heads/aws-prod
+            echo "aws-prod advanced -> ${MAIN} (CodePipeline will rebuild)"
+          fi
