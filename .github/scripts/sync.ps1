@@ -1963,6 +1963,11 @@ try {
             '"appr":' + (JsEscape (CaCol $r @('Leader Approved'))),
             '"bill":' + (JsEscape (CaCol $r @('Billing Status'))),
             '"rmk":'  + (JsEscape (CaCol $r @('Remark'))),
+            # Notice Date — when the customer GAVE notice, as opposed to `mon`
+            # (when the churn takes effect). Feeds the "Month-over-Month
+            # Reported Churn" chart. Sparsely filled upstream (~12% overall,
+            # ~25% in recent months), so the chart states its own coverage.
+            '"nd":'   + (JsEscape (CaCol $r @('Notice Date','Notice date','notice_date'))),
             '"age":'  + (JsEscape $age)
         )
         # [string[]] cast forces a deterministic comma join (see history: an

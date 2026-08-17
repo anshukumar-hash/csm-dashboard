@@ -7976,6 +7976,56 @@ function caPrevMonth(m){
 }
 // Per churn-month: how many churned accounts had a signal in that month OR the
 // month before (signaled = "we saw it coming") vs none (blindsided).
+// ---- Month-over-Month REPORTED churn (by Notice Date) ---------------------
+// `mon` is when churn takes EFFECT; `nd` (Notice Date) is when the customer
+// actually gave notice. Plotting by notice month shows when the business learnt
+// about the loss, which leads the effective-month curve.
+// The upstream column is sparsely filled (~12% overall, ~25% recent months), so
+// the panel reports its own coverage rather than implying completeness.
+function caNoticeMonth(r){
+  const raw = String((r && r.nd) || '').trim();
+  if(!raw) return null;
+  // ISO first: 2026-05-31 / 2026-05
+  let m = raw.match(/^(\d{4})-(\d{2})/);
+  if(m) return m[1]+'-'+m[2];
+  // D-MMM-YYYY or D-MMM-YY  (e.g. 31-May-2026, 4-Apr-26)
+  const MON={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+  m = raw.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{2,4})$/);
+  if(m){ const mm=MON[m[2].slice(0,3).toLowerCase()]; if(mm){ let y=m[3]; if(y.length===2) y='20'+y; return y+'-'+mm; } }
+  // D/M/YYYY — ambiguous, but this sheet is day-first
+  m = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0');
+  const d = new Date(raw);
+  if(!isNaN(d)) return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  return null;
+}
+// Bars = ARR reported in that notice month; label = account count.
+function caReportedChurnBars(months, rows){
+  if(!months.length) return '<div class="ca-empty">No data.</div>';
+  const by={}; months.forEach(m=>by[m]={n:0,arr:0});
+  rows.forEach(r=>{ const nm=caNoticeMonth(r); if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; } });
+  const W=560,H=240,padL=52,padR=14,padT=22,padB=34;
+  const iw=W-padL-padR, ih=H-padT-padB, n=months.length;
+  const maxV=caNiceMax(Math.max(1,...months.map(m=>by[m].arr)));
+  const yOf=v=>padT+ih-ih*(v/maxV);
+  const xOf=i=>padL+iw*(i+0.5)/n;
+  const bw=Math.min(34,(iw/n)*0.6);
+  let g='';
+  for(let t=0;t<=4;t++){ const v=maxV*t/4, yy=yOf(v);
+    g+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+yy.toFixed(1)+'" stroke="var(--border)"/>';
+    g+='<text x="'+(padL-6)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="var(--text-3)">'+cMoney(v)+'</text>'; }
+  let bars='';
+  months.forEach((m,i)=>{
+    const d=by[m], cx=xOf(i), x=(cx-bw/2).toFixed(1), y=yOf(d.arr), y0=yOf(0);
+    if(d.arr>0){
+      bars+='<rect x="'+x+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(y0-y).toFixed(1)+'" fill="#7C3AED"><title>'+caMonthLabel(m)+' — reported: '+d.n+' account'+(d.n===1?'':'s')+' ('+cMoney(d.arr)+')</title></rect>';
+      bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-5).toFixed(1)+'" text-anchor="middle" font-size="9" font-weight="700" fill="var(--text-2)">'+d.n+'</text>';
+    }
+    g+='<text x="'+cx.toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">'+caMonthLabel(m)+'</text>';
+  });
+  return '<div class="ca-chartwrap"><svg viewBox="0 0 '+W+' '+H+'" class="ca-svg" preserveAspectRatio="xMidYMid meet">'+g+bars+'</svg></div>'
+    + caLegendStatic([{label:'ARR reported in that month (bar) · account count (label)',color:'#7C3AED'}]);
+}
 function caChurnSignalCoverage(rows, months){
   const idx = caSignalIndex();
   const by = {}; months.forEach(m => by[m] = { sig:0, blind:0, sigArr:0, blindArr:0 });
@@ -8185,6 +8235,15 @@ function renderChurnAnalysis(){
   //    contraction SIGNAL (Signal Intelligence stream) in the same or prior
   //    month. Honour csm/seg/prod; full month timeline. Needs CHURN loaded.
   const covRows = caFilteredEx({ mon:true });
+  // Reported churn (by Notice Date) — same filtered rows + month timeline as the
+  // signals panel, so the two read together. Coverage is stated in the subtitle
+  // because the Notice Date column is only partially filled upstream.
+  const rptRows = covRows;
+  const rptWith = rptRows.filter(r=>caNoticeMonth(r)).length;
+  const rptSub = rptWith
+    ? `Churned ARR grouped by the month notice was GIVEN (vs the effective-churn months above) · ${rptWith} of ${rptRows.length} records carry a Notice Date (${Math.round(rptWith/rptRows.length*100)}%) — months without one are not represented`
+    : 'No Notice Date recorded on the filtered records — nothing to plot.';
+  const rptBody = rptWith ? caReportedChurnBars(tMonths, rptRows) : '<div class="ca-empty">No Notice Date on the filtered records.</div>';
   let coverageBody, coverageSub;
   if(_churnState==='ready' && CHURN){
     const cov = caChurnSignalCoverage(covRows, tMonths);
@@ -8230,6 +8289,7 @@ function renderChurnAnalysis(){
       + panel('Reason Trend','Churned ARR — top 6 reasons', caLineChart(tMonths, rsnSeries))
       // ---- smart cuts ----
       + panel('Churn caught by Signals (MoM)', coverageSub, coverageBody, true)
+      + panel('Month-over-Month Reported Churn', rptSub, rptBody, true)
       + panel('Future Churn Pipeline', futureSub + ' · click a CSM to list the accounts',
           caStackedBars(caFutureItems(futureRows, futureMonths), { clickable:true }) + futureLegend, true)
       + panel('Segment × Reason Heatmap','ARR lost — where loss concentrates · click any number to list the accounts · current filters',
