@@ -8000,14 +8000,25 @@ function caNoticeMonth(r){
   return null;
 }
 // Bars = ARR reported in that notice month; label = account count.
+// A leading grey slot shows the records with NO Notice Date. Its ARR dwarfs any
+// single month (~15x the tallest), so it is deliberately CLIPPED to the plot
+// height and drawn with a break marker — plotting it to scale would squash every
+// real month into an invisible sliver. Its true count/ARR are on the label and
+// in the tooltip.
 function caReportedChurnBars(months, rows){
   if(!months.length) return '<div class="ca-empty">No data.</div>';
   const by={}; months.forEach(m=>by[m]={n:0,arr:0});
-  rows.forEach(r=>{ const nm=caNoticeMonth(r); if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; } });
+  const nd={n:0,arr:0};
+  rows.forEach(r=>{ const nm=caNoticeMonth(r);
+    if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; }
+    else if(!nm){ nd.n++; nd.arr+=Number(r.arr)||0; } });
   const W=560,H=240,padL=52,padR=14,padT=22,padB=34;
-  const iw=W-padL-padR, ih=H-padT-padB, n=months.length;
+  const iw=W-padL-padR, ih=H-padT-padB;
+  const showNd = nd.n>0;
+  const n=months.length+(showNd?1:0);
+  // y-scale from the MONTHS only, so one huge unknown bucket can't flatten them.
   const maxV=caNiceMax(Math.max(1,...months.map(m=>by[m].arr)));
-  const yOf=v=>padT+ih-ih*(v/maxV);
+  const yOf=v=>padT+ih-ih*(Math.min(v,maxV)/maxV);
   const xOf=i=>padL+iw*(i+0.5)/n;
   const bw=Math.min(34,(iw/n)*0.6);
   let g='';
@@ -8015,7 +8026,21 @@ function caReportedChurnBars(months, rows){
     g+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+yy.toFixed(1)+'" stroke="var(--border)"/>';
     g+='<text x="'+(padL-6)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="var(--text-3)">'+cMoney(v)+'</text>'; }
   let bars='';
-  months.forEach((m,i)=>{
+  if(showNd){
+    const cx=xOf(0), x=(cx-bw/2), y=padT, y0=yOf(0);
+    bars+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(y0-y).toFixed(1)+'" fill="#9CA3AF"><title>No Notice Date recorded — '+nd.n+' account'+(nd.n===1?'':'s')+' ('+cMoney(nd.arr)+') · bar clipped, off scale</title></rect>';
+    // break marker: two zig-zags across the bar just below the top
+    const by1=y+11, by2=y+16;
+    bars+='<path d="M'+x.toFixed(1)+' '+by1.toFixed(1)+' l'+(bw/4).toFixed(1)+' -4 l'+(bw/4).toFixed(1)+' 8 l'+(bw/4).toFixed(1)+' -8 l'+(bw/4).toFixed(1)+' 4" fill="none" stroke="var(--surface)" stroke-width="2.5"/>';
+    bars+='<path d="M'+x.toFixed(1)+' '+by2.toFixed(1)+' l'+(bw/4).toFixed(1)+' -4 l'+(bw/4).toFixed(1)+' 8 l'+(bw/4).toFixed(1)+' -8 l'+(bw/4).toFixed(1)+' 4" fill="none" stroke="var(--surface)" stroke-width="2.5"/>';
+    bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-5).toFixed(1)+'" text-anchor="middle" font-size="9" font-weight="700" fill="var(--text-2)">'+nd.n+'</text>';
+    g+='<text x="'+cx.toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">No date</text>';
+    // divider separating the unknown bucket from the real timeline
+    const dx=(padL+iw*1/n).toFixed(1);
+    g+='<line x1="'+dx+'" y1="'+padT+'" x2="'+dx+'" y2="'+(padT+ih)+'" stroke="var(--border)" stroke-dasharray="3 3"/>';
+  }
+  months.forEach((m,mi)=>{
+    const i=mi+(showNd?1:0);
     const d=by[m], cx=xOf(i), x=(cx-bw/2).toFixed(1), y=yOf(d.arr), y0=yOf(0);
     if(d.arr>0){
       bars+='<rect x="'+x+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(y0-y).toFixed(1)+'" fill="#7C3AED"><title>'+caMonthLabel(m)+' — reported: '+d.n+' account'+(d.n===1?'':'s')+' ('+cMoney(d.arr)+')</title></rect>';
@@ -8024,7 +8049,8 @@ function caReportedChurnBars(months, rows){
     g+='<text x="'+cx.toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">'+caMonthLabel(m)+'</text>';
   });
   return '<div class="ca-chartwrap"><svg viewBox="0 0 '+W+' '+H+'" class="ca-svg" preserveAspectRatio="xMidYMid meet">'+g+bars+'</svg></div>'
-    + caLegendStatic([{label:'ARR reported in that month (bar) · account count (label)',color:'#7C3AED'}]);
+    + caLegendStatic([{label:'ARR reported in that month (bar) · account count (label)',color:'#7C3AED'},
+                      {label:'No Notice Date recorded — '+nd.n+' accounts ('+cMoney(nd.arr)+'), bar clipped/off scale',color:'#9CA3AF'}]);
 }
 function caChurnSignalCoverage(rows, months){
   const idx = caSignalIndex();
