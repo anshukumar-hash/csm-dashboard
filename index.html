@@ -12606,9 +12606,19 @@ const _ragMemo={};
 const _viniAgg={}; let _viniAggBuilt=false;
 function viniAggByEid(){
   if(_viniAggBuilt) return _viniAgg;
+  let rows=[];
+  try{ rows=(typeof viniAggregateRooftops==='function')?(viniAggregateRooftops()||[]):[]; }
+  catch(err){ console.warn('[spyne-studio] Vini health unavailable:',err&&err.message); }
+  /* Do NOT latch an empty result. Overall is the LANDING view, so its first
+     render can fire before the CSM data layer has finished initialising and
+     viniAggregateRooftops() legitimately returns []. Caching that permanently
+     zeroed every Vini RAG in production while working locally, where the tab
+     was always clicked after load. Staying uncached lets the next render fix
+     itself. */
+  if(!rows.length) return _viniAgg;
   _viniAggBuilt=true;
-  try{
-    const rows=(typeof viniAggregateRooftops==='function')?(viniAggregateRooftops()||[]):[];
+  for(const k in _viniRagMemo) delete _viniRagMemo[k];   // drop verdicts built on []
+  {
     for(const r of rows){
       if(!r||!r.eid) continue;
       const e=(_viniAgg[r.eid]=_viniAgg[r.eid]||
@@ -12623,7 +12633,7 @@ function viniAggByEid(){
                    roi:Number(r.roi_mtd)||0,appts:Number(r.appts_30)||Number(r.appts)||0,rag:rag});
       if(rag==='Red'){ e.redAgents++; if(r.rid) e.redRt.add(r.rid); }
     }
-  }catch(err){ console.warn('[spyne-studio] Vini health unavailable:',err&&err.message); }
+  }
   return _viniAgg;
 }
 const _viniRagMemo={};
@@ -12631,7 +12641,9 @@ function viniAccountRag(eid){
   if(_viniRagMemo[eid]) return _viniRagMemo[eid];
   const e=viniAggByEid()[eid];
   const none={rag:'NA',trend:null,lastVins:null,ws:null,pen:0,score:null,redRt:0,rt:0,agents:0,redAgents:0};
-  if(!e) return (_viniRagMemo[eid]=none);
+  /* Returned WITHOUT memoising: a miss may just mean the aggregate wasn't ready
+     yet, and caching it would make the gap permanent (see viniAggByEid). */
+  if(!e) return none;
   const mrr=Object.keys(e.mrrByRid).reduce((t,k)=>t+e.mrrByRid[k],0);
   const roi=mrr>0?e.av/mrr:0;
   let comm='NA';
@@ -12767,7 +12779,9 @@ function groupedTable(key,cols,rows,cellFn,totalRow,groupFn){
     const agg={};
     for(const c of cols){
       const k=c[0];
-      if(c[2]==='num') agg[k]=sum(rs,x=>Number(x[k])||0);
+      if(typeof c[3]==='function') agg[k]=c[3](rs);   // per-column group aggregator
+      else if(c[2]==='num') agg[k]=sum(rs,x=>Number(x[k])||0);
+      /* Default: show the shared value, or blank when children disagree. */
       else { const v=[...new Set(rs.map(x=>String(x[k]==null?'':x[k])))]; agg[k]=v.length===1?v[0]:''; }
     }
     return {name,rs,agg};
@@ -13503,6 +13517,17 @@ function lastNMonths(n){const out=[];const d=new Date(TODAY.getFullYear(),TODAY.
   return out;}
 const monthEndOf=d=>new Date(+String(d).slice(0,4),+String(d).slice(5,7),0).getDate();
 function obDetailBuilder(ctx){
+  /* Vini's OB rows carry `agentOpted` (the agent contract that went live);
+     Studio's do not. These helpers splice an Agent column in after Rooftop only
+     when the current rows actually have one, so Studio tables are unchanged
+     rather than padded with dashes. Vini's unit of delivery is the agent, so
+     without this a 2-rooftop account showing 2 rows looked like a duplicate. */
+  const agentOn=rows=>rows.some(x=>x.agentOpted);
+  const agentAgg=rs=>{const v=[...new Set(rs.map(x=>x.agentOpted).filter(Boolean))];
+    return v.length===0?'—':v.length===1?v[0]:v.length+' agents';};
+  const agentCols=(on,head,tail)=>head.concat(on?[['agentOpted','Agent',null,agentAgg]]:[]).concat(tail);
+  const agentCell=(on,x,head,tail)=>head.concat(on?[x.agentOpted||'—']:[]).concat(tail);
+  const agentTot =(on,head,tail)=>head.concat(on?['']:[]).concat(tail);
   const {thisLive,sIo,expected,blockedC,salesToOb,sProj,CUT_DAY,tats,tatMonths}=ctx;
   const mode=state.obDetail;
   const confPill=x=>x.curMonthConf
@@ -13510,36 +13535,47 @@ function obDetailBuilder(ctx){
     : '—';
   if(mode==='live'){
     const rows=thisLive.map(r=>({...r,disp:r.ent||r.rn}));
+    const on=agentOn(rows);
     return {rows,total:sum(rows,x=>x.arr),
-      cols:[['disp','Account'],['rn','Rooftop'],['seg','Segment'],['region','Region'],
-            ['goLive','Go-live date'],['obPoc','OB POC'],['arr','ARR','num']],
-      cell:x=>[x.disp,x.rn||'—',x.seg||'—',x.region||'—',x.goLive||'—',x.obPoc||'—',money(x.arr)],
-      totalRow:['Total','','','','','',money(sum(rows,x=>x.arr))],groupFn:x=>x.disp};
+      cols:agentCols(on,[['disp','Account'],['rn','Rooftop']],
+        [['seg','Segment'],['region','Region'],['goLive','Go-live date'],['obPoc','OB POC'],['arr','ARR','num']]),
+      cell:x=>agentCell(on,x,[x.disp,x.rn||'—'],
+        [x.seg||'—',x.region||'—',x.goLive||'—',x.obPoc||'—',money(x.arr)]),
+      totalRow:agentTot(on,['Total',''],['','','','',money(sum(rows,x=>x.arr))]),groupFn:x=>x.disp};
   }
   if(mode==='expected'){
     const rows=expected.map(r=>({...r,disp:r.ent||r.rn}));
+    const on=agentOn(rows);
     return {rows,total:sum(rows,x=>x.arr),
-      cols:[['disp','Account'],['rn','Rooftop'],['seg','Segment'],['region','Region'],
-            ['curMonthConf','Confirmation'],['projLiveDate','Projected live'],['obPoc','OB POC'],['arr','ARR','num']],
-      cell:x=>[x.disp,x.rn||'—',x.seg||'—',x.region||'—',confPill(x),x.projLiveDate||'—',x.obPoc||'—',money(x.arr)],
-      totalRow:['Total','','','','','','',money(sum(rows,x=>x.arr))],groupFn:x=>x.disp};
+      cols:agentCols(on,[['disp','Account'],['rn','Rooftop']],
+        [['seg','Segment'],['region','Region'],['curMonthConf','Confirmation'],
+         ['projLiveDate','Projected live'],['obPoc','OB POC'],['arr','ARR','num']]),
+      cell:x=>agentCell(on,x,[x.disp,x.rn||'—'],
+        [x.seg||'—',x.region||'—',confPill(x),x.projLiveDate||'—',x.obPoc||'—',money(x.arr)]),
+      totalRow:agentTot(on,['Total',''],['','','','','',money(sum(rows,x=>x.arr))]),groupFn:x=>x.disp};
   }
   if(mode==='blocked'){
     const rows=blockedC.map(r=>({...r,disp:r.ent||r.rn}));
+    const on=agentOn(rows);
     return {rows,total:sum(rows,x=>x.arr),
-      cols:[['disp','Account'],['rn','Rooftop'],['seg','Segment'],['region','Region'],
-            ['blockedOwner','Blocked by'],['blockedRemarks','Remarks'],['arr','ARR','num']],
-      cell:x=>[x.disp,x.rn||'—',x.seg||'—',x.region||'—',x.blockedOwner||'(no owner)',
-        (x.blockedRemarks||'—').slice(0,70),money(x.arr)],
-      totalRow:['Total','','','','','',money(sum(rows,x=>x.arr))],groupFn:x=>x.disp};
+      cols:agentCols(on,[['disp','Account'],['rn','Rooftop']],
+        [['seg','Segment'],['region','Region'],['blockedOwner','Blocked by'],
+         ['blockedRemarks','Remarks'],['arr','ARR','num']]),
+      cell:x=>agentCell(on,x,[x.disp,x.rn||'—'],
+        [x.seg||'—',x.region||'—',x.blockedOwner||'(no owner)',
+         (x.blockedRemarks||'—').slice(0,70),money(x.arr)]),
+      totalRow:agentTot(on,['Total',''],['','','','',money(sum(rows,x=>x.arr))]),groupFn:x=>x.disp};
   }
   if(mode==='salesyet'){
     const rows=salesToOb.map(r=>({...r,disp:r.ent||r.rn}));
+    const on=agentOn(rows);
     return {rows,total:sum(rows,x=>x.arr),
-      cols:[['disp','Account'],['rn','Rooftop'],['seg','Segment'],['region','Region'],
-            ['obCall','OB call date'],['stageRaw','Stage'],['obPoc','OB POC'],['arr','ARR','num']],
-      cell:x=>[x.disp,x.rn||'—',x.seg||'—',x.region||'—',x.obCall||'—',x.stageRaw||'—',x.obPoc||'—',money(x.arr)],
-      totalRow:['Total','','','','','','',money(sum(rows,x=>x.arr))],groupFn:x=>x.disp};
+      cols:agentCols(on,[['disp','Account'],['rn','Rooftop']],
+        [['seg','Segment'],['region','Region'],['obCall','OB call date'],
+         ['stageRaw','Stage'],['obPoc','OB POC'],['arr','ARR','num']]),
+      cell:x=>agentCell(on,x,[x.disp,x.rn||'—'],
+        [x.seg||'—',x.region||'—',x.obCall||'—',x.stageRaw||'—',x.obPoc||'—',money(x.arr)]),
+      totalRow:agentTot(on,['Total',''],['','','','','',money(sum(rows,x=>x.arr))]),groupFn:x=>x.disp};
   }
   if(mode==='tat'){
     const byPoc={};
@@ -13622,18 +13658,26 @@ function csDetailBuilder(ctx){
   const csmOf=r=>csmName(r.csm)||'(unassigned)';
 
   if(mode==='newlive'){
-    const rows=newLiveRows.map(r=>({...r,disp:r.ent||r.rn}));
-    return {rows,total:sum(rows,x=>x.arr),
-      cols:[['disp','Account'],['rn','Rooftop'],['seg','Segment'],['region','Region'],
-            ['goLive','Go-live date'],['obPoc','OB POC'],['arr','ARR','num']],
-      cell:x=>[x.disp,x.rn||'—',x.seg||'—',x.region||'—',x.goLive||'—',x.obPoc||'—',money(x.arr)],
-      totalRow:['Total','','','','','',money(sum(rows,x=>x.arr))],groupFn:x=>x.disp};
+    const rows=newLiveRows.map(r=>({...r,disp:r.ent||r.rn,agent:r.agentOpted||''}));
+    /* Vini's OB rows carry the agent contract; Studio's don't. Show the column
+       only when the data actually has it, so Studio isn't padded with dashes. */
+    const hasAgent=rows.some(x=>x.agent);
+    const cols=[['disp','Account'],['rn','Rooftop']]
+      .concat(hasAgent?[['agent','Agent']]:[])
+      .concat([['seg','Segment'],['region','Region'],
+               ['goLive','Go-live date'],['obPoc','OB POC'],['arr','ARR','num']]);
+    return {rows,total:sum(rows,x=>x.arr),cols,
+      cell:x=>[x.disp,x.rn||'—'].concat(hasAgent?[x.agent||'—']:[])
+        .concat([x.seg||'—',x.region||'—',x.goLive||'—',x.obPoc||'—',money(x.arr)]),
+      totalRow:['Total',''].concat(hasAgent?['']:[])
+        .concat(['','','','',money(sum(rows,x=>x.arr))]),groupFn:x=>x.disp};
   }
   if(mode==='red'){
     const rows=sLive.map(r=>{const h=accountRag(r.eid,r.productLine);
         return {...r,rag:h.rag,trend:h.trend||(h.vini?'—':'—'),lastVins:h.lastVins,score:h.score,
           redRt:h.redRt,rt:h.rt,why:ragReason(h),csmDisp:csmOf(r),
-          isVini:!!h.vini,roi:h.roi,agents:h.agents||0,redAgents:h.redAgents||0};})
+          isVini:!!h.vini,roi:h.roi,agents:h.agents||0,redAgents:h.redAgents||0,
+          agentRows:h.agentRows||[]};})
       .filter(r=>r.rag==='Red');
     return {rows,total:sum(rows,x=>x.arr),
       cols:[['customer','Enterprise'],['seg','Segment'],['region','Region'],['csmDisp','CS POC'],
@@ -13649,8 +13693,17 @@ function csDetailBuilder(ctx){
           : el('span',{class:'pill '+(x.trend==='Declining'?'r':x.trend==='Rising'?'g':'w')},x.trend),
         x.isVini?'—':num(x.lastVins),
         el('span',{class:'pill '+(x.redRt===x.rt?'r':x.redRt?'w':'g')},num(x.redRt)+' / '+num(x.rt)),
-        x.agents?el('span',{class:'pill '+(x.redAgents===x.agents?'r':x.redAgents?'w':'g')},
-          num(x.redAgents)+' / '+num(x.agents)):'—',
+        /* Agent-level detail: Vini's unit of action is (rooftop x agent), so the
+           red ones are listed by name and RoI rather than only counted. */
+        x.agents?el('div',{},
+          el('span',{class:'pill '+(x.redAgents===x.agents?'r':x.redAgents?'w':'g')},
+            num(x.redAgents)+' / '+num(x.agents)),
+          (()=>{const red=(x.agentRows||[]).filter(a=>a.rag==='Red')
+                  .sort((a,b)=>a.roi-b.roi);
+            if(!red.length) return null;
+            return el('div',{class:'reason',style:'margin-top:3px'},
+              red.map(a=>a.agent+(a.rn?' @ '+a.rn:'')+' ('+Number(a.roi||0).toFixed(2)+'x)').join(', '));})()
+        ):'—',
         el('span',{class:'reason'},x.why),
         money(x.arr)],
       totalRow:['Total','','','','','','',num(sum(rows,x=>x.redRt))+' / '+num(sum(rows,x=>x.rt)),
