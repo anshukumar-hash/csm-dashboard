@@ -3666,19 +3666,45 @@ function sparklineCell(series, trend) {
     + `</svg>`;
 }
 // The 5 full-month usage series for a single Studio rooftop row (Jan→May).
-function rowUsageSeries(r) {
-  // Usage trend window (user spec 2026-08): May · Jun · Jul actuals, then the
-  // CURRENT month projected to a full month from MTD. The old Jan→Jun window
-  // went stale once Jul/Aug columns landed — it judged accounts on data two
-  // months old. The current month is prorated (MTD × daysInMonth ÷ daysElapsed)
-  // so a part-month is comparable with the completed months beside it.
-  return [
-    Number(r[S_COL.u_may]) || 0,
-    Number(r[S_COL.u_jun]) || 0,
-    Number(r[S_COL.u_jul]) || 0,
-    proratedMonthVins(r[S_COL.u_mtd]),
-  ];
+// ---- Rolling month helpers -------------------------------------------------
+// The Studio feed carries one column per calendar month (u_jan … u_dec) plus
+// u_mtd for the current month. Anything that means "last completed month" or
+// "recent months" MUST derive those columns from today's date — hardcoding them
+// (as u_jun was) silently goes stale the moment the calendar turns, which is
+// exactly the bug this replaces.
+const STUDIO_MONTH_KEYS = ['u_jan','u_feb','u_mar','u_apr','u_may','u_jun','u_jul','u_aug','u_sep','u_oct','u_nov','u_dec'];
+// Column for the LAST COMPLETED month, resolved fresh on every call so it rolls
+// over on its own. If the feed has not gained that month's column yet, fall back
+// to the newest column that is NOT the current (still-incomplete) month.
+function studioLastCompletedMonthCol(now) {
+  const d = now || new Date();
+  const curKey  = STUDIO_MONTH_KEYS[d.getMonth()];
+  const prevKey = STUDIO_MONTH_KEYS[(d.getMonth() + 11) % 12];
+  if (typeof S_COL !== 'undefined' && S_COL[prevKey] != null) return prevKey;
+  const avail = STUDIO_MONTH_KEYS.filter(k => typeof S_COL !== 'undefined' && S_COL[k] != null && k !== curKey);
+  return avail.length ? avail[avail.length - 1] : null;
 }
+// VINs in the last completed month for a rooftop row.
+function rowLastCompletedMonthVins(r) {
+  const k = studioLastCompletedMonthCol();
+  return k ? (Number(r[S_COL[k]]) || 0) : 0;
+}
+function rowUsageSeries(r) {
+  // Usage trend window: the last THREE COMPLETED months + the current month
+  // projected to full-month from MTD (MTD x daysInMonth / daysElapsed) so a
+  // part-month is comparable with the completed months beside it. Months are
+  // derived from today via STUDIO_MONTH_KEYS, so the window rolls forward on
+  // its own - no edit needed when the calendar turns.
+  const now = new Date();
+  const out = [];
+  for (let back = 3; back >= 1; back--) {
+    const k = STUDIO_MONTH_KEYS[(now.getMonth() + 12 - back) % 12];
+    if (S_COL[k] != null) out.push(Number(r[S_COL[k]]) || 0);
+  }
+  out.push(proratedMonthVins(r[S_COL.u_mtd]));
+  return out;
+}
+
 // Usage STATUS window (per user spec, 2026-07): last 3 completed months +
 // current month PRORATED — [Apr, May, Jun, July-prorated]. This drives ONLY the
 // Rising/Steady/Declining status pill; the sparkline still shows the full
@@ -3778,9 +3804,9 @@ function favIconLink(wsLink){
 // Usage signal is now the Usage Trend (per user spec); comm stays CSAT-derived.
 function studioRooftopOverallRag(r, tixRagMemo) {
   // Hard override (user spec 2026-07): a Studio rooftop with ≤10 VINs in the last
-  // completed month (June actual, u_jun) is critically low usage → the WHOLE
+  // completed month (resolved from today, see studioLastCompletedMonthCol) → the WHOLE
   // rooftop is Red, regardless of trend or the other signals.
-  if ((Number(r[S_COL.u_jun]) || 0) <= 10) return 'Red';
+  if (rowLastCompletedMonthVins(r) <= 10) return 'Red';
   const usage  = usageTrendRag(usageTrend(rowUsageSeries(r)));
   const ticket = tixRagMemo != null
     ? tixRagMemo
@@ -3893,8 +3919,12 @@ function computeOverallRagSaas(parts) {
   }
   if (!weightUsed) return 'NA';
   const score = sum / weightUsed;
+  // Bands (user spec 2026-08): Green >=80, Amber >=50, Red <50. The Amber floor
+  // was lowered 60->50 so a paying, engaged account with problems reads as
+  // 'watch' rather than 'crisis'; the Green bar stays at 80 so an account whose
+  // usage is declining can never be called Green.
   if (score >= 80) return 'Green';
-  if (score >= 60) return 'Amber';
+  if (score >= 50) return 'Amber';
   return 'Red';
 }
 function computeOverallRAG(rags) {
@@ -3916,7 +3946,7 @@ function computeOverallRAG(rags) {
     if (!valid.length) return 'NA';
     const score = valid.reduce((s, r) => s + OVERALL_RAG_VALUE[r], 0) / valid.length;
     if (score >= 80) return 'Green';
-    if (score >= 60) return 'Amber';
+    if (score >= 50) return 'Amber';
     return 'Red';
   }
   // Object signature (new) → direct call into the SaaS blend.
