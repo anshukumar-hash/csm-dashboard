@@ -3667,10 +3667,17 @@ function sparklineCell(series, trend) {
 }
 // The 5 full-month usage series for a single Studio rooftop row (Jan→May).
 function rowUsageSeries(r) {
-  // 6th point = June ACTUAL (u_jun, fixed sheet column). Raw, not prorated —
-  // proration (×days/elapsed) exploded on the 1st of a month into an identical
-  // end-spike; and u_mtd has since rolled to July, so use the real June column.
-  return [r[S_COL.u_jan], r[S_COL.u_feb], r[S_COL.u_mar], r[S_COL.u_apr], r[S_COL.u_may], Number(r[S_COL.u_jun])||0];
+  // Usage trend window (user spec 2026-08): May · Jun · Jul actuals, then the
+  // CURRENT month projected to a full month from MTD. The old Jan→Jun window
+  // went stale once Jul/Aug columns landed — it judged accounts on data two
+  // months old. The current month is prorated (MTD × daysInMonth ÷ daysElapsed)
+  // so a part-month is comparable with the completed months beside it.
+  return [
+    Number(r[S_COL.u_may]) || 0,
+    Number(r[S_COL.u_jun]) || 0,
+    Number(r[S_COL.u_jul]) || 0,
+    proratedMonthVins(r[S_COL.u_mtd]),
+  ];
 }
 // Usage STATUS window (per user spec, 2026-07): last 3 completed months +
 // current month PRORATED — [Apr, May, Jun, July-prorated]. This drives ONLY the
