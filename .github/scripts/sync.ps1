@@ -1720,6 +1720,7 @@ try {
 # 115,644 delta on a row with no Partner). Embedded as `reseller` and folded into
 # the Studio + Overall new-addition / churn client-side.
 $resellerJson = $null
+$partnerRowsJson = $null
 try {
     $resSheet = '1kvvDbnpUAodPnmnLEVAWejLAzTwEflkzLSkXiAeOkB4'
     # CSV EXPORT (not gviz): a basic FILTER on the reseller tab hid ~55 rows from
@@ -1764,6 +1765,60 @@ try {
     }
     $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + ',"newArrStudio":' + ([string][math]::Round($resNewStudio)) + ',"newArrVini":' + ([string][math]::Round($resNewVini)) + ',"churnArrStudio":' + ([string][math]::Round($script:resChurnStudio)) + ',"churnArrVini":' + ([string][math]::Round($script:resChurnVini)) + '}'
     Write-Host "  reseller (all products, csv): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
+
+    # ---- partner-level DETAIL rows -> `partner_rows` -----------------------
+    # Same already-fetched CSV ($resRecs). The block above reduces the sheet to
+    # new/churn deltas; this keeps the per-partner book so the dashboard can show
+    # WHO the reseller ARR is. Detail only — it deliberately does NOT feed the
+    # LARR walk, because this sheet's partner ARR does not reconcile with the
+    # live-book pivot (see the note rendered under the table).
+    # Every column is resolved BY HEADER NAME so an inserted column can't shift it.
+    $pCol = @{}
+    foreach ($nm in @('Partners','Enterprise Id','Region','Billing Type','Product','ARR',
+                      'Overall RAG','Overall Score','Usage RAG','Billing RAG','Tickets RAG',
+                      'Cadence RAG','Live Usage Current Month','Last 3-Month Avg Usage',
+                      'Last Meeting Date','PAM Sentiment','Monthly Tickets Raised')) {
+        $pCol[$nm] = -1
+        for ($ci = 0; $ci -lt 60; $ci++) {
+            if ((Norm-Lbl ([string]$resRecs[0]."c$ci")) -eq (Norm-Lbl $nm)) { $pCol[$nm] = $ci; break }
+        }
+    }
+    $pGet = { param($row, $nm) if ($pCol[$nm] -ge 0) { ([string]$row."c$($pCol[$nm])").Trim() } else { '' } }
+    # Product is spelled Studio / Vini / VINI in the sheet — normalise so the
+    # dashboard's Product filter matches it.
+    $pParts = New-Object System.Collections.Generic.List[string]
+    for ($ri = 1; $ri -lt $resRecs.Count; $ri++) {
+        $row = $resRecs[$ri]
+        $pn = (& $pGet $row 'Partners'); if (-not $pn) { continue }
+        if ($pn -eq 'Total') { continue }
+        $prRaw = (& $pGet $row 'Product').ToLower()
+        $pr = if ($prRaw.StartsWith('vin')) { 'Vini' } elseif ($prRaw.StartsWith('stud')) { 'Studio' } else { '' }
+        $o = '{"p":' + (JsEscape $pn) +
+             ',"e":'  + (JsEscape (& $pGet $row 'Enterprise Id')) +
+             ',"r":'  + (JsEscape (& $pGet $row 'Region')) +
+             ',"bt":' + (JsEscape (& $pGet $row 'Billing Type')) +
+             ',"pr":' + (JsEscape $pr) +
+             ',"arr":'  + ([string][math]::Round((NA-Money (& $pGet $row 'ARR')))) +
+             ',"rag":'  + (JsEscape (& $pGet $row 'Overall RAG')) +
+             ',"sc":'   + ([string](NA-Money (& $pGet $row 'Overall Score'))) +
+             ',"ur":'   + (JsEscape (& $pGet $row 'Usage RAG')) +
+             ',"br":'   + (JsEscape (& $pGet $row 'Billing RAG')) +
+             ',"tr":'   + (JsEscape (& $pGet $row 'Tickets RAG')) +
+             ',"cr":'   + (JsEscape (& $pGet $row 'Cadence RAG')) +
+             ',"use":'  + ([string][math]::Round((NA-Money (& $pGet $row 'Live Usage Current Month')))) +
+             ',"a3":'   + ([string][math]::Round((NA-Money (& $pGet $row 'Last 3-Month Avg Usage')))) +
+             ',"lm":'   + (JsEscape (& $pGet $row 'Last Meeting Date')) +
+             ',"sent":' + (JsEscape (& $pGet $row 'PAM Sentiment')) +
+             ',"tix":'  + ([string](NA-Money (& $pGet $row 'Monthly Tickets Raised'))) + '}'
+        $pParts.Add($o)
+    }
+    if ($pParts.Count -gt 0) {
+        $partnerRowsJson = '{"generated_at":' + (JsEscape ((Get-Date).ToUniversalTime().ToString('o'))) +
+                           ',"rows":[' + ($pParts -join ',') + ']}'
+        Write-Host "  partner_rows: $($pParts.Count) partners"
+    } else {
+        Write-Host "  partner_rows: WARNING — no partner rows parsed; preserving existing block."
+    }
 } catch {
     Write-Host "  reseller: WARNING — fetch/parse failed ($_)."
 }
@@ -1839,6 +1894,7 @@ if ($csmGrrJson)        { $asKeys += 'csm_grr' }          # only strip when we h
 if ($newAdditionJson)   { $asKeys += 'new_addition' }     # only strip when we have a fresh value to replace it
 if ($newAdditionStudioAcctsJson) { $asKeys += 'new_addition_studio_accts' }   # cross-sync Studio union state
 if ($resellerJson)      { $asKeys += 'reseller' }         # Studio reseller new-add + churn
+if ($partnerRowsJson)   { $asKeys += 'partner_rows' }     # partner-level reseller detail table
 if ($expansionJson)     { $asKeys += 'expansion' }        # existing-customer upsell ARR (NRR)
 if ($revenueLossJson)   { $asKeys += 'revenue_loss' }     # D2D churn/contraction total for the LARR
 if ($payOverdueJson)    { $asKeys += 'pay_overdue' }      # {eid: total overdue invoice count}
@@ -1865,6 +1921,7 @@ if ($csmGrrJson)        { $inserted += ',"csm_grr":' + $csmGrrJson }
 if ($newAdditionJson)   { $inserted += ',"new_addition":' + $newAdditionJson }
 if ($newAdditionStudioAcctsJson) { $inserted += ',"new_addition_studio_accts":' + $newAdditionStudioAcctsJson }
 if ($resellerJson)      { $inserted += ',"reseller":' + $resellerJson }
+if ($partnerRowsJson)   { $inserted += ',"partner_rows":' + $partnerRowsJson }
 if ($expansionJson)     { $inserted += ',"expansion":' + $expansionJson }
 if ($revenueLossJson)   { $inserted += ',"revenue_loss":' + $revenueLossJson }
 if ($payOverdueJson)    { $inserted += ',"pay_overdue":' + $payOverdueJson }
