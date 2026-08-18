@@ -8005,14 +8005,16 @@ function caNoticeMonth(r){
 // height and drawn with a break marker — plotting it to scale would squash every
 // real month into an invisible sliver. Its true count/ARR are on the label and
 // in the tooltip.
-function caReportedChurnBars(months, rows){
+const CA_RPT_FROM = '2026-04';   // Notice Date was barely captured before Apr'26 (Nov'25/Jan'26 hold 1 record each)
+function caReportedChurnBars(allMonths, rows){
+  const months = allMonths.filter(m => m >= CA_RPT_FROM);
   if(!months.length) return '<div class="ca-empty">No data.</div>';
   const by={}; months.forEach(m=>by[m]={n:0,arr:0});
   const nd={n:0,arr:0};
   rows.forEach(r=>{ const nm=caNoticeMonth(r);
     if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; }
     else if(!nm){ nd.n++; nd.arr+=Number(r.arr)||0; } });
-  const W=560,H=240,padL=52,padR=14,padT=22,padB=34;
+  const W=560,H=168,padL=52,padR=14,padT=20,padB=30;
   const iw=W-padL-padR, ih=H-padT-padB;
   const showNd = nd.n>0;
   const n=months.length+(showNd?1:0);
@@ -8020,9 +8022,9 @@ function caReportedChurnBars(months, rows){
   const maxV=caNiceMax(Math.max(1,...months.map(m=>by[m].arr)));
   const yOf=v=>padT+ih-ih*(Math.min(v,maxV)/maxV);
   const xOf=i=>padL+iw*(i+0.5)/n;
-  const bw=Math.min(34,(iw/n)*0.6);
+  const bw=Math.min(26,(iw/n)*0.6);
   let g='';
-  for(let t=0;t<=4;t++){ const v=maxV*t/4, yy=yOf(v);
+  for(let t=0;t<=3;t++){ const v=maxV*t/3, yy=yOf(v);
     g+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+yy.toFixed(1)+'" stroke="var(--border)"/>';
     g+='<text x="'+(padL-6)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="var(--text-3)">'+cMoney(v)+'</text>'; }
   let bars='';
