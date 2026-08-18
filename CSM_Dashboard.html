@@ -8010,14 +8010,10 @@ function caReportedChurnBars(allMonths, rows){
   const months = allMonths.filter(m => m >= CA_RPT_FROM);
   if(!months.length) return '<div class="ca-empty">No data.</div>';
   const by={}; months.forEach(m=>by[m]={n:0,arr:0});
-  const nd={n:0,arr:0};
-  rows.forEach(r=>{ const nm=caNoticeMonth(r);
-    if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; }
-    else if(!nm){ nd.n++; nd.arr+=Number(r.arr)||0; } });
+  rows.forEach(r=>{ const nm=caNoticeMonth(r); if(nm&&by[nm]){ by[nm].n++; by[nm].arr+=Number(r.arr)||0; } });
   const W=560,H=168,padL=52,padR=14,padT=20,padB=30;
   const iw=W-padL-padR, ih=H-padT-padB;
-  const showNd = nd.n>0;
-  const n=months.length+(showNd?1:0);
+  const n=months.length;
   // y-scale from the MONTHS only, so one huge unknown bucket can't flatten them.
   const maxV=caNiceMax(Math.max(1,...months.map(m=>by[m].arr)));
   const yOf=v=>padT+ih-ih*(Math.min(v,maxV)/maxV);
@@ -8028,21 +8024,7 @@ function caReportedChurnBars(allMonths, rows){
     g+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+yy.toFixed(1)+'" stroke="var(--border)"/>';
     g+='<text x="'+(padL-6)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="var(--text-3)">'+cMoney(v)+'</text>'; }
   let bars='';
-  if(showNd){
-    const cx=xOf(0), x=(cx-bw/2), y=padT, y0=yOf(0);
-    bars+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(y0-y).toFixed(1)+'" fill="#9CA3AF"><title>No Notice Date recorded — '+nd.n+' account'+(nd.n===1?'':'s')+' ('+cMoney(nd.arr)+') · bar clipped, off scale</title></rect>';
-    // break marker: two zig-zags across the bar just below the top
-    const by1=y+11, by2=y+16;
-    bars+='<path d="M'+x.toFixed(1)+' '+by1.toFixed(1)+' l'+(bw/4).toFixed(1)+' -4 l'+(bw/4).toFixed(1)+' 8 l'+(bw/4).toFixed(1)+' -8 l'+(bw/4).toFixed(1)+' 4" fill="none" stroke="var(--surface)" stroke-width="2.5"/>';
-    bars+='<path d="M'+x.toFixed(1)+' '+by2.toFixed(1)+' l'+(bw/4).toFixed(1)+' -4 l'+(bw/4).toFixed(1)+' 8 l'+(bw/4).toFixed(1)+' -8 l'+(bw/4).toFixed(1)+' 4" fill="none" stroke="var(--surface)" stroke-width="2.5"/>';
-    bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-5).toFixed(1)+'" text-anchor="middle" font-size="9" font-weight="700" fill="var(--text-2)">'+nd.n+'</text>';
-    g+='<text x="'+cx.toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">No date</text>';
-    // divider separating the unknown bucket from the real timeline
-    const dx=(padL+iw*1/n).toFixed(1);
-    g+='<line x1="'+dx+'" y1="'+padT+'" x2="'+dx+'" y2="'+(padT+ih)+'" stroke="var(--border)" stroke-dasharray="3 3"/>';
-  }
-  months.forEach((m,mi)=>{
-    const i=mi+(showNd?1:0);
+  months.forEach((m,i)=>{
     const d=by[m], cx=xOf(i), x=(cx-bw/2).toFixed(1), y=yOf(d.arr), y0=yOf(0);
     if(d.arr>0){
       bars+='<rect x="'+x+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(y0-y).toFixed(1)+'" fill="#7C3AED"><title>'+caMonthLabel(m)+' — reported: '+d.n+' account'+(d.n===1?'':'s')+' ('+cMoney(d.arr)+')</title></rect>';
@@ -8051,8 +8033,7 @@ function caReportedChurnBars(allMonths, rows){
     g+='<text x="'+cx.toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">'+caMonthLabel(m)+'</text>';
   });
   return '<div class="ca-chartwrap"><svg viewBox="0 0 '+W+' '+H+'" class="ca-svg" preserveAspectRatio="xMidYMid meet">'+g+bars+'</svg></div>'
-    + caLegendStatic([{label:'ARR reported in that month (bar) · account count (label)',color:'#7C3AED'},
-                      {label:'No Notice Date recorded — '+nd.n+' accounts ('+cMoney(nd.arr)+'), bar clipped/off scale',color:'#9CA3AF'}]);
+    + caLegendStatic([{label:'ARR reported in that month (bar) · account count (label)',color:'#7C3AED'}]);
 }
 function caChurnSignalCoverage(rows, months){
   const idx = caSignalIndex();
@@ -8267,9 +8248,13 @@ function renderChurnAnalysis(){
   // signals panel, so the two read together. Coverage is stated in the subtitle
   // because the Notice Date column is only partially filled upstream.
   const rptRows = covRows;
-  const rptWith = rptRows.filter(r=>caNoticeMonth(r)).length;
+  // Coverage is reported for the VISIBLE range only (the chart starts at
+  // CA_RPT_FROM). Counting all-time here would quote a gap for months that are
+  // not even plotted — which is what the old leading "No date" bar did wrong.
+  const rptScoped = rptRows.filter(r=>String(r.mon||'') >= CA_RPT_FROM);
+  const rptWith = rptScoped.filter(r=>caNoticeMonth(r)).length;
   const rptSub = rptWith
-    ? `Churned ARR grouped by the month notice was GIVEN (vs the effective-churn months above) · ${rptWith} of ${rptRows.length} records carry a Notice Date (${Math.round(rptWith/rptRows.length*100)}%) — months without one are not represented`
+    ? `Churned ARR grouped by the month notice was GIVEN (vs the effective-churn months above) · from ${caMonthLabel(CA_RPT_FROM)}: ${rptWith} of ${rptScoped.length} records carry a Notice Date (${Math.round(rptWith/rptScoped.length*100)}%) — the rest are not represented`
     : 'No Notice Date recorded on the filtered records — nothing to plot.';
   const rptBody = rptWith ? caReportedChurnBars(tMonths, rptRows) : '<div class="ca-empty">No Notice Date on the filtered records.</div>';
   let coverageBody, coverageSub;
