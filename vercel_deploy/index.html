@@ -3689,6 +3689,25 @@ function rowLastCompletedMonthVins(r) {
   const k = studioLastCompletedMonthCol();
   return k ? (Number(r[S_COL[k]]) || 0) : 0;
 }
+// Boot check: shout if the feed has not gained the column for the month the
+// RAG now needs. studioLastCompletedMonthCol() falls back to the newest month it
+// has, so nothing breaks — but the Overall RAG would quietly stop advancing,
+// which is worse than a loud warning. Fix = add the month column to the Studio
+// usage sheet and map it in metabase/fetch-studio-card.mjs (two lines, same as
+// Jul'26/Aug'26 were added).
+(function warnIfMonthColumnMissing(){
+  try {
+    const now = new Date();
+    const want = STUDIO_MONTH_KEYS[(now.getMonth() + 11) % 12];
+    if (typeof S_COL === 'undefined' || S_COL[want] != null) return;
+    const using = studioLastCompletedMonthCol();
+    const msg = '[csm-dashboard] Studio usage feed is missing "' + want + '" (the last completed month). '
+      + 'Overall RAG is falling back to "' + (using || 'none') + '", so it will not reflect the newest month. '
+      + 'Fix: add that month to the Studio usage sheet and map it in metabase/fetch-studio-card.mjs.';
+    console.warn(msg);
+    window.__STUDIO_MONTH_WARNING__ = { missing: want, usingInstead: using, message: msg };
+  } catch (e) { /* never let a diagnostic break the page */ }
+})();
 function rowUsageSeries(r) {
   // Usage trend window: the last THREE COMPLETED months + the current month
   // projected to full-month from MTD (MTD x daysInMonth / daysElapsed) so a
