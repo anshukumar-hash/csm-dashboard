@@ -1276,6 +1276,67 @@
 </style>
 <style>
 /* ===== SPYNE STUDIO (Overall tab) — every selector scoped to #view-overall ===== */
+
+/* ---- red-account review form ---- */
+
+.ssw-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
+  width:100%;max-width:1080px;padding:18px 20px 20px}
+.ssw-list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
+.ssw-item{border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.ssw-row{display:flex;gap:12px;align-items:center;padding:9px 12px;cursor:pointer;background:var(--surface-2)}
+.ssw-row:hover{background:var(--grid)}
+.ssw-main{min-width:0;flex:1}
+.ssw-acct{font-weight:650;font-size:13.5px}
+.ssw-meta{font-size:11.5px;color:var(--muted)}
+.ssw-side{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.ssw-when{font-size:11.5px;color:var(--muted)}
+.ssw-detail{padding:8px 12px;font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
+.ssw-hist{border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
+.ssw-histh{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
+.ssw-histrow{display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
+.ssw-rev{font-weight:700;color:var(--ink-2);min-width:30px}
+.ssw-hissues{color:var(--ink-2)}
+
+.clickrow{cursor:pointer}
+.clickrow:hover{background:var(--surface-2)}
+.ssf-modal{position:fixed;inset:0;background:rgba(11,11,11,.45);z-index:9999;
+  display:flex;align-items:flex-start;justify-content:center;padding:38px 16px;overflow:auto}
+.ssf-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
+  width:100%;max-width:620px;padding:18px 20px 20px}
+.ssf-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+.ssf-head h3{margin:0;font-size:16px}
+.ssf-sub{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.ssf-x{margin-left:auto;background:none;border:none;font-size:22px;line-height:1;
+  cursor:pointer;color:var(--muted)}
+.ssf-x:hover{color:var(--ink)}
+.ssf-why{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  padding:9px 11px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
+.ssf-field{margin-bottom:14px}
+.ssf-field>label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--muted);margin-bottom:5px}
+#view-overall .ssf-field input[type=text], #view-overall .ssf-field input[type=date], #view-overall .ssf-field select {
+  font:inherit;font-size:13px;padding:7px 9px;border-radius:7px;border:1px solid var(--border);
+  background:var(--surface);color:var(--ink);width:100%;max-width:260px}
+.ssf-sugs{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}
+.ssf-sug{display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer}
+.ssf-sug input{margin-top:2px;flex:none}
+.ssf-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ssf-add{background:var(--s1);color:#fff;border:none;border-radius:7px;padding:7px 13px;
+  font-size:12.5px;cursor:pointer;flex:none}
+.ssf-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.ssf-chip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+  padding:3px 6px 3px 10px;font-size:12px;display:inline-flex;align-items:center;gap:4px}
+.ssf-chip button{background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:0 2px}
+.ssf-chip button:hover{color:var(--crit)}
+.ssf-radio{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer}
+.ssf-err{color:var(--crit);font-size:12.5px;min-height:16px;margin-bottom:6px}
+.ssf-actions{display:flex;gap:8px;justify-content:flex-end}
+.ssf-cancel{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:8px 15px;font-size:13px;cursor:pointer;color:var(--ink-2)}
+.ssf-submit{background:var(--s1);color:#fff;border:none;border-radius:8px;padding:8px 18px;
+  font-size:13px;font-weight:600;cursor:pointer}
+.ssf-done{color:var(--good-ink);font-weight:600}
+
 #view-overall {
     color-scheme: light;
     --plane:#f4f4f1; --surface:#ffffff; --surface-2:#fafaf8;
@@ -12572,8 +12633,51 @@ function viniRagReason(h){
   }
   return bits.join(' · ')+'.';
 }
+/* Supporting signals for a Studio account, read from the CSM dashboard's own
+   globals (they live outside this IIFE). Usage alone doesn't tell a CSM what to
+   DO -- the travel-plan lens is Usage -> Communication -> Tickets, so the
+   explanation carries all three plus payment. These do NOT change the RAG
+   verdict; they explain and prioritise it. */
+function studioSignals(eid,name){
+  const out={lastComm:null,daysSince:null,tix30:0,tixTotal:0,overdue:0,commRag:null};
+  if(!eid&&!name) return out;
+  try{
+    let best='';
+    const scan=a=>{ if(Array.isArray(a)) a.forEach(r=>{
+      if(r.date_iso&&(r.intCount==null||Number(r.intCount)>0)&&r.date_iso>best) best=r.date_iso; }); };
+    if(eid&&typeof CSAT_ALL_BY_EID!=='undefined') scan(CSAT_ALL_BY_EID[eid]);
+    if(name&&typeof CSAT_ALL_BY_NAME!=='undefined'){
+      const k=(typeof normCsatName==='function')?normCsatName(name):String(name).toLowerCase().trim();
+      scan(CSAT_ALL_BY_NAME[k]); }
+    if(best){ out.lastComm=best;
+      const today=new Date(); const todayUTC=Date.UTC(today.getFullYear(),today.getMonth(),today.getDate());
+      out.daysSince=Math.max(0,Math.round((todayUTC-new Date(best+'T00:00:00Z').getTime())/86400000)); }
+  }catch(_){}
+  try{
+    const tx=(typeof STUDIO_TIX!=='undefined')?STUDIO_TIX[eid]:null;
+    if(tx&&Array.isArray(tx.rows)){
+      out.tixTotal=tx.rows.length;
+      const cut=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+      out.tix30=tx.rows.filter(t=>t.c&&String(t.c)>=cut).length; }
+  }catch(_){}
+  try{ out.overdue=Number((typeof PAY_OVERDUE!=='undefined')?PAY_OVERDUE[eid]:0)||0; }catch(_){}
+  try{
+    if(typeof csatRagCountsForInRange==='function'&&typeof scoreRag==='function')
+      out.commRag=scoreRag(csatRagCountsForInRange(eid,name),COMM_GREEN_THRESH,COMM_AMBER_THRESH,COMM_WEIGHTS);
+  }catch(_){}
+  return out;
+}
+/* Comm ages at the 30/45-day thresholds used in the churn analysis. */
+function commPhrase(sig){
+  if(sig.daysSince==null) return 'no communication on record';
+  const d=sig.daysSince, when=' (last '+sig.lastComm+')';
+  if(d>=45) return 'no contact for '+d+' days'+when+' — past the 45-day mark';
+  if(d>=30) return 'no contact for '+d+' days'+when+' — past 30 days';
+  if(d===0) return 'last contact today ('+sig.lastComm+')';
+  return 'last contact '+d+' day'+(d===1?'':'s')+' ago'+when;
+}
 /* Plain-English reason for a RAG verdict, built from the signals that drove it. */
-function ragReason(h){
+function ragReason(h,row){
   if(h&&h.vini)return viniRagReason(h);
   if(!h||h.rag==='NA')return 'No usage data for this account.';
   const bits=[];
@@ -12586,8 +12690,17 @@ function ragReason(h){
     if(h.lastVins!=null) bits.push(num(h.lastVins)+' VINs in '+LAST_DONE_LABEL);
   }
   if(h.pen>10) bits.push(num(h.pen)+' images pending over 6h');
-  else if(h.pen>0) bits.push(num(h.pen)+' images pending');
+  else if(h.pen>0) bits.push(num(h.pen)+' image'+(h.pen===1?'':'s')+' pending');
   else bits.push('no pending images');
+  /* Communication / tickets / payment — the levers a CSM acts on. */
+  if(row&&(row.eid||row.customer)){
+    const sig=studioSignals(row.eid,row.customer||row.ent||row.rn);
+    bits.push(commPhrase(sig));
+    if(sig.tix30>0) bits.push(sig.tix30+' ticket'+(sig.tix30===1?'':'s')+' in the last 30 days'
+      +(sig.tixTotal>sig.tix30?' ('+sig.tixTotal+' all-time)':''));
+    else if(sig.tixTotal>0) bits.push('no tickets in 30 days ('+sig.tixTotal+' all-time)');
+    if(sig.overdue>0) bits.push(sig.overdue+' invoice'+(sig.overdue===1?'':'s')+' overdue');
+  }
   return bits.join(' · ')+'.';
 }
 const _ragMemo={};
@@ -12603,7 +12716,7 @@ const _ragMemo={};
    Vini's grain is (rooftop x agent), which is why this tracks red AGENTS and red
    ROOFTOPS separately. MRR is broadcast onto every agent row of a rooftop, so it
    is taken once per rid — summing it straight would inflate ~4x. */
-const _viniAgg={}; let _viniAggBuilt=false;
+const _viniAgg={}; let _viniAggBuilt=false; let _viniRetries=0;
 function viniAggByEid(){
   if(_viniAggBuilt) return _viniAgg;
   let rows=[];
@@ -12612,10 +12725,16 @@ function viniAggByEid(){
   /* Do NOT latch an empty result. Overall is the LANDING view, so its first
      render can fire before the CSM data layer has finished initialising and
      viniAggregateRooftops() legitimately returns []. Caching that permanently
-     zeroed every Vini RAG in production while working locally, where the tab
-     was always clicked after load. Staying uncached lets the next render fix
-     itself. */
-  if(!rows.length) return _viniAgg;
+     zeroed every Vini RAG.
+     Staying uncached is necessary but not sufficient: nothing else re-renders
+     once the data does arrive, so the first (Studio-only) numbers just sat
+     there until the user happened to touch a filter. Schedule a bounded
+     re-render so the page corrects itself. */
+  if(!rows.length){
+    if(_viniRetries<12){ _viniRetries++;
+      setTimeout(()=>{ try{ if(typeof render==='function') render(); }catch(_){ } },400); }
+    return _viniAgg;
+  }
   _viniAggBuilt=true;
   for(const k in _viniRagMemo) delete _viniRagMemo[k];   // drop verdicts built on []
   {
@@ -12751,7 +12870,7 @@ function kpi(lab,val,{count,countLabel,note,cls,valcls}={}){
 function panel(title,desc,...body){
   return el('div',{class:'panel'},el('h2',{},title),desc?el('p',{class:'desc'},desc):null,...body.flat());
 }
-function sortableTable(key,cols,rows,cellFn,totalRow){
+function sortableTable(key,cols,rows,cellFn,totalRow,onRowClick){
   if(!state.sort[key])state.sort[key]={k:cols[cols.length-1][0],dir:-1};
   const st=state.sort[key];
   rows=[...rows].sort((a,b)=>{const av=a[st.k],bv=b[st.k];
@@ -12760,8 +12879,9 @@ function sortableTable(key,cols,rows,cellFn,totalRow){
   const thead=el('thead',{},el('tr',{},cols.map(c=>{
     const arrow=st.k===c[0]?(st.dir>0?' ▲':' ▼'):'';
     return el('th',{class:c[2]==='num'?'num':'',onclick:()=>{if(st.k===c[0])st.dir*=-1;else{st.k=c[0];st.dir=-1;}render();}},c[1]+arrow);})));
-  const tbody=el('tbody',{},rows.map(r=>el('tr',{},cellFn(r).map((cell,i)=>
-    el('td',{class:cols[i][2]==='num'?'num':''},cell)))));
+  const tbody=el('tbody',{},rows.map(r=>el('tr',
+    onRowClick?{class:'clickrow',onclick:()=>onRowClick(r)}:{},
+    cellFn(r).map((cell,i)=>el('td',{class:cols[i][2]==='num'?'num':''},cell)))));
   if(totalRow)tbody.append(el('tr',{class:'total'},totalRow.map((cell,i)=>
     el('td',{class:cols[i][2]==='num'?'num':''},cell))));
   return el('div',{class:'tbl-wrap'},el('table',{class:'data'},thead,tbody));
@@ -13645,7 +13765,7 @@ function obDetailPanel(){
     b.rows.length
       ? (b.groupFn
           ? groupedTable(sk,b.cols,shown,b.cell,b.totalRow,b.groupFn)
-          : sortableTable(sk,b.cols,shown,b.cell,b.totalRow))
+          : sortableTable(sk,b.cols,shown,b.cell,b.totalRow,b.rowClick))
       :el('p',{class:'muted'},'Nothing to show for this selection.'));
 }
 /* ---------- CS detail: one table whose shape follows the selected scorecard ---------- */
@@ -13675,7 +13795,7 @@ function csDetailBuilder(ctx){
   if(mode==='red'){
     const rows=sLive.map(r=>{const h=accountRag(r.eid,r.productLine);
         return {...r,rag:h.rag,trend:h.trend||(h.vini?'—':'—'),lastVins:h.lastVins,score:h.score,
-          redRt:h.redRt,rt:h.rt,why:ragReason(h),csmDisp:csmOf(r),
+          redRt:h.redRt,rt:h.rt,why:ragReason(h,r),csmDisp:csmOf(r),
           isVini:!!h.vini,roi:h.roi,agents:h.agents||0,redAgents:h.redAgents||0,
           agentRows:h.agentRows||[]};})
       .filter(r=>r.rag==='Red');
@@ -13685,7 +13805,10 @@ function csDetailBuilder(ctx){
             ['lastVins',LAST_DONE_LABEL+' VINs','num'],['redRt','Red rooftops','num'],
             ['redAgents','Red agents','num'],
             ['why','Why it is red'],['arr','ARR','num']],
-      cell:x=>[x.customer,x.seg||'—',x.region||'—',x.csmDisp,
+      cell:x=>[(()=>{const pr=redReviewsAll()[x.eid+'|'+(x.isVini?'Vini':'Studio')];
+          return pr?el('span',{},x.customer,' ',el('span',{class:'ssf-done',
+            title:'Reviewed '+String(pr.savedAt).slice(0,10)+' by '+pr.csm},'✓')):x.customer;})(),
+        x.seg||'—',x.region||'—',x.csmDisp,
         x.score==null?'—':el('span',{class:'pill '+(x.score>=80?'g':x.score>=60?'w':'r')},Math.round(x.score)),
         /* Vini has no VIN trend — show its RoI factor in the same column. */
         x.isVini
@@ -13708,7 +13831,8 @@ function csDetailBuilder(ctx){
         money(x.arr)],
       totalRow:['Total','','','','','','',num(sum(rows,x=>x.redRt))+' / '+num(sum(rows,x=>x.rt)),
         num(sum(rows,x=>x.redAgents))+' / '+num(sum(rows,x=>x.agents)),'',
-        money(sum(rows,x=>x.arr))]};
+        money(sum(rows,x=>x.arr))],
+      rowClick:x=>openRedReview(x)};
   }
   if(mode==='churn'||mode==='future'){
     const src=(mode==='churn'?churnNow:futureChurn).map(r=>({...r,csmDisp:csmOf(r)}));
@@ -13741,6 +13865,21 @@ function csDetailPanel(){
   const mode=state.csDetail;
   const b=csDetailBuilder(CS_DETAIL_CTX), cap=200;
   const head=CS_DETAIL_TITLE[mode]+' — '+num(b.rows.length)+' · '+moneyK(b.total);
+  /* Reviews live in this browser's localStorage (no write API on this service),
+     so the CSV is how a CSM hands them on. Only offered on the Red view. */
+  const reviewBar=mode==='red'
+    ? (()=>{const n=Object.keys(redReviewsAll()).length;
+        return el('p',{class:'desc'},
+          'Click any row to log a CSM review. ',
+          n?el('b',{},num(n)+' logged. '):'None logged yet. ',
+          REVIEW_STORE==='rds'
+            ? el('span',{},'Shared across the team (RDS). ')
+            : el('span',{},'Saved in this browser only — not shared. '),
+          el('button',{type:'button',class:'ssf-add',style:'margin-left:4px',
+            onclick:openReviewsWindow},'Open reviews ↗'),
+          el('button',{type:'button',class:'ssf-cancel',style:'margin-left:6px;padding:7px 13px',
+            onclick:exportRedReviews},'Export CSV'));})()
+    : null;
 
   /* Churn views split into Regrettable vs Unregrettable, each with its own table. */
   if((mode==='churn'||mode==='future')&&b.rows.length){
@@ -13776,9 +13915,9 @@ function csDetailPanel(){
     'Click a scorecard above to change what this table shows'
       +(b.rows.length>cap?' · showing the top '+cap+' by ARR':''),
     b.rows.length
-      ? (b.groupFn
+      ? el('div',{},reviewBar,(b.groupFn
           ? groupedTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.groupFn)
-          : sortableTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow))
+          : sortableTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.rowClick)))
       :el('p',{class:'muted'},'Nothing to show for this selection.'));
 }
 /* ---------- CS account book: RAG-classified, All / Red / Amber / Green ---------- */
@@ -13868,11 +14007,312 @@ function go(view){ state.view=view; render(); window.scrollTo({top:0,behavior:'s
 const freeze=$('#freeze');
 window.addEventListener('scroll',()=>{freeze.classList.toggle('stuck',freeze.getBoundingClientRect().top<=0);},{passive:true});
 
+/* ================= Red-account review form =================================
+   Every red row opens this. It captures the CSM's own read alongside the
+   dashboard's automated verdict, because the RAG says WHAT is wrong and only
+   the CSM knows WHY and what was done about it.
+
+   PERSISTENCE: submissions POST to /api/reviews, which writes to RDS so every
+   CSM sees the same book. That route answers 503 until the DB credentials are in
+   APP_SECRETS, so until RDS is provisioned this falls back to localStorage on the
+   CSM's own machine (per-browser, not shared) and the panel says which mode is
+   live. A local copy is kept either way, so a failed request never loses typing. */
+const RED_REVIEW_KEY='csm_red_reviews_v1';
+let REVIEW_STORE='local';        // 'rds' once the API reports it is configured
+let REVIEW_REMOTE={};            // eid|product -> record, loaded from the API
+function reviewKey(r){ return r.eid+'|'+r.product; }
+/* Ask the server once whether persistence is live, and pull existing rows so a
+   CSM sees reviews logged by colleagues on other machines. */
+async function reviewStoreInit(){
+  try{
+    const st=await fetch('./api/reviews/status',{headers:{Accept:'application/json'}});
+    const js=await st.json();
+    if(!js||!js.enabled) return;
+    REVIEW_STORE='rds';
+    const r=await fetch('./api/reviews',{headers:{Accept:'application/json'}});
+    if(!r.ok) return;
+    const d=await r.json();
+    REVIEW_REMOTE={};
+    (d.rows||[]).forEach(x=>{
+      REVIEW_REMOTE[x.eid+'|'+x.product]={
+        eid:x.eid,product:x.product,account:x.account,segment:x.segment,region:x.region,
+        arr:Number(x.arr)||0,csm:x.csm,sentiment:x.sentiment,dashboardRag:x.dashboard_rag,
+        issues:x.issues||[],actions:x.actions||[],
+        canChurn:x.can_churn?'yes':'no',
+        churnDate:x.churn_date?String(x.churn_date).slice(0,10):'',
+        savedAt:x.saved_at};
+    });
+    try{
+      const lg=await fetch('./api/reviews/log',{headers:{Accept:'application/json'}});
+      if(lg.ok){ const ld=await lg.json();
+        REVIEW_LOG_REMOTE=(ld.rows||[]).map(x=>({eid:x.eid,product:x.product,account:x.account,
+          csm:x.csm,sentiment:x.sentiment,issues:x.issues||[],actions:x.actions||[],
+          canChurn:x.can_churn?'yes':'no',revision:x.revision,savedAt:x.saved_at})); }
+    }catch(_){ }
+    if(typeof render==='function') render();
+  }catch(_){ /* stay on localStorage */ }
+}
+function redReviewsLocal(){
+  try{ return JSON.parse(localStorage.getItem(RED_REVIEW_KEY)||'{}'); }catch(_){ return {}; }
+}
+/* Server rows win where both exist — they are the shared truth. */
+function redReviewsAll(){
+  return REVIEW_STORE==='rds' ? Object.assign({},redReviewsLocal(),REVIEW_REMOTE) : redReviewsLocal();
+}
+/* Always keep a local copy: if the POST fails the CSM's typing survives. */
+function redReviewSaveLocal(rec){
+  const all=redReviewsLocal();
+  all[reviewKey(rec)]=rec;
+  try{ localStorage.setItem(RED_REVIEW_KEY,JSON.stringify(all)); }catch(_){ }
+}
+async function redReviewSave(rec){
+  redReviewSaveLocal(rec);
+  if(REVIEW_STORE!=='rds'){ redLogAppend(rec); return {ok:true,where:'local'}; }
+  try{
+    const r=await fetch('./api/reviews',{method:'POST',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify(rec)});
+    if(!r.ok){ const e=await r.json().catch(()=>({}));
+      return {ok:false,where:'rds',error:(e&&e.error)||('HTTP '+r.status)}; }
+    const d=await r.json();
+    REVIEW_REMOTE[reviewKey(rec)]=Object.assign({},rec,{savedAt:d.savedAt||rec.savedAt});
+    redLogAppend(rec,d.revision);
+    REVIEW_LOG_REMOTE.unshift(Object.assign({},rec,{revision:d.revision,savedAt:d.savedAt||rec.savedAt}));
+    return {ok:true,where:'rds'};
+  }catch(err){ return {ok:false,where:'rds',error:err.message}; }
+}
+/* Candidate "ongoing issues", derived from the same signals that drove the RAG,
+   so the CSM confirms/edits a diagnosis rather than typing from scratch. */
+function redIssueSuggestions(x){
+  const out=[];
+  if(x.isVini){
+    if(x.roi!=null&&x.roi<1.5) out.push('Low RoI ('+Number(x.roi||0).toFixed(2)+'x, below the 1.5x floor)');
+    if(x.redAgents>0) out.push(x.redAgents+' of '+x.agents+' agents underperforming');
+    (x.agentRows||[]).filter(a=>a.rag==='Red').slice(0,4).forEach(a=>
+      out.push('Agent: '+a.agent+(a.rn?' @ '+a.rn:'')+' ('+Number(a.roi||0).toFixed(2)+'x)'));
+  } else {
+    if(x.lastVins!=null&&x.lastVins<=10) out.push('At or below the 10-VIN floor ('+num(x.lastVins)+' in '+LAST_DONE_LABEL+')');
+    else if(x.trend==='Declining') out.push('Usage declining month over month');
+    else if(x.trend==='Steady') out.push('Usage flat, not growing');
+  }
+  const sig=studioSignals(x.eid,x.customer||x.ent||x.rn);
+  if(sig.daysSince!=null&&sig.daysSince>=30) out.push('No contact for '+sig.daysSince+' days');
+  else if(sig.daysSince==null) out.push('No communication on record');
+  if(sig.tix30>0) out.push(sig.tix30+' support ticket'+(sig.tix30===1?'':'s')+' in the last 30 days');
+  if(sig.overdue>0) out.push(sig.overdue+' invoice'+(sig.overdue===1?'':'s')+' overdue');
+  if(x.pen>10) out.push(num(x.pen)+' images pending over 6h');
+  return out;
+}
+/* A repeatable text row: type, press Add (or Enter), it becomes a chip. */
+function multiInput(placeholder,seed){
+  const chosen=(seed||[]).slice();
+  const chips=el('div',{class:'ssf-chips'});
+  const draw=()=>{ chips.replaceChildren(...chosen.map((v,i)=>
+    el('span',{class:'ssf-chip'},v,
+      el('button',{type:'button',title:'Remove',
+        onclick:()=>{chosen.splice(i,1);draw();}},'×')))); };
+  draw();
+  const inp=el('input',{type:'text',placeholder:placeholder});
+  const add=()=>{ const v=(inp.value||'').trim(); if(!v)return; chosen.push(v); inp.value=''; draw(); };
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); add(); } });
+  return {node:el('div',{},chips,el('div',{class:'ssf-row'},inp,
+            el('button',{type:'button',class:'ssf-add',onclick:add},'Add'))),
+          get:()=>chosen.slice(), push:v=>{chosen.push(v);draw();}};
+}
+function closeRedReview(){ const m=document.getElementById('ssf-modal'); if(m) m.remove(); }
+function openRedReview(x){
+  closeRedReview();
+  const product=x.isVini?'Vini':'Studio';
+  const prior=redReviewsAll()[x.eid+'|'+product]||{};
+  const suggestions=redIssueSuggestions(x);
+
+  /* Ongoing issues: the derived ones as toggles, plus free text for anything
+     the data can't see. Pre-ticked from a previous submission if there is one. */
+  const picked=new Set(prior.issues||suggestions);
+  const sugWrap=el('div',{class:'ssf-sugs'},suggestions.map(sv=>{
+    const cb=el('input',{type:'checkbox'}); cb.checked=picked.has(sv);
+    cb.addEventListener('change',()=>{ cb.checked?picked.add(sv):picked.delete(sv); });
+    return el('label',{class:'ssf-sug'},cb,el('span',{},sv));}));
+  const extraIssues=multiInput('Add another issue…',
+    (prior.issues||[]).filter(v=>suggestions.indexOf(v)<0));
+  const actions=multiInput('What was done / will be done…',prior.actions||[]);
+
+  const sentiment=el('select',{},
+    ['Green','Amber','Red'].map(v=>{
+      const o=el('option',{value:v},v); if((prior.sentiment||'')===v)o.selected=true; return o;}));
+  if(!prior.sentiment) sentiment.value='Red';
+  const csmName=el('input',{type:'text',placeholder:'CSM name'});
+  csmName.value=prior.csm||x.csmDisp||'';
+
+  const churnYes=el('input',{type:'radio',name:'ssf-churn',value:'yes'});
+  const churnNo =el('input',{type:'radio',name:'ssf-churn',value:'no'});
+  if(prior.canChurn==='yes')churnYes.checked=true; else if(prior.canChurn==='no')churnNo.checked=true;
+  const churnDate=el('input',{type:'date'});
+  churnDate.value=prior.churnDate||'';
+  const dateWrap=el('div',{class:'ssf-field ssf-datewrap'},
+    el('label',{},'Churn effective date'),churnDate);
+  const syncDate=()=>{ dateWrap.style.display=churnYes.checked?'':'none'; };
+  churnYes.addEventListener('change',syncDate); churnNo.addEventListener('change',syncDate);
+  syncDate();
+
+  const err=el('div',{class:'ssf-err'});
+  const submit=()=>{
+    const issues=[...picked].concat(extraIssues.get());
+    if(!csmName.value.trim()){ err.textContent='CSM name is required.'; return; }
+    if(!issues.length){ err.textContent='Select or add at least one ongoing issue.'; return; }
+    if(!churnYes.checked&&!churnNo.checked){ err.textContent='Please answer whether this can lead to churn.'; return; }
+    if(churnYes.checked&&!churnDate.value){ err.textContent='A churn effective date is required when the answer is Yes.'; return; }
+    const rec={eid:x.eid,account:x.customer||x.ent||x.rn||'',product:product,
+      segment:x.seg||'',region:x.region||'',arr:x.arr||0,
+      csm:csmName.value.trim(),sentiment:sentiment.value,
+      issues:issues,actions:actions.get(),
+      canChurn:churnYes.checked?'yes':'no',
+      churnDate:churnYes.checked?churnDate.value:'',
+      dashboardRag:x.rag||'Red',
+      savedAt:new Date().toISOString()};
+    err.textContent='Saving…';
+    redReviewSave(rec).then(res=>{
+      if(res.ok){ closeRedReview(); render(); }
+      else { err.textContent='Saved locally, but the server rejected it: '+res.error; }
+    });
+  };
+
+  const body=el('div',{class:'ssf-box'},
+    el('div',{class:'ssf-head'},
+      el('div',{},el('h3',{},x.customer||x.ent||x.rn||'Account'),
+        el('p',{class:'ssf-sub'},product+' · '+(x.seg||'—')+' · '+(x.region||'—')+' · '+money(x.arr||0)
+          +(prior.savedAt?' · last reviewed '+String(prior.savedAt).slice(0,10):''))),
+      el('button',{type:'button',class:'ssf-x',onclick:closeRedReview},'×')),
+    el('div',{class:'ssf-why'},el('b',{},'Dashboard verdict: '),x.why||''),
+    el('div',{class:'ssf-field'},el('label',{},'CSM name'),csmName),
+    el('div',{class:'ssf-field'},el('label',{},'CSM sentiment (RAG)'),sentiment),
+    el('div',{class:'ssf-field'},el('label',{},'Ongoing issues'),
+      suggestions.length?sugWrap:el('p',{class:'ssf-sub'},'No signals derived — add your own below.'),
+      extraIssues.node),
+    el('div',{class:'ssf-field'},el('label',{},'Action taken'),actions.node),
+    el('div',{class:'ssf-field'},el('label',{},'Can lead to churn?'),
+      el('div',{class:'ssf-row'},
+        el('label',{class:'ssf-radio'},churnYes,el('span',{},'Yes')),
+        el('label',{class:'ssf-radio'},churnNo,el('span',{},'No')))),
+    dateWrap,
+    err,
+    el('div',{class:'ssf-actions'},
+      el('button',{type:'button',class:'ssf-cancel',onclick:closeRedReview},'Cancel'),
+      el('button',{type:'button',class:'ssf-submit',onclick:submit},'Submit')));
+
+  const modal=el('div',{id:'ssf-modal',class:'ssf-modal',
+    onclick:e=>{ if(e.target&&e.target.id==='ssf-modal') closeRedReview(); }},body);
+  document.addEventListener('keydown',function esc(e){
+    if(e.key==='Escape'){ closeRedReview(); document.removeEventListener('keydown',esc); }});
+  (document.getElementById('view-overall')||document.body).appendChild(modal);
+}
+/* ---- revision log (client mirror of red_account_review_log) ---------------
+   Kept locally too, so the history is visible even before RDS is wired and so
+   a failed POST still leaves a trace of what the CSM typed. */
+const RED_LOG_KEY='csm_red_review_log_v1';
+function redLogLocal(){
+  try{ return JSON.parse(localStorage.getItem(RED_LOG_KEY)||'[]'); }catch(_){ return []; }
+}
+function redLogAppend(rec,revision){
+  const log=redLogLocal();
+  log.push(Object.assign({},rec,{revision:revision||(redLogFor(rec.eid,rec.product).length+1)}));
+  try{ localStorage.setItem(RED_LOG_KEY,JSON.stringify(log.slice(-2000))); }catch(_){ }
+}
+function redLogFor(eid,product){
+  const local=redLogLocal().filter(r=>r.eid===eid&&r.product===product);
+  const remote=(REVIEW_LOG_REMOTE||[]).filter(r=>r.eid===eid&&r.product===product);
+  const all=REVIEW_STORE==='rds'?remote:local;
+  return all.slice().sort((a,b)=>String(b.savedAt||b.saved_at||'').localeCompare(String(a.savedAt||a.saved_at||'')));
+}
+let REVIEW_LOG_REMOTE=[];
+
+/* ---- reviews window ------------------------------------------------------
+   A dedicated full-screen view of what CSMs actually wrote, separate from the
+   red table itself: the table answers "which accounts are red", this answers
+   "what did we say and do about them". Every row expands to its full revision
+   history, so an overwrite is visible rather than silent. */
+function openReviewsWindow(){
+  closeReviewsWindow();
+  const rows=Object.values(redReviewsAll())
+    .sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
+  const fmt=t=>t?String(t).replace('T',' ').slice(0,16):'—';
+  const pill=v=>el('span',{class:'pill '+(v==='Green'?'g':v==='Amber'?'w':v==='Red'?'r':'')},v||'—');
+
+  const openRows={};
+  const tbl=el('div',{class:'ssw-list'});
+  const draw=()=>{
+    tbl.replaceChildren(...(rows.length?rows.map(r=>{
+      const key=r.eid+'|'+r.product;
+      const hist=redLogFor(r.eid,r.product);
+      const head=el('div',{class:'ssw-row',onclick:()=>{openRows[key]=!openRows[key];draw();}},
+        el('div',{class:'ssw-main'},
+          el('div',{class:'ssw-acct'},(hist.length>1?'▸ ':'')+(r.account||r.eid)),
+          el('div',{class:'ssw-meta'},r.product+' · '+(r.segment||'—')+' · '+(r.region||'—')
+            +' · '+money(r.arr||0)+' · '+(r.csm||'—'))),
+        el('div',{class:'ssw-side'},
+          pill(r.sentiment),
+          r.canChurn==='yes'
+            ? el('span',{class:'pill r'},'Churn risk'+(r.churnDate?' · '+r.churnDate:''))
+            : el('span',{class:'pill g'},'No churn'),
+          el('span',{class:'ssw-when'},fmt(r.savedAt)
+            +(hist.length>1?' · '+hist.length+' revisions':''))));
+      const detail=el('div',{class:'ssw-detail'},
+        el('div',{},el('b',{},'Ongoing issues: '),(r.issues||[]).join(' · ')||'—'),
+        el('div',{},el('b',{},'Action taken: '),(r.actions||[]).join(' · ')||'—'));
+      const kids=[head,detail];
+      if(openRows[key]&&hist.length){
+        kids.push(el('div',{class:'ssw-hist'},
+          el('div',{class:'ssw-histh'},'Revision history — every submission is kept'),
+          ...hist.map(h=>el('div',{class:'ssw-histrow'},
+            el('span',{class:'ssw-rev'},'#'+(h.revision||'?')),
+            el('span',{class:'ssw-when'},fmt(h.savedAt||h.saved_at)),
+            el('span',{},h.csm||'—'),
+            pill(h.sentiment),
+            el('span',{class:'ssw-hissues'},((h.issues||[]).join(' · ')||'—'))))));
+      }
+      return el('div',{class:'ssw-item'},...kids);
+    }):[el('p',{class:'desc'},'No reviews logged yet. Open the Red accounts table and click a row.')]));
+  };
+  draw();
+
+  const box=el('div',{class:'ssw-box'},
+    el('div',{class:'ssf-head'},
+      el('div',{},el('h3',{},'CSM reviews — red accounts'),
+        el('p',{class:'ssf-sub'},num(rows.length)+' account'+(rows.length===1?'':'s')+' reviewed · '
+          +(REVIEW_STORE==='rds'?'shared across the team (RDS)':'this browser only — not shared')
+          +' · click a row to see its revision history')),
+      el('button',{type:'button',class:'ssf-add',style:'margin-left:auto',
+        onclick:exportRedReviews},'Export CSV'),
+      el('button',{type:'button',class:'ssf-x',onclick:closeReviewsWindow},'×')),
+    tbl);
+  const modal=el('div',{id:'ssw-modal',class:'ssf-modal',
+    onclick:e=>{ if(e.target&&e.target.id==='ssw-modal') closeReviewsWindow(); }},box);
+  document.addEventListener('keydown',function esc(e){
+    if(e.key==='Escape'){ closeReviewsWindow(); document.removeEventListener('keydown',esc); }});
+  (document.getElementById('view-overall')||document.body).appendChild(modal);
+}
+function closeReviewsWindow(){ const m=document.getElementById('ssw-modal'); if(m) m.remove(); }
+
+/* CSV of everything captured on this machine — the hand-off until there is an API. */
+function exportRedReviews(){
+  const all=Object.values(redReviewsAll());
+  if(!all.length){ alert('No reviews saved on this machine yet.'); return; }
+  const cols=['savedAt','account','eid','product','segment','region','arr','csm',
+              'sentiment','dashboardRag','issues','actions','canChurn','churnDate'];
+  const esc=v=>{ const t=Array.isArray(v)?v.join(' | '):String(v==null?'':v);
+    return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t; };
+  const csv=[cols.join(',')].concat(all.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='red-account-reviews.csv'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
   /* Lazy boot: renderOverall() calls this the first time the tab is opened. */
   window.__SS_BOOT__ = function(){
     if (window.__SS_BOOTED__) return;
     window.__SS_BOOTED__ = true;
-    try { load(); }
+    try { load(); reviewStoreInit(); }
     catch (e) { console.error('[spyne-studio] boot failed:', e); }
   };
 })();
