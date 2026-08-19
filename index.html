@@ -13041,6 +13041,20 @@ function trendChart(o){
 
 /* ================= render ================= */
 function render(){
+  /* Rebuild the Vini health cache on EVERY render.
+     Caching it across renders was wrong in a way two earlier fixes missed. The
+     first render can run before the CSM data layer is ready; if it returns rows
+     that are merely DEGENERATE rather than empty (zero appt value / no CSAT yet),
+     the retry never fires, viniOverallRag resolves NA for every account, and
+     _viniRagMemo freezes those NAs while _viniAggBuilt blocks any rebuild — so
+     Group Red showed Studio-only ($1.06M/212 instead of $1.60M/229) and no
+     amount of re-rendering recovered it.
+     It is ~170 rows: recomputing per render is cheap and removes the whole class
+     of staleness bugs. Within one render the memo still applies, which is what
+     matters (accountRag is called once per live account). */
+  _viniAggBuilt=false; _viniRetries=0;
+  for(const k in _viniAgg) delete _viniAgg[k];
+  for(const k in _viniRagMemo) delete _viniRagMemo[k];
   /* Single-view dashboard: the CS / OB / Churn subtabs were removed, so Overall
      is the only panel. Product IS a live filter here now (it used to be hidden
      and force-cleared because the old Overall was a fixed group-level view).
