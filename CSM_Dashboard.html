@@ -1331,6 +1331,14 @@
 #view-overall .ssw-hist {border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
 #view-overall .ssw-histh {font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
 #view-overall .ssw-histrow {display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
+#view-overall .sigwrap{display:flex;flex-direction:column;gap:2px;min-width:270px}
+#view-overall .sigrow{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+#view-overall .sigrow.sig-na{opacity:.5}
+#view-overall .siglab{width:56px;flex:none;color:var(--muted);text-align:left}
+#view-overall .sigrow .pill{min-width:44px;text-align:center;flex:none}
+#view-overall .sigdet{flex:1;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis}
+#view-overall .sigw{flex:none;color:var(--muted);font-size:10.5px}
+#view-overall .signote{font-size:11px;color:var(--muted);margin-top:3px;white-space:normal}
 #view-overall .ssw-id {font-size:11px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #view-overall .ssw-rev {font-weight:700;color:var(--ink-2);min-width:30px}
 #view-overall .ssw-hissues {color:var(--ink-2)}
@@ -12873,6 +12881,70 @@ function commPhrase(sig){
   if(d===0) return 'last contact today ('+sig.lastComm+')';
   return 'last contact '+d+' day'+(d===1?'':'s')+' ago'+when;
 }
+/* The signals that ACTUALLY produce the score, each with its own reading, so the
+   cell explains the number rather than narrating around it. Weights come from
+   the same constants the blend uses, and an NA signal is shown greyed with its
+   weight struck out — that is the thing people otherwise cannot see: a dropped
+   signal changes the denominator. */
+function ragSignalRows(h,row){
+  if(!h) return [];
+  const sig=studioSignals(row&&row.eid,row&&(row.customer||row.ent||row.rn));
+  const out=[];
+  const BASIS={
+    Usage:'Least-squares trend over the monthly VIN series. Rising → Green, Steady → Amber, Declining → Red. Separately, ≤10 VINs in the last completed month forces the whole account Red.',
+    Tickets:'Worst-of open-ticket age against its priority SLA. With nothing open it falls back to whether SLAs were breached on record — which is why it can read Red with no open tickets.',
+    Comm:'Count-weighted CSAT score over the review window. ≥80 Green, ≥60 Amber.',
+    Payment:'Number of invoices overdue across the last 3 billing cycles: 0 → Green, 1 → Amber, 2+ → Red. Independent of what is outstanding right now.',
+    RoI:'Appointment value over a rolling 30 days ÷ MRR. ≥3.0x Green, ≥1.5x Amber, below Red.'};
+  const add=(label,rag,detail,weight)=>out.push({label,rag:rag||'NA',detail,weight,basis:BASIS[label]||''});
+  /* Each line must describe what its RAG actually measures, or it reads as a
+     contradiction. Two traps here, both hit in practice:
+       Tickets  — the RAG is worst-of age-vs-SLA across OPEN tickets. Leading with
+                  "5 answered late" (a historical first-response stat) made a
+                  legitimately Green account look mis-scored.
+       Payment  — the RAG counts overdue across the last 3 BILLING CYCLES, while
+                  PAY_OVERDUE is the total overdue count. Green beside "1 invoice
+                  overdue" is correct when that invoice predates the window. */
+  const tixDetail=()=> (sig.tixOpen?sig.tixOpen+' open':'none open')
+    + (sig.tix30?' · '+sig.tix30+' raised 60d':'')
+    + (sig.tixLate?' · '+sig.tixLate+' answered late':'');
+  const payDetail=r=>{
+    const base = r==='Green'?'none overdue in last 3 cycles'
+               : r==='Amber'?'1 overdue in last 3 cycles'
+               : r==='Red'  ?'2+ overdue in last 3 cycles'
+               : 'no billing history';
+    return base + (sig.overdue?' · '+sig.overdue+' outstanding now':'');
+  };
+  if(h.vini){
+    add('RoI',h.roiRag,(h.roi!=null?Number(h.roi).toFixed(2)+'x':'—')+' vs 1.5x floor',40);
+    add('Comm',h.comm,sig.daysSince==null?'none on record':(sig.daysSince===0?'today':sig.daysSince+'d ago'),40);
+    add('Tickets',h.tixRag,tixDetail(),20);
+  } else {
+    const p=h.parts||{};
+    add('Usage',h.override?'Red':p.usage,
+      h.override?('only '+num(h.lastVins)+' VINs — below the 10 floor')
+      :((h.trend||'—')+' · '+num(h.lastVins)+' VINs '+LAST_DONE_LABEL),3);
+    add('Tickets',p.ticket,tixDetail(),2);
+    add('Comm',p.comm,sig.daysSince==null?'none on record':(sig.daysSince===0?'today':sig.daysSince+'d ago'),2);
+    add('Payment',p.payment,payDetail(p.payment),3);
+  }
+  return out;
+}
+function ragSignalCell(h,row){
+  const rows=ragSignalRows(h,row);
+  if(!rows.length) return el('span',{class:'reason'},'No signals.');
+  const cls=r=>r==='Green'?'g':r==='Amber'?'w':r==='Red'?'r':'';
+  return el('div',{class:'sigwrap'},
+    rows.map(x=>el('div',{class:'sigrow'+(x.rag==='NA'?' sig-na':'')},
+      el('span',{class:'siglab',title:x.basis},x.label),
+      el('span',{class:'pill '+cls(x.rag),title:x.basis},x.rag),
+      el('span',{class:'sigdet'},x.detail),
+      el('span',{class:'sigw',title:x.rag==='NA'
+        ? 'No signal — dropped from the score, so the other weights carry more'
+        : 'weight '+x.weight},x.rag==='NA'?'—':('w'+x.weight)))),
+    h.override?el('div',{class:'signote'},'10-VIN floor forces Red regardless of the blend.'):null,
+    (h.pen>10&&!h.vini)?el('div',{class:'signote'},num(h.pen)+' images pending over 6h (context, not scored).'):null);
+}
 /* Plain-English reason for a RAG verdict, built from the signals that drove it. */
 function ragReason(h,row){
   if(h&&h.vini)return viniRagReason(h);
@@ -13014,7 +13086,8 @@ function viniAccountRag(eid){
   if(roiRag==='Amber'&&(comm==null||comm==='NA')) rag='Red';
   return (_viniRagMemo[eid]={rag,trend:null,lastVins:null,ws:null,pen:0,score:sc,
     redRt:e.redRt.size,rt:e.rt.size,agents:e.agents,redAgents:e.redAgents,
-    roi,roiRag,comm,tixRag,vini:true,agentRows:e.rows});
+    roi,roiRag,comm,tixRag,vini:true,agentRows:e.rows,
+    parts:{roi:roiRag,comm:comm,ticket:tixRag}});
 }
 function accountRag(eid,productLine){
   if(productLine==='Vini')return viniAccountRag(eid);
@@ -13046,8 +13119,8 @@ function accountRag(eid,productLine){
     /* rooftop-level RAG: the same formula applied to each rooftop on its own, so a
        mostly-healthy enterprise still shows how many of its rooftops are dead. */
     let redRt=0; for(const rt of rows) if(rooftopRag(rt)==='Red') redRt++;
-    if(lastVins<=10) out={rag:'Red',trend,lastVins,ws,pen,override:true,score:20,redRt,rt:rows.length};
-    else out={rag:blendRag(parts),trend,lastVins,ws,pen,score,redRt,rt:rows.length};
+    if(lastVins<=10) out={rag:'Red',trend,lastVins,ws,pen,override:true,score:20,redRt,rt:rows.length,parts};
+    else out={rag:blendRag(parts),trend,lastVins,ws,pen,score,redRt,rt:rows.length,parts};
   }
   return (_ragMemo[eid]=out);
 }
@@ -14052,7 +14125,7 @@ function csDetailBuilder(ctx){
   if(mode==='red'){
     const rows=sLive.map(r=>{const h=accountRag(r.eid,r.productLine);
         return {...r,rag:h.rag,trend:h.trend||(h.vini?'—':'—'),lastVins:h.lastVins,score:h.score,
-          redRt:h.redRt,rt:h.rt,why:ragReason(h,r),csmDisp:csmOf(r),
+          redRt:h.redRt,rt:h.rt,why:ragReason(h,r),_sigCell:ragSignalCell(h,r),csmDisp:csmOf(r),
           isVini:!!h.vini,roi:h.roi,agents:h.agents||0,redAgents:h.redAgents||0,
           agentRows:h.agentRows||[]};})
       .filter(r=>r.rag==='Red');
@@ -14061,7 +14134,7 @@ function csDetailBuilder(ctx){
             ['score','Health','num'],['trend','Usage trend / RoI'],
             ['lastVins',LAST_DONE_LABEL+' VINs','num'],['redRt','Red rooftops','num'],
             ['redAgents','Red agents','num'],
-            ['why','Why it is red'],['arr','ARR','num']],
+            ['why','Why it is red — scored signals'],['arr','ARR','num']],
       cell:x=>[(()=>{const pr=redReviewsAll()[x.eid+'|'+(x.isVini?'Vini':'Studio')];
           return pr?el('span',{},x.customer,' ',el('span',{class:'ssf-done',
             title:'Reviewed '+String(pr.savedAt).slice(0,10)+' by '+pr.csm},'✓')):x.customer;})(),
@@ -14084,7 +14157,7 @@ function csDetailBuilder(ctx){
             return el('div',{class:'reason',style:'margin-top:3px'},
               red.map(a=>a.agent+(a.rn?' @ '+a.rn:'')+' ('+Number(a.roi||0).toFixed(2)+'x)').join(', '));})()
         ):'—',
-        el('span',{class:'reason'},x.why),
+        x._sigCell||el('span',{class:'reason'},x.why),
         money(x.arr)],
       totalRow:['Total','','','','','','',num(sum(rows,x=>x.redRt))+' / '+num(sum(rows,x=>x.rt)),
         num(sum(rows,x=>x.redAgents))+' / '+num(sum(rows,x=>x.agents)),'',
