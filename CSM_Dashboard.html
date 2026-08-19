@@ -1299,80 +1299,81 @@
 
 /* ---- red-account review form ---- */
 
-.ssf-cards{display:flex;flex-direction:column;gap:9px;margin-bottom:10px}
-.ssf-card{border:1px solid var(--border);border-left:4px solid var(--muted);border-radius:9px;
+#view-overall .ssf-cards {display:flex;flex-direction:column;gap:9px;margin-bottom:10px}
+#view-overall .ssf-card {border:1px solid var(--border);border-left:4px solid var(--muted);border-radius:9px;
   padding:10px 12px;background:var(--surface)}
-.ssf-card.sev-red{border-left-color:var(--crit)}
-.ssf-card.sev-amber{border-left-color:var(--warn)}
-.ssf-cardhead{display:flex;gap:9px;align-items:flex-start}
-.ssf-cardhead input{margin-top:3px;flex:none}
-.ssf-cardlabel{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--crit)}
-.ssf-card.sev-amber .ssf-cardlabel{color:var(--warn)}
-.ssf-card.sev-info .ssf-cardlabel{color:var(--muted)}
-.ssf-cardtitle{font-size:14px;font-weight:650;line-height:1.3;margin-top:1px}
-.ssf-carddetail{font-size:12px;color:var(--muted);margin-top:2px}
-.ssf-quote{background:var(--surface-2);border-radius:7px;padding:8px 10px;margin:8px 0 7px;
+#view-overall .ssf-card.sev-red {border-left-color:var(--crit)}
+#view-overall .ssf-card.sev-amber {border-left-color:var(--warn)}
+#view-overall .ssf-cardhead {display:flex;gap:9px;align-items:flex-start}
+#view-overall .ssf-cardhead input {margin-top:3px;flex:none}
+#view-overall .ssf-cardlabel {font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--crit)}
+#view-overall .ssf-card.sev-amber .ssf-cardlabel {color:var(--warn)}
+#view-overall .ssf-card.sev-info .ssf-cardlabel {color:var(--muted)}
+#view-overall .ssf-cardtitle {font-size:14px;font-weight:650;line-height:1.3;margin-top:1px}
+#view-overall .ssf-carddetail {font-size:12px;color:var(--muted);margin-top:2px}
+#view-overall .ssf-quote {background:var(--surface-2);border-radius:7px;padding:8px 10px;margin:8px 0 7px;
   font-size:12.5px;font-style:italic;color:var(--ink-2)}
-.ssf-guide{font-size:12px;color:var(--ink-2);margin-top:3px}
+#view-overall .ssf-guide {font-size:12px;color:var(--ink-2);margin-top:3px}
 
 
-.ssw-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
+#view-overall .ssw-box {background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
   width:100%;max-width:1080px;padding:18px 20px 20px}
-.ssw-list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
-.ssw-item{border:1px solid var(--border);border-radius:9px;overflow:hidden}
-.ssw-row{display:flex;gap:12px;align-items:center;padding:9px 12px;cursor:pointer;background:var(--surface-2)}
-.ssw-row:hover{background:var(--grid)}
-.ssw-main{min-width:0;flex:1}
-.ssw-acct{font-weight:650;font-size:13.5px}
-.ssw-meta{font-size:11.5px;color:var(--muted)}
-.ssw-side{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
-.ssw-when{font-size:11.5px;color:var(--muted)}
-.ssw-detail{padding:8px 12px;font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
-.ssw-hist{border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
-.ssw-histh{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
-.ssw-histrow{display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
-.ssw-rev{font-weight:700;color:var(--ink-2);min-width:30px}
-.ssw-hissues{color:var(--ink-2)}
+#view-overall .ssw-list {display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
+#view-overall .ssw-item {border:1px solid var(--border);border-radius:9px;overflow:hidden}
+#view-overall .ssw-row {display:flex;gap:12px;align-items:center;padding:9px 12px;cursor:pointer;background:var(--surface-2)}
+#view-overall .ssw-row:hover {background:var(--grid)}
+#view-overall .ssw-main {min-width:0;flex:1}
+#view-overall .ssw-acct {font-weight:650;font-size:13.5px}
+#view-overall .ssw-meta {font-size:11.5px;color:var(--muted)}
+#view-overall .ssw-side {display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+#view-overall .ssw-when {font-size:11.5px;color:var(--muted)}
+#view-overall .ssw-detail {padding:8px 12px;font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
+#view-overall .ssw-hist {border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
+#view-overall .ssw-histh {font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
+#view-overall .ssw-histrow {display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
+#view-overall .ssw-id {font-size:11px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#view-overall .ssw-rev {font-weight:700;color:var(--ink-2);min-width:30px}
+#view-overall .ssw-hissues {color:var(--ink-2)}
 
-.clickrow{cursor:pointer}
-.clickrow:hover{background:var(--surface-2)}
-.ssf-modal{position:fixed;inset:0;background:rgba(11,11,11,.45);z-index:9999;
+#view-overall .clickrow {cursor:pointer}
+#view-overall .clickrow:hover {background:var(--surface-2)}
+#view-overall .ssf-modal {position:fixed;inset:0;background:rgba(11,11,11,.45);z-index:9999;
   display:flex;align-items:flex-start;justify-content:center;padding:38px 16px;overflow:auto}
-.ssf-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
+#view-overall .ssf-box {background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
   width:100%;max-width:720px;padding:18px 20px 20px}
-.ssf-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
-.ssf-head h3{margin:0;font-size:16px}
-.ssf-sub{margin:2px 0 0;font-size:12px;color:var(--muted)}
-.ssf-x{margin-left:auto;background:none;border:none;font-size:22px;line-height:1;
+#view-overall .ssf-head {display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+#view-overall .ssf-head h3 {margin:0;font-size:16px}
+#view-overall .ssf-sub {margin:2px 0 0;font-size:12px;color:var(--muted)}
+#view-overall .ssf-x {margin-left:auto;background:none;border:none;font-size:22px;line-height:1;
   cursor:pointer;color:var(--muted)}
-.ssf-x:hover{color:var(--ink)}
-.ssf-why{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+#view-overall .ssf-x:hover {color:var(--ink)}
+#view-overall .ssf-why {background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
   padding:9px 11px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
-.ssf-field{margin-bottom:14px}
-.ssf-field>label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+#view-overall .ssf-field {margin-bottom:14px}
+#view-overall .ssf-field>label {display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
   color:var(--muted);margin-bottom:5px}
 #view-overall .ssf-field input[type=text], #view-overall .ssf-field input[type=date], #view-overall .ssf-field select {
   font:inherit;font-size:13px;padding:7px 9px;border-radius:7px;border:1px solid var(--border);
   background:var(--surface);color:var(--ink);width:100%;max-width:260px}
-.ssf-sugs{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}
-.ssf-sug{display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer}
-.ssf-sug input{margin-top:2px;flex:none}
-.ssf-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.ssf-add{background:var(--s1);color:#fff;border:none;border-radius:7px;padding:7px 13px;
+#view-overall .ssf-sugs {display:flex;flex-direction:column;gap:5px;margin-bottom:8px}
+#view-overall .ssf-sug {display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer}
+#view-overall .ssf-sug input {margin-top:2px;flex:none}
+#view-overall .ssf-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#view-overall .ssf-add {background:var(--s1);color:#fff;border:none;border-radius:7px;padding:7px 13px;
   font-size:12.5px;cursor:pointer;flex:none}
-.ssf-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
-.ssf-chip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+#view-overall .ssf-chips {display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+#view-overall .ssf-chip {background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
   padding:3px 6px 3px 10px;font-size:12px;display:inline-flex;align-items:center;gap:4px}
-.ssf-chip button{background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:0 2px}
-.ssf-chip button:hover{color:var(--crit)}
-.ssf-radio{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer}
-.ssf-err{color:var(--crit);font-size:12.5px;min-height:16px;margin-bottom:6px}
-.ssf-actions{display:flex;gap:8px;justify-content:flex-end}
-.ssf-cancel{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+#view-overall .ssf-chip button {background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:0 2px}
+#view-overall .ssf-chip button:hover {color:var(--crit)}
+#view-overall .ssf-radio {display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer}
+#view-overall .ssf-err {color:var(--crit);font-size:12.5px;min-height:16px;margin-bottom:6px}
+#view-overall .ssf-actions {display:flex;gap:8px;justify-content:flex-end}
+#view-overall .ssf-cancel {background:var(--surface);border:1px solid var(--border);border-radius:8px;
   padding:8px 15px;font-size:13px;cursor:pointer;color:var(--ink-2)}
-.ssf-submit{background:var(--s1);color:#fff;border:none;border-radius:8px;padding:8px 18px;
+#view-overall .ssf-submit {background:var(--s1);color:#fff;border:none;border-radius:8px;padding:8px 18px;
   font-size:13px;font-weight:600;cursor:pointer}
-.ssf-done{color:var(--good-ink);font-weight:600}
+#view-overall .ssf-done {color:var(--good-ink);font-weight:600}
 
 #view-overall {
     color-scheme: light;
@@ -14315,7 +14316,7 @@ async function reviewStoreInit(){
     try{
       const lg=await fetch('./api/reviews/log',{headers:{Accept:'application/json'}});
       if(lg.ok){ const ld=await lg.json();
-        REVIEW_LOG_REMOTE=(ld.rows||[]).map(x=>({eid:x.eid,product:x.product,account:x.account,
+        REVIEW_LOG_REMOTE=(ld.rows||[]).map(x=>({id:x.id,eid:x.eid,product:x.product,account:x.account,
           csm:x.csm,sentiment:x.sentiment,issues:x.issues||[],actions:x.actions||[],
           canChurn:x.can_churn?'yes':'no',revision:x.revision,savedAt:x.saved_at})); }
     }catch(_){ }
@@ -14350,7 +14351,7 @@ async function redReviewSave(rec){
     const d=await r.json();
     REVIEW_REMOTE[reviewKey(rec)]=Object.assign({},rec,{savedAt:d.savedAt||rec.savedAt});
     redLogAppend(rec,d.revision);
-    REVIEW_LOG_REMOTE.unshift(Object.assign({},rec,{revision:d.revision,savedAt:d.savedAt||rec.savedAt}));
+    REVIEW_LOG_REMOTE.unshift(Object.assign({},rec,{id:d.id,revision:d.revision,savedAt:d.savedAt||rec.savedAt}));
     return {ok:true,where:'rds'};
   }catch(err){ return {ok:false,where:'rds',error:err.message}; }
 }
@@ -14761,6 +14762,7 @@ function openReviewsWindow(){
           el('div',{class:'ssw-histh'},'Revision history — every submission is kept'),
           ...hist.map(h=>el('div',{class:'ssw-histrow'},
             el('span',{class:'ssw-rev'},'#'+(h.revision||'?')),
+            h.id?el('span',{class:'ssw-id',title:'Database entry id'},'id '+h.id):null,
             el('span',{class:'ssw-when'},fmt(h.savedAt||h.saved_at)),
             el('span',{},h.csm||'—'),
             pill(h.sentiment),
@@ -14793,14 +14795,18 @@ function closeReviewsWindow(){ const m=document.getElementById('ssw-modal'); if(
 function exportRedReviews(){
   const all=Object.values(redReviewsAll()).filter(r=>!isTestReview(r));
   if(!all.length){ alert('No reviews logged yet.'); return; }
-  const cols=['savedAt','account','eid','product','segment','region','arr','csm',
+  const cols=['entryId','savedAt','account','eid','product','segment','region','arr','csm',
               'sentiment','dashboardRag','issues','actions','canChurn','churnDate','revision'];
   const esc=v=>{ const t=Array.isArray(v)?v.join(' | '):String(v==null?'':v);
     return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t; };
   /* savedAt exported in IST; revision included so a re-submission is visible. */
-  const csv=[cols.join(',')].concat(all.map(r=>cols.map(c=>
-    esc(c==='savedAt'?istStamp(r.savedAt):(c==='revision'?(redLogFor(r.eid,r.product).length||1):r[c]))
-  ).join(','))).join('\n');
+  const csv=[cols.join(',')].concat(all.map(r=>{
+    const hist=redLogFor(r.eid,r.product), latest=hist[0]||{};
+    return cols.map(c=>esc(
+      c==='entryId' ? (latest.id||'') :
+      c==='savedAt' ? istStamp(r.savedAt) :
+      c==='revision'? (hist.length||1) : r[c])).join(',');
+  })).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='red-account-reviews.csv'; a.click();
