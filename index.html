@@ -14252,6 +14252,7 @@ async function reviewStoreInit(){
           csm:x.csm,sentiment:x.sentiment,issues:x.issues||[],actions:x.actions||[],
           canChurn:x.can_churn?'yes':'no',revision:x.revision,savedAt:x.saved_at})); }
     }catch(_){ }
+    await pushLocalReviewsUp();
     if(typeof render==='function') render();
   }catch(_){ /* stay on localStorage */ }
 }
@@ -14618,6 +14619,35 @@ function redLogFor(eid,product){
   return all.slice().sort((a,b)=>String(b.savedAt||b.saved_at||'').localeCompare(String(a.savedAt||a.saved_at||'')));
 }
 let REVIEW_LOG_REMOTE=[];
+
+/* Anything a CSM logged while the store was local-only is pushed up the first
+   time the database is reachable. Without this, entries typed before RDS was
+   connected would stay stranded in one browser and never become visible to
+   anyone else. Only records the server does not already have (or that are newer
+   than its copy) are sent, so re-running this is harmless. */
+async function pushLocalReviewsUp(){
+  if(REVIEW_STORE!=='rds') return 0;
+  const local=redReviewsLocal();
+  const keys=Object.keys(local);
+  if(!keys.length) return 0;
+  let pushed=0;
+  for(const k of keys){
+    const rec=local[k];
+    if(!rec||!rec.eid||!rec.product) continue;
+    const remote=REVIEW_REMOTE[k];
+    if(remote && String(remote.savedAt||'') >= String(rec.savedAt||'')) continue;
+    try{
+      const r=await fetch('./api/reviews',{method:'POST',
+        headers:{'Content-Type':'application/json',Accept:'application/json'},
+        body:JSON.stringify(rec)});
+      if(r.ok){ const d=await r.json();
+        REVIEW_REMOTE[k]=Object.assign({},rec,{savedAt:d.savedAt||rec.savedAt});
+        pushed++; }
+    }catch(_){ /* leave it local; the next load will retry */ }
+  }
+  if(pushed) console.log('[spyne-studio] migrated '+pushed+' locally-saved review(s) to the shared store.');
+  return pushed;
+}
 
 /* ---- reviews window ------------------------------------------------------
    A dedicated full-screen view of what CSMs actually wrote, separate from the
