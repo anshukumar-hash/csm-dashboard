@@ -1331,6 +1331,12 @@
 #view-overall .ssw-hist {border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
 #view-overall .ssw-histh {font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
 #view-overall .ssw-histrow {display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
+#view-overall .dt-bar {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:2px 0 10px}
+#view-overall .dt-sel {font:inherit;font-size:12.5px;padding:6px 9px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface);color:var(--ink);max-width:220px}
+#view-overall .dt-search {font:inherit;font-size:12.5px;padding:6px 10px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface);color:var(--ink);min-width:250px}
+#view-overall .dt-count {font-size:12px;color:var(--muted)}
 #view-overall .sigwrap{display:flex;flex-direction:column;gap:2px;min-width:270px}
 #view-overall .sigrow{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
 #view-overall .sigrow.sig-na{opacity:.5}
@@ -12626,7 +12632,7 @@ const regionOfOb=r=>r.region==='AMER'?'AMER':'APAC/EMEA';
 let OB=[],SC=[],SNAP=[],ARR=[],CHURN=[],VINI=[],EXEC=null,SPROJ=[],META={},ARRMETA={},CHURNMETA={};
 let SC_BY_EID={},VINI_BY_EID={},OB_POC_BY_EID={};
 /* Filters are MULTI-SELECT: each is an array of chosen values; [] means "All". */
-const state={view:'overall',product:[],region:[],seg:[],poc:[],ragFilter:'All',csDetail:'larr',obDetail:'live',sort:{}};
+const state={view:'overall',product:[],region:[],seg:[],poc:[],ragFilter:'All',csDetail:'larr',obDetail:'live',sort:{},detailCsm:'',detailQ:''};
 const inSel=(sel,v)=>!sel.length||sel.includes(v);
 /* rooftop map per product line: Studio from studio_card, Vini from vini_card grain */
 const rtMap=p=>p==='Vini'?VINI_BY_EID:SC_BY_EID;
@@ -13707,8 +13713,20 @@ function renderOverall(a,o,m,c){
      OB Expected date inside the current month, split at the 21st. */
   const CUT_DAY=21;
   const monthEnd=new Date(TODAY.getFullYear(),TODAY.getMonth()+1,0).getDate();
-  const sProj=SPROJ.filter(r=>r.product==='Studio'&&String(r.obExpected).slice(0,7)===MTD);
-  const sProjDay=r=>+String(r.obExpected).slice(8,10)||0;
+  /* Product-aware (user 2026-08-20): the projection sheet carries a Product
+     column and holds both Studio and Vini rows, but this was pinned to Studio,
+     so the Vini pipeline never appeared anywhere.
+     The date parse also had to change. The sheet mixes formats — "2026-08-18"
+     AND "28-Aug-26" — and slice(0,7) only ever matched the ISO ones, so every
+     D-MMM-YY row was dropped in silence. goLiveYM() already handles both. */
+  const sProj=SPROJ.filter(r=>inSel(state.product,r.product)&&goLiveYM(r.obExpected)===MTD);
+  const sProjDay=r=>{
+    const t=String(r.obExpected||'').trim();
+    let m=t.match(/^(\d{1,2})[-\/ ][A-Za-z]{3,}/); if(m) return +m[1];       // 28-Aug-26
+    m=t.match(/^\d{4}-\d{1,2}-(\d{1,2})/);        if(m) return +m[1];       // 2026-08-18
+    m=t.match(/^(\d{1,2})\/(\d{1,2})\/\d{4}$/);    if(m) return +m[2];       // 8/18/2026
+    return 0;
+  };
   /* Disjoint buckets (user): 1st–21st and 22nd–month end. The headline uses
      column G "Expected Movement to OB ARR" (expArr), not the account ARR. */
   const sProjEarly=sProj.filter(r=>sProjDay(r)<=CUT_DAY);
@@ -14240,14 +14258,49 @@ function csDetailPanel(){
     return panel(head,'Split by regrettable vs unregrettable — click a scorecard above to change this table',blocks);
   }
 
-  const shown=[...b.rows].sort((x,y)=>(y.arr||0)-(x.arr||0)).slice(0,cap);
+  /* CSM picker + free-text search over the detail table. These narrow the LIST
+     only — the scorecards above keep showing the whole book, so the numbers you
+     clicked through from never move under you. Search covers enterprise name,
+     enterprise id and CSM, since people arrive with whichever they have. */
+  const csmOfRow=r=>String(r.csmDisp||r.csm||r.obPoc||'').trim();
+  const allCsms=[...new Set(b.rows.map(csmOfRow).filter(Boolean))].sort();
+  if(state.detailCsm&&allCsms.indexOf(state.detailCsm)<0) state.detailCsm='';
+  const q=String(state.detailQ||'').trim().toLowerCase();
+  const matchQ=r=>!q||[r.customer,r.disp,r.ent,r.rn,r.account,r.eid,csmOfRow(r)]
+    .some(v=>String(v==null?'':v).toLowerCase().includes(q));
+  const filtered=b.rows.filter(r=>(!state.detailCsm||csmOfRow(r)===state.detailCsm)&&matchQ(r));
+
+  const csmSel=el('select',{class:'dt-sel',onchange:e=>{state.detailCsm=e.target.value;render();}},
+    [el('option',{value:''},'All CSMs ('+allCsms.length+')')].concat(
+      allCsms.map(c=>{const o=el('option',{value:c},c); if(c===state.detailCsm)o.selected=true; return o;})));
+  const search=el('input',{type:'search',class:'dt-search',placeholder:'Search account, ID or CSM…'});
+  search.value=state.detailQ||'';
+  /* Debounced so a re-render per keystroke doesn't fight the typing, and the
+     caret is restored because render() rebuilds the node. */
+  let _t=null;
+  search.addEventListener('input',e=>{ const v=e.target.value;
+    clearTimeout(_t); _t=setTimeout(()=>{ state.detailQ=v; render();
+      const n=document.querySelector('#v-overall .dt-search');
+      if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } },220); });
+
+  const narrowed=(state.detailCsm||q);
+  const toolbar=el('div',{class:'dt-bar'},csmSel,search,
+    narrowed?el('button',{type:'button',class:'ssf-cancel',style:'padding:6px 12px',
+      onclick:()=>{state.detailCsm='';state.detailQ='';render();}},'Clear'):null,
+    narrowed?el('span',{class:'dt-count'},
+      num(filtered.length)+' of '+num(b.rows.length)+' · '+moneyK(sum(filtered,x=>x.arr))):null);
+
+  const shown=[...filtered].sort((x,y)=>(y.arr||0)-(x.arr||0)).slice(0,cap);
   return panel(head,
     'Click a scorecard above to change what this table shows'
-      +(b.rows.length>cap?' · showing the top '+cap+' by ARR':''),
+      +(filtered.length>cap?' · showing the top '+cap+' by ARR':''),
     b.rows.length
-      ? el('div',{},reviewBar,(b.groupFn
-          ? groupedTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.groupFn)
-          : sortableTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.rowClick)))
+      ? el('div',{},reviewBar,toolbar,
+          filtered.length
+            ? (b.groupFn
+                ? groupedTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.groupFn)
+                : sortableTable('csDetail_'+mode,b.cols,shown,b.cell,b.totalRow,b.rowClick))
+            : el('p',{class:'muted'},'No account matches that filter.'))
       :el('p',{class:'muted'},'Nothing to show for this selection.'));
 }
 /* ---------- CS account book: RAG-classified, All / Red / Amber / Green ---------- */
