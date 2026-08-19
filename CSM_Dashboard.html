@@ -1279,6 +1279,23 @@
 
 /* ---- red-account review form ---- */
 
+.ssf-cards{display:flex;flex-direction:column;gap:9px;margin-bottom:10px}
+.ssf-card{border:1px solid var(--border);border-left:4px solid var(--muted);border-radius:9px;
+  padding:10px 12px;background:var(--surface)}
+.ssf-card.sev-red{border-left-color:var(--crit)}
+.ssf-card.sev-amber{border-left-color:var(--warn)}
+.ssf-cardhead{display:flex;gap:9px;align-items:flex-start}
+.ssf-cardhead input{margin-top:3px;flex:none}
+.ssf-cardlabel{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--crit)}
+.ssf-card.sev-amber .ssf-cardlabel{color:var(--warn)}
+.ssf-card.sev-info .ssf-cardlabel{color:var(--muted)}
+.ssf-cardtitle{font-size:14px;font-weight:650;line-height:1.3;margin-top:1px}
+.ssf-carddetail{font-size:12px;color:var(--muted);margin-top:2px}
+.ssf-quote{background:var(--surface-2);border-radius:7px;padding:8px 10px;margin:8px 0 7px;
+  font-size:12.5px;font-style:italic;color:var(--ink-2)}
+.ssf-guide{font-size:12px;color:var(--ink-2);margin-top:3px}
+
+
 .ssw-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
   width:100%;max-width:1080px;padding:18px 20px 20px}
 .ssw-list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
@@ -1302,7 +1319,7 @@
 .ssf-modal{position:fixed;inset:0;background:rgba(11,11,11,.45);z-index:9999;
   display:flex;align-items:flex-start;justify-content:center;padding:38px 16px;overflow:auto}
 .ssf-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
-  width:100%;max-width:620px;padding:18px 20px 20px}
+  width:100%;max-width:720px;padding:18px 20px 20px}
 .ssf-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
 .ssf-head h3{margin:0;font-size:16px}
 .ssf-sub{margin:2px 0 0;font-size:12px;color:var(--muted)}
@@ -14095,27 +14112,205 @@ async function redReviewSave(rec){
     return {ok:true,where:'rds'};
   }catch(err){ return {ok:false,where:'rds',error:err.message}; }
 }
+/* ---- red-account briefing ------------------------------------------------
+   The one-line "why it is red" says WHAT the data shows. This turns it into a
+   per-signal briefing a CSM can walk into a meeting with: for each signal, the
+   evidence, an opening line, what to probe, and how to close. Same structure as
+   the travel-plan cards.
+   Signals are ordered by how the churn analysis prioritises them —
+   sentiment/communication first, then usage, support, then payment last. */
+const _sevRank={Red:0,Amber:1,Info:2};
+function daysAgo(iso){
+  if(!iso) return null;
+  const t=new Date();
+  const today=Date.UTC(t.getFullYear(),t.getMonth(),t.getDate());
+  return Math.max(0,Math.round((today-new Date(iso+'T00:00:00Z').getTime())/86400000));
+}
+function tixStats(eid,product){
+  const src=(product==='Vini'?(typeof VINI_TIX!=='undefined'?VINI_TIX:{})
+                            :(typeof STUDIO_TIX!=='undefined'?STUDIO_TIX:{}))||{};
+  const rows=((src[eid]||{}).rows)||[];
+  const cut=new Date(Date.now()-60*86400000).toISOString().slice(0,10);
+  const recent=rows.filter(r=>r.c&&String(r.c)>=cut);
+  return {total:rows.length,recent:recent.length,
+    open:rows.filter(r=>r.o).length,
+    urgent:recent.filter(r=>r.p==='urgent'||r.p==='high').length,
+    late:recent.filter(r=>r.fr==='Violated SLA').length};
+}
+function csatStats(eid,name){
+  const out={lastRed:null,lastAny:null,rag:null};
+  const scan=a=>{ if(!Array.isArray(a))return;
+    a.forEach(r=>{ if(!r.date_iso)return;
+      if((r.intCount==null||Number(r.intCount)>0)&&(!out.lastAny||r.date_iso>out.lastAny)) out.lastAny=r.date_iso;
+      if(r.rag==='Red'&&(!out.lastRed||r.date_iso>out.lastRed)) out.lastRed=r.date_iso; }); };
+  try{
+    if(typeof CSAT_ALL_BY_EID!=='undefined') scan(CSAT_ALL_BY_EID[eid]);
+    if(name&&typeof CSAT_ALL_BY_NAME!=='undefined'){
+      const k=(typeof normCsatName==='function')?normCsatName(name):String(name).toLowerCase().trim();
+      scan(CSAT_ALL_BY_NAME[k]); }
+    if(typeof csatRagCountsForInRange==='function'&&typeof scoreRag==='function')
+      out.rag=scoreRag(csatRagCountsForInRange(eid,name),COMM_GREEN_THRESH,COMM_AMBER_THRESH,COMM_WEIGHTS);
+  }catch(_){}
+  return out;
+}
+function payStats(eid){
+  const out={overdue:0,outstanding:0,oldestDue:null};
+  try{ out.overdue=Number((typeof PAY_OVERDUE!=='undefined')?PAY_OVERDUE[eid]:0)||0; }catch(_){}
+  try{
+    const rows=(typeof _paymentData!=='undefined'&&_paymentData&&_paymentData.rows)?_paymentData.rows:[];
+    const today=new Date().toISOString().slice(0,10);
+    rows.forEach(r=>{ if(r.eid!==eid) return;
+      const out$=Number(r.outstandingUsd)||0;
+      if(out$>0){ out.outstanding+=out$;
+        if(r.dueIso&&r.dueIso<today&&(!out.oldestDue||r.dueIso<out.oldestDue)) out.oldestDue=r.dueIso; } });
+  }catch(_){}
+  return out;
+}
+/* Returns [{key,label,sev,headline,detail,quote,listen[],leave}] — worst first. */
+function redBriefing(x){
+  const product=x.isVini?'Vini':'Studio';
+  const name=x.customer||x.ent||x.rn||'';
+  const cards=[];
+  const cs=csatStats(x.eid,name), tx=tixStats(x.eid,product), pay=payStats(x.eid);
+  const dLast=daysAgo(cs.lastAny), dRed=daysAgo(cs.lastRed);
+
+  /* ---- sentiment / communication ---- */
+  if(cs.lastRed&&dRed!=null&&dRed<=90){
+    cards.push({key:'sentiment',label:'Sentiment',sev:'Red',
+      headline:'They have told us they are unhappy',
+      detail:'A red reading on '+cs.lastRed+', '+dRed+' days ago'
+        +(dLast!=null?'; last contact of any kind '+dLast+' days ago.':'.'),
+      quote:'When we last spoke you told us this wasn’t working. I didn’t want to do that over email, so I came. Talk me through it.',
+      listen:['Whether the complaint is product, support, or a person',
+              'Who else internally is unhappy',
+              'Whether they have already looked at alternatives'],
+      leave:'Summarise what you heard back to them in their words, then name one action with a date. Do not pitch anything in this meeting.'});
+  } else if(dLast==null){
+    cards.push({key:'sentiment',label:'Communication',sev:'Red',
+      headline:'We have no communication on record at all',
+      detail:'Nothing logged against this account — no CSAT reading, no interaction.',
+      quote:'I realised we have not spoken properly in a long time, and that is on us. I wanted to fix that before anything else.',
+      listen:['Whether they have a contact for us at all','Who actually owns the relationship on their side',
+              'Whether they think they are supported'],
+      leave:'Book the next conversation before you leave, and put a recurring cadence in place.'});
+  } else if(dLast>=45){
+    cards.push({key:'sentiment',label:'Communication',sev:'Red',
+      headline:'We have gone quiet on them',
+      detail:'No contact for '+dLast+' days (last '+cs.lastAny+') — past the 45-day mark.',
+      quote:'It has been about '+Math.round(dLast/7)+' weeks since we properly spoke. I did not want that to keep sliding.',
+      listen:['What changed on their side while we were absent','Whether anyone has left or joined',
+              'Whether they raised anything that never got answered'],
+      leave:'Agree a cadence and hold it. A missed second meeting confirms their worst read of us.'});
+  } else if(dLast>=30){
+    cards.push({key:'sentiment',label:'Communication',sev:'Amber',
+      headline:'Contact is drifting',
+      detail:'Last contact '+dLast+' days ago ('+cs.lastAny+') — past 30 days.',
+      quote:'I want to make sure we are still lined up on what good looks like for you this quarter.',
+      listen:['Whether their goals have moved','Whether the original champion is still involved'],
+      leave:'Re-establish a regular slot before it becomes a 45-day gap.'});
+  }
+
+  /* ---- usage (Studio) / return (Vini) ---- */
+  if(x.isVini){
+    const roi=Number(x.roi)||0;
+    if(roi<1.5){
+      cards.push({key:'roi',label:'Return',sev:'Red',
+        headline:'They are not getting their money back',
+        detail:'RoI '+roi.toFixed(2)+'x against a 1.5x floor'
+          +(x.agents?' · '+x.redAgents+' of '+x.agents+' agents red.':'.'),
+        quote:'On what you pay us, the appointments we are booking are not yet paying for themselves. I want to change that, and I need your help to do it.',
+        listen:['Whether the lead volume reaching us is what they expected',
+                'Whether their team is actioning the appointments we book',
+                'Which agent type they actually care about'],
+        leave:'Name the one agent you will fix first and the number it needs to hit. Vague commitments read as excuses here.'});
+    }
+    const red=(x.agentRows||[]).filter(a=>a.rag==='Red').sort((a,b)=>a.roi-b.roi);
+    if(red.length){
+      cards.push({key:'agents',label:'Agents',sev:'Red',
+        headline:red.length+' of '+(x.agents||red.length)+' agent contracts are underperforming',
+        detail:red.slice(0,4).map(a=>a.agent+(a.rn?' @ '+a.rn:'')+' '+Number(a.roi||0).toFixed(2)+'x').join(' · ')+'.',
+        quote:'Not every agent is struggling — these specific ones are. Let us look at them together rather than talking about the account in the abstract.',
+        listen:['Whether those rooftops staffed it differently','Whether the routing or hours changed',
+                'Whether they would rather consolidate agents than keep all of them'],
+        leave:'Pick one agent, one owner, one date. Fixing the worst one is more persuasive than a plan for all of them.'});
+    }
+  } else {
+    if(x.lastVins!=null&&x.lastVins<=10){
+      cards.push({key:'usage',label:'Usage',sev:'Red',
+        headline:x.lastVins===0?'They have stopped using it entirely':'Usage has all but stopped',
+        detail:'Only '+num(x.lastVins)+' VIN'+(x.lastVins===1?'':'s')+' in '+LAST_DONE_LABEL
+          +' — at or below the 10-VIN floor, which forces Red on its own.',
+        quote:'The product has effectively gone quiet on your side. Before I assume anything, I want to understand what changed.',
+        listen:['Whether the people trained on it have left','Whether a process changed around it',
+                'Whether they moved the work to someone else'],
+        leave:'Do not leave without knowing whether this is a people problem, a process problem, or a decision. They are three different rescues.'});
+    } else if(x.trend==='Declining'){
+      cards.push({key:'usage',label:'Usage',sev:'Red',
+        headline:'Usage is falling month over month',
+        detail:num(x.lastVins)+' VINs in '+LAST_DONE_LABEL+', and the trend is down, not flat.',
+        quote:'Your volume with us has been sliding for a few months. That is usually a signal about something, and I would rather hear it from you.',
+        listen:['Whether volume is down overall or just with us',
+                'Whether a specific rooftop or team stopped','Whether a competitor is in the building'],
+        leave:'Anchor on one rooftop that is still healthy and ask what is different there. Make the fix concrete.'});
+    } else if(x.trend==='Steady'){
+      cards.push({key:'usage',label:'Usage',sev:'Amber',
+        headline:'Usage is flat, not growing',
+        detail:num(x.lastVins)+' VINs in '+LAST_DONE_LABEL+' — steady, but no expansion.',
+        quote:'You are getting consistent value, and I think there is more available to you than you are taking.',
+        listen:['Which rooftops are not live yet','What would have to be true to expand'],
+        leave:'Leave with one named rooftop or use case to add, not a general intention to grow.'});
+    }
+    if(x.pen>10){
+      cards.push({key:'delivery',label:'Delivery',sev:'Amber',
+        headline:'We are holding up their images',
+        detail:num(x.pen)+' images pending over 6h.',
+        quote:'We have a backlog on your images and that is our problem, not yours. Here is what I am doing about it.',
+        listen:['Whether the delay has cost them a listing or a sale',
+                'Whether they have started working around us'],
+        leave:'Give a specific clearance date. This is the one item where a precise promise buys more than sympathy.'});
+    }
+  }
+
+  /* ---- support ---- */
+  if(tx.recent>0||tx.open>0){
+    const bad=tx.open>0||tx.urgent>0||tx.late>0;
+    cards.push({key:'support',label:'Support',sev:bad?'Red':'Amber',
+      headline:tx.late>0
+        ? tx.late+' ticket'+(tx.late===1?'':'s')+' answered late'+(tx.open?', and urgent ones are open':'')
+        : (tx.open>0?tx.open+' ticket'+(tx.open===1?'':'s')+' still open':'They have been raising tickets'),
+      detail:tx.recent+' raised in the last 60 days, '+tx.open+' still open, '+tx.urgent
+        +' urgent, '+tx.late+' answered late. '+tx.total+' on record.',
+      quote:'You have raised '+tx.recent+' ticket'+(tx.recent===1?'':'s')+' in the last two months'
+        +(tx.late>0?' and we missed our own response target on '+tx.late+'.':'.')+' I have read them all before coming.',
+      listen:['Which one actually cost them money',
+              'Whether they have stopped reporting problems — the worst sign of all'],
+      leave:tx.open>0
+        ? 'Own the open ones by name and date before you discuss anything else.'
+        : 'Everything is closed on paper — check whether it is closed in their opinion too. A closed ticket they are still angry about is worse than an open one.'});
+  }
+
+  /* ---- payment, deliberately last ---- */
+  if(pay.overdue>0){
+    cards.push({key:'payment',label:'Payment',sev:'Amber',
+      headline:'Payments are slipping',
+      detail:pay.overdue+' invoice'+(pay.overdue===1?'':'s')+' overdue'
+        +(pay.outstanding>0?', '+money(Math.round(pay.outstanding))+' outstanding':'')
+        +(pay.oldestDue?', oldest due '+pay.oldestDue:'')
+        +'. ARR '+money(x.arr||0)+' a year.',
+      quote:'There are some invoices outstanding — I mostly want to check it is a process thing on your side and not a signal about how you are feeling about us.',
+      listen:['Is it AP process, a PO, or a deliberate hold',
+              'A deliberate hold is a satisfaction problem wearing a finance costume'],
+      leave:'Raise this LAST, and only after the product conversation has landed. Do not open with money at an unhappy account.'});
+  }
+
+  cards.sort((a,b)=>(_sevRank[a.sev]-_sevRank[b.sev]));
+  return cards;
+}
+
 /* Candidate "ongoing issues", derived from the same signals that drove the RAG,
    so the CSM confirms/edits a diagnosis rather than typing from scratch. */
 function redIssueSuggestions(x){
-  const out=[];
-  if(x.isVini){
-    if(x.roi!=null&&x.roi<1.5) out.push('Low RoI ('+Number(x.roi||0).toFixed(2)+'x, below the 1.5x floor)');
-    if(x.redAgents>0) out.push(x.redAgents+' of '+x.agents+' agents underperforming');
-    (x.agentRows||[]).filter(a=>a.rag==='Red').slice(0,4).forEach(a=>
-      out.push('Agent: '+a.agent+(a.rn?' @ '+a.rn:'')+' ('+Number(a.roi||0).toFixed(2)+'x)'));
-  } else {
-    if(x.lastVins!=null&&x.lastVins<=10) out.push('At or below the 10-VIN floor ('+num(x.lastVins)+' in '+LAST_DONE_LABEL+')');
-    else if(x.trend==='Declining') out.push('Usage declining month over month');
-    else if(x.trend==='Steady') out.push('Usage flat, not growing');
-  }
-  const sig=studioSignals(x.eid,x.customer||x.ent||x.rn);
-  if(sig.daysSince!=null&&sig.daysSince>=30) out.push('No contact for '+sig.daysSince+' days');
-  else if(sig.daysSince==null) out.push('No communication on record');
-  if(sig.tix30>0) out.push(sig.tix30+' support ticket'+(sig.tix30===1?'':'s')+' in the last 30 days');
-  if(sig.overdue>0) out.push(sig.overdue+' invoice'+(sig.overdue===1?'':'s')+' overdue');
-  if(x.pen>10) out.push(num(x.pen)+' images pending over 6h');
-  return out;
+  return redBriefing(x).map(c=>c.label+': '+c.headline);
 }
 /* A repeatable text row: type, press Add (or Enter), it becomes a chip. */
 function multiInput(placeholder,seed){
@@ -14143,10 +14338,22 @@ function openRedReview(x){
   /* Ongoing issues: the derived ones as toggles, plus free text for anything
      the data can't see. Pre-ticked from a previous submission if there is one. */
   const picked=new Set(prior.issues||suggestions);
-  const sugWrap=el('div',{class:'ssf-sugs'},suggestions.map(sv=>{
-    const cb=el('input',{type:'checkbox'}); cb.checked=picked.has(sv);
-    cb.addEventListener('change',()=>{ cb.checked?picked.add(sv):picked.delete(sv); });
-    return el('label',{class:'ssf-sug'},cb,el('span',{},sv));}));
+  /* One card per signal: the evidence, an opening line, what to probe, how to
+     close. Ticking a card adds it to the issues recorded on the review. */
+  const brief=redBriefing(x);
+  const sugWrap=el('div',{class:'ssf-cards'},brief.map(c=>{
+    const label=c.label+': '+c.headline;
+    const cb=el('input',{type:'checkbox'}); cb.checked=picked.has(label);
+    cb.addEventListener('change',()=>{ cb.checked?picked.add(label):picked.delete(label); });
+    return el('div',{class:'ssf-card sev-'+c.sev.toLowerCase()},
+      el('div',{class:'ssf-cardhead'},cb,
+        el('div',{},
+          el('div',{class:'ssf-cardlabel'},c.label.toUpperCase()),
+          el('div',{class:'ssf-cardtitle'},c.headline),
+          el('div',{class:'ssf-carddetail'},c.detail))),
+      el('div',{class:'ssf-quote'},'“'+c.quote+'”'),
+      el('div',{class:'ssf-guide'},el('b',{},'Listen for: '),(c.listen||[]).join(' · ')),
+      el('div',{class:'ssf-guide'},el('b',{},'Leave with: '),c.leave));}));
   const extraIssues=multiInput('Add another issue…',
     (prior.issues||[]).filter(v=>suggestions.indexOf(v)<0));
   const actions=multiInput('What was done / will be done…',prior.actions||[]);
