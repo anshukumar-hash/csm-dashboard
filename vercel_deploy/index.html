@@ -4120,12 +4120,14 @@ function computeOverallRagSaas(parts) {
   }
   if (!weightUsed) return 'NA';
   const score = sum / weightUsed;
-  // Bands (user spec 2026-08): Green >=80, Amber >=50, Red <50. The Amber floor
-  // was lowered 60->50 so a paying, engaged account with problems reads as
-  // 'watch' rather than 'crisis'; the Green bar stays at 80 so an account whose
+  // Bands (user spec 2026-08-19): Green >=80, Amber >=60, Red <60. The Amber
+  // floor was briefly 50, then returned to 60 so that the whole dashboard --
+  // including the Overall tab, which never took the 50 -- applies ONE rule and
+  // two tabs can never disagree about the same account. The Green bar stays at
+  // 80 so an account whose
   // usage is declining can never be called Green.
   if (score >= 80) return 'Green';
-  if (score >= 50) return 'Amber';
+  if (score >= 60) return 'Amber';
   return 'Red';
 }
 function computeOverallRAG(rags) {
@@ -4147,7 +4149,7 @@ function computeOverallRAG(rags) {
     if (!valid.length) return 'NA';
     const score = valid.reduce((s, r) => s + OVERALL_RAG_VALUE[r], 0) / valid.length;
     if (score >= 80) return 'Green';
-    if (score >= 50) return 'Amber';
+    if (score >= 60) return 'Amber';
     return 'Red';
   }
   // Object signature (new) → direct call into the SaaS blend.
@@ -9715,20 +9717,20 @@ function hardcodedRegister(){
     items:[
       {name:'Studio overall weights', value:(SS.RAG_WEIGHTS
         ? Object.keys(SS.RAG_WEIGHTS).map(k=>k+' '+SS.RAG_WEIGHTS[k]).join(' · '):'—'),
-       note:'Weighted blend behind the Studio account RAG.'},
-      {name:'Studio RAG bands', value:'≥80 Green · ≥50 Amber · <50 Red',
-       note:'Applied to the blended score.'},
+       note:'Weighted blend behind the Studio account RAG: usage trend, real support tickets, communication (CSAT) and payment. NA signals drop from numerator AND denominator.'},
+      {name:'Studio RAG bands', value:'≥80 Green · ≥60 Amber · <60 Red',
+       note:'Applied to the blended score, everywhere — main dashboard and Overall tab.'},
       {name:'Studio VIN floor', value:'≤10 VINs in the last completed month → Red',
        note:'Hard override — fires regardless of the blend, including for accounts that never ran any VINs.'},
       {name:'Vini RoI bands', value:'≥3.0x Green · ≥1.5x Amber · below Red',
        note:'Applied to RoI over a rolling 30 days.'},
-      {name:'Vini overall weights', value:'RoI 7 · Communication 3 (payment excluded)',
-       note:'Amber RoI with no communication logged is forced to Red.'},
+      {name:'Vini overall weights', value:'RoI 40 · Communication 40 · Tickets 20 (payment excluded)',
+       note:'Amber RoI with no communication logged is forced to Red. NA signals drop from numerator and denominator, so an account with no CSAT scores on RoI + tickets alone.'},
       {name:'Communication thresholds', value:(typeof COMM_GREEN_THRESH!=='undefined'
         ? '≥'+COMM_GREEN_THRESH+' Green · ≥'+COMM_AMBER_THRESH+' Amber':'—'),
        note:'Score built from CSAT readings.'},
       {name:'Image pendency', value:'0 Green · ≤10 Amber · >10 Red',
-       note:'Studio delivery signal.'},
+       note:'Studio delivery signal. Shown in the why-it-is-red text and the briefing; it no longer feeds the RAG score, which now uses real support tickets.'},
       {name:'Comm ageing flags', value:'30 days → drifting · 45 days → past the mark',
        note:'Used by the red-account briefing, per the churn analysis.'},
     ]});
@@ -12846,8 +12848,13 @@ function studioSignals(eid,name){
     const tx=(typeof STUDIO_TIX!=='undefined')?STUDIO_TIX[eid]:null;
     if(tx&&Array.isArray(tx.rows)){
       out.tixTotal=tx.rows.length;
-      const cut=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-      out.tix30=tx.rows.filter(t=>t.c&&String(t.c)>=cut).length; }
+      /* 60 days, matching the briefing card. They used to disagree — 30 here and
+         60 there — so the same account could read "no tickets in 30 days" beside
+         a Support card headlined "1 ticket answered late". */
+      const cut=new Date(Date.now()-60*86400000).toISOString().slice(0,10);
+      out.tix30=tx.rows.filter(t=>t.c&&String(t.c)>=cut).length;
+      out.tixOpen=tx.rows.filter(t=>t.o).length;
+      out.tixLate=tx.rows.filter(t=>t.c&&String(t.c)>=cut&&t.fr==='Violated SLA').length; }
   }catch(_){}
   try{ out.overdue=Number((typeof PAY_OVERDUE!=='undefined')?PAY_OVERDUE[eid]:0)||0; }catch(_){}
   try{
@@ -12885,12 +12892,42 @@ function ragReason(h,row){
   if(row&&(row.eid||row.customer)){
     const sig=studioSignals(row.eid,row.customer||row.ent||row.rn);
     bits.push(commPhrase(sig));
-    if(sig.tix30>0) bits.push(sig.tix30+' ticket'+(sig.tix30===1?'':'s')+' in the last 30 days'
+    if(sig.tix30>0) bits.push(sig.tix30+' ticket'+(sig.tix30===1?'':'s')+' in the last 60 days'
+      +(sig.tixLate?', '+sig.tixLate+' answered late':'')
+      +(sig.tixOpen?', '+sig.tixOpen+' still open':'')
       +(sig.tixTotal>sig.tix30?' ('+sig.tixTotal+' all-time)':''));
-    else if(sig.tixTotal>0) bits.push('no tickets in 30 days ('+sig.tixTotal+' all-time)');
+    else if(sig.tixTotal>0) bits.push('no tickets in 60 days ('+sig.tixTotal+' all-time)');
     if(sig.overdue>0) bits.push(sig.overdue+' invoice'+(sig.overdue===1?'':'s')+' overdue');
   }
   return bits.join(' · ')+'.';
+}
+/* Payment RAG per enterprise, taken from the SAME column the main dashboard
+   scores rooftops on (S_COL.prag, computed by sync.ps1: 0 overdue + >=1 paid ->
+   Green, 1 -> Amber, 2+ -> Red). Derived here rather than recomputed from
+   PAY_OVERDUE so the Overall tab and the Studio tab cannot disagree. */
+let _pragByEid=null;
+function paymentRagFor(eid){
+  if(!_pragByEid){
+    _pragByEid={};
+    try{ (D.s_rows||[]).forEach(r=>{ const e=r[S_COL.eid], v=r[S_COL.prag];
+      if(e&&v&&v!=='NA'&&!_pragByEid[e]) _pragByEid[e]=v; }); }catch(_){ }
+  }
+  return _pragByEid[eid]||'NA';
+}
+/* Real support tickets — worst-of open-ticket age vs SLA, via the main
+   dashboard's own roll-up. STUDIO_TIX / VINI_TIX are keyed by enterprise. */
+function ticketRagFor(eid,product){
+  try{
+    if(typeof aggregateTicketsForEids!=='function'||typeof computeTicketRAG!=='function') return 'NA';
+    const dict=product==='Vini'
+      ? (typeof VINI_TIX!=='undefined'?VINI_TIX:{})
+      : (typeof STUDIO_TIX!=='undefined'?STUDIO_TIX:{});
+    return computeTicketRAG(aggregateTicketsForEids([eid],dict))||'NA';
+  }catch(_){ return 'NA'; }
+}
+function commRagFor(eid,name){
+  try{ return (typeof csatRagInRange==='function'?csatRagInRange(eid,name):'NA')||'NA'; }
+  catch(_){ return 'NA'; }
 }
 const _ragMemo={};
 /* ---- Vini health -----------------------------------------------------------
@@ -12956,20 +12993,27 @@ function viniAccountRag(eid){
   const roi=mrr>0?e.av/mrr:0;
   let comm='NA';
   try{ comm=scoreRag(csatRagCountsForInRange(eid,e.en),COMM_GREEN_THRESH,COMM_AMBER_THRESH,COMM_WEIGHTS); }catch(_){}
-  let rag='NA';
-  try{ rag=(typeof viniOverallRag==='function')?viniOverallRag(roi,comm):'NA'; }catch(_){}
   let roiRag='NA';
   try{ roiRag=(typeof roiMtdRag==='function')?roiMtdRag(roi):'NA'; }catch(_){}
-  /* Same 7/3 blend, surfaced as a number so the Health column has something to
-     show for Vini instead of a dash. */
+  const tixRag=ticketRagFor(eid,'Vini');
+  /* Vini weights (user 2026-08-19): RoI 40 · Communication 40 · Tickets 20.
+     This replaces the old RoI 7 / comm 3 split — communication is now weighted
+     equally with return, rather than at roughly a third of it. Payment stays
+     excluded for Vini, as before.
+     NA signals drop from numerator AND denominator, so an account with no CSAT
+     reading is scored on RoI and tickets alone (effectively 67/33). */
   const _v=x=>x==='Green'?100:x==='Amber'?60:x==='Red'?20:null;
+  const VW={roi:40,comm:40,ticket:20};
+  const vparts={roi:roiRag,comm:comm,ticket:tixRag};
   let sc=null; { let t=0,w=0;
-    const rv=_v(roiRag); if(rv!=null){t+=rv*7;w+=7;}
-    const cv=_v(comm);   if(cv!=null){t+=cv*3;w+=3;}
+    for(const k in VW){ const v=_v(vparts[k]); if(v==null)continue; t+=v*VW[k]; w+=VW[k]; }
     sc=w?t/w:null; }
+  /* Keep the override that a merely-OK RoI with no comms is Red. */
+  let rag = sc==null?'NA':(sc>=80?'Green':sc>=60?'Amber':'Red');
+  if(roiRag==='Amber'&&(comm==null||comm==='NA')) rag='Red';
   return (_viniRagMemo[eid]={rag,trend:null,lastVins:null,ws:null,pen:0,score:sc,
     redRt:e.redRt.size,rt:e.rt.size,agents:e.agents,redAgents:e.redAgents,
-    roi,roiRag,comm,vini:true,agentRows:e.rows});
+    roi,roiRag,comm,tixRag,vini:true,agentRows:e.rows});
 }
 function accountRag(eid,productLine){
   if(productLine==='Vini')return viniAccountRag(eid);
@@ -12987,7 +13031,16 @@ function accountRag(eid,productLine){
     const trend=anyUsage?usageTrend(series):null;
     /* repo applies this override unconditionally — an account doing <=10 VINs in
        the last completed month is critically low, including one that never ran any */
-    const parts={usage:anyUsage?usageTrendRag(trend):'NA',payment:'NA',comm:'NA',ticket:pendencyRag(pen,true)};
+    /* All four signals now, per user 2026-08-19. The port inherited payment:'NA'
+       and comm:'NA' from the standalone Studio dashboard, which had neither feed;
+       both exist here. `ticket` is now REAL support tickets rather than image
+       pendency — pendency stays visible in the why-it-is-red text and the
+       briefing, it just no longer stands in for the ticket signal. */
+    const _en=(rows[0]&&rows[0].en)||'';
+    const parts={usage:anyUsage?usageTrendRag(trend):'NA',
+                 payment:paymentRagFor(eid),
+                 comm:commRagFor(eid,_en),
+                 ticket:ticketRagFor(eid,'Studio')};
     const score=blendScore(parts);
     /* rooftop-level RAG: the same formula applied to each rooftop on its own, so a
        mostly-healthy enterprise still shows how many of its rooftops are dead. */
@@ -14221,6 +14274,20 @@ window.addEventListener('scroll',()=>{freeze.classList.toggle('stuck',freeze.get
    CSM's own machine (per-browser, not shared) and the panel says which mode is
    live. A local copy is kept either way, so a failed request never loses typing. */
 const RED_REVIEW_KEY='csm_red_reviews_v1';
+/* Reviews are read by an India-based team, so timestamps render in IST rather
+   than the UTC the database stores. Stored values stay UTC — only display and
+   the CSV are converted. */
+function istStamp(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(isNaN(d)) return String(iso);
+  const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',
+    day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(d)
+    .reduce((m,x)=>(m[x.type]=x.value,m),{});
+  return p.year+'-'+p.month+'-'+p.day+' '+p.hour+':'+p.minute+' IST';
+}
+/* The row I created while verifying the database connection is not a review. */
+const isTestReview=r=>!r||String(r.eid||'')==='__conn_test__';
 let REVIEW_STORE='local';        // 'rds' once the API reports it is configured
 let REVIEW_REMOTE={};            // eid|product -> record, loaded from the API
 function reviewKey(r){ return r.eid+'|'+r.product; }
@@ -14261,7 +14328,9 @@ function redReviewsLocal(){
 }
 /* Server rows win where both exist — they are the shared truth. */
 function redReviewsAll(){
-  return REVIEW_STORE==='rds' ? Object.assign({},redReviewsLocal(),REVIEW_REMOTE) : redReviewsLocal();
+  const all=REVIEW_STORE==='rds' ? Object.assign({},redReviewsLocal(),REVIEW_REMOTE) : redReviewsLocal();
+  for(const k in all) if(isTestReview(all[k])) delete all[k];
+  return all;
 }
 /* Always keep a local copy: if the POST fails the CSM's typing survives. */
 function redReviewSaveLocal(rec){
@@ -14531,10 +14600,13 @@ function openRedReview(x){
     (prior.issues||[]).filter(v=>suggestions.indexOf(v)<0));
   const actions=multiInput('What was done / will be done…',prior.actions||[]);
 
+  /* No silent default: a pre-selected RAG gets submitted unread, and an earlier
+     entry saved with a blank sentiment showed this is easy to get wrong. The CSM
+     has to choose. */
   const sentiment=el('select',{},
-    ['Green','Amber','Red'].map(v=>{
-      const o=el('option',{value:v},v); if((prior.sentiment||'')===v)o.selected=true; return o;}));
-  if(!prior.sentiment) sentiment.value='Red';
+    [['','Select…'],['Green','Green'],['Amber','Amber'],['Red','Red']].map(([v,lbl])=>{
+      const o=el('option',{value:v},lbl); if((prior.sentiment||'')===v)o.selected=true; return o;}));
+  if(!prior.sentiment) sentiment.value='';
   const csmName=el('input',{type:'text',placeholder:'CSM name'});
   csmName.value=prior.csm||x.csmDisp||'';
 
@@ -14553,6 +14625,7 @@ function openRedReview(x){
   const submit=()=>{
     const issues=[...picked].concat(extraIssues.get());
     if(!csmName.value.trim()){ err.textContent='CSM name is required.'; return; }
+    if(!sentiment.value){ err.textContent='Please choose a CSM sentiment (Green / Amber / Red).'; return; }
     if(!issues.length){ err.textContent='Select or add at least one ongoing issue.'; return; }
     if(!churnYes.checked&&!churnNo.checked){ err.textContent='Please answer whether this can lead to churn.'; return; }
     if(churnYes.checked&&!churnDate.value){ err.textContent='A churn effective date is required when the answer is Yes.'; return; }
@@ -14658,7 +14731,7 @@ function openReviewsWindow(){
   closeReviewsWindow();
   const rows=Object.values(redReviewsAll())
     .sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
-  const fmt=t=>t?String(t).replace('T',' ').slice(0,16):'—';
+  const fmt=t=>t?istStamp(t):'—';
   const pill=v=>el('span',{class:'pill '+(v==='Green'?'g':v==='Amber'?'w':v==='Red'?'r':'')},v||'—');
 
   const openRows={};
@@ -14718,13 +14791,16 @@ function closeReviewsWindow(){ const m=document.getElementById('ssw-modal'); if(
 
 /* CSV of everything captured on this machine — the hand-off until there is an API. */
 function exportRedReviews(){
-  const all=Object.values(redReviewsAll());
-  if(!all.length){ alert('No reviews saved on this machine yet.'); return; }
+  const all=Object.values(redReviewsAll()).filter(r=>!isTestReview(r));
+  if(!all.length){ alert('No reviews logged yet.'); return; }
   const cols=['savedAt','account','eid','product','segment','region','arr','csm',
-              'sentiment','dashboardRag','issues','actions','canChurn','churnDate'];
+              'sentiment','dashboardRag','issues','actions','canChurn','churnDate','revision'];
   const esc=v=>{ const t=Array.isArray(v)?v.join(' | '):String(v==null?'':v);
     return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t; };
-  const csv=[cols.join(',')].concat(all.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n');
+  /* savedAt exported in IST; revision included so a re-submission is visible. */
+  const csv=[cols.join(',')].concat(all.map(r=>cols.map(c=>
+    esc(c==='savedAt'?istStamp(r.savedAt):(c==='revision'?(redLogFor(r.eid,r.product).length||1):r[c]))
+  ).join(','))).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='red-account-reviews.csv'; a.click();
