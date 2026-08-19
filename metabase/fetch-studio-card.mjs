@@ -179,13 +179,24 @@ const rows = cardStudio.map(r => {
     u_mtd: num(r.mtd_vins),
     arr: Math.round(arr * 100) / 100, mrr: Math.round(arr / 12 * 100) / 100,
     carr: num(r.contracted_arr),
+    // Returned by card 12114, whose WHERE clause is etd.stage IN ('Live') — so
+    // the product database itself confirms this rooftop is live today.
+    mbLive: true,
   };
 }).filter(r => r.rid);
 
 // Union: Live/Future-Churn accounts present in the ARR sheet but MISSING from
-// card 12114 (billing-only rooftops the usage registry doesn't have). Add each
-// as its own row keyed by eid so no live account disappears from the view. They
-// carry ARR/MRR but no VINs/CARR (card has none for them).
+// card 12114. Two very different things land here and the data cannot tell them
+// apart on its own:
+//   (a) billing-only rooftops the usage registry genuinely does not carry, and
+//   (b) accounts that have actually CHURNED, where the hand-maintained ARR sheet
+//       simply has not been updated yet.
+// Chapman Chevrolet was case (b): still "Live" on the sheet, already gone from
+// the product database, and shown as churned in the admin tool — yet it was
+// being added back here and counted as a live rooftop.
+// They are still added, so nothing silently disappears, but tagged mbLive:false
+// so the dashboard can separate "the product DB says live" from "only the
+// spreadsheet says live".
 const cardEidSet = new Set(cardStudio.map(r => S(r.enterprise_id).trim()));
 let added = 0;
 for (const eid of Object.keys(arrRecByEid)) {
@@ -197,10 +208,11 @@ for (const eid of Object.keys(arrRecByEid)) {
     ws: 0, ws_link: '', pen: 0,
     u_jan: 0, u_feb: 0, u_mar: 0, u_apr: 0, u_may: 0, u_jun: 0, u_jul: 0, u_aug: 0, u_mtd: 0,
     arr: Math.round(a.arr * 100) / 100, mrr: Math.round(a.arr / 12 * 100) / 100, carr: 0,
+    mbLive: false,
   });
   totArr += a.arr; added++;
 }
-console.error(`Added ${added} ARR-sheet Live/Future-Churn accounts missing from card 12114.`);
+console.error(`Added ${added} ARR-sheet Live/Future-Churn accounts missing from card 12114 (tagged mbLive:false).`);
 
 const out = {
   rows,

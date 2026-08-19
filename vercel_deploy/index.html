@@ -12631,6 +12631,7 @@ const regionOfOb=r=>r.region==='AMER'?'AMER':'APAC/EMEA';
 /* ================= state ================= */
 let OB=[],SC=[],SNAP=[],ARR=[],CHURN=[],VINI=[],EXEC=null,SPROJ=[],META={},ARRMETA={},CHURNMETA={};
 let SC_BY_EID={},VINI_BY_EID={},OB_POC_BY_EID={};
+let SC_ARRONLY=[];   // Studio rooftops the ARR sheet calls Live but Metabase does not
 /* Filters are MULTI-SELECT: each is an array of chosen values; [] means "All". */
 const state={view:'overall',product:[],region:[],seg:[],poc:[],ragFilter:'All',csDetail:'larr',obDetail:'live',sort:{},detailCsm:'',detailQ:''};
 const inSel=(sel,v)=>!sel.length||sel.includes(v);
@@ -12654,6 +12655,19 @@ async function load(){
       fetch('./sales_proj.json').then(r=>r.ok?r.json():{rows:[]}).catch(()=>({rows:[]})),
     ]);
     OB=ob.rows||[]; META=ob; SC=sc.rows||[]; SNAP=(snap&&snap.snapshots)||[];
+    /* Metabase is the single authority on whether a Studio account is live.
+       card 12114 filters on etd.stage IN ('Live'), so anything it returns is
+       live in the product database right now. fetch-studio-card.mjs also adds
+       back accounts the hand-maintained ARR sheet still calls Live but the card
+       omits, tagged mbLive:false — that set mixes genuine billing-only rooftops
+       with accounts that have actually churned and were never updated on the
+       sheet (Chapman Chevrolet was one: churned in the admin tool, gone from
+       Metabase, still "Live" on the sheet, still counted here).
+       Those are held aside rather than shown, so the dashboard's live book is
+       exactly what Metabase says is live. Feeds predating the mbLive tag have
+       no false values, so they pass through untouched. */
+    SC_ARRONLY=SC.filter(r=>r.mbLive===false);
+    SC=SC.filter(r=>r.mbLive!==false);
     ARR=arr.rows||[]; ARRMETA=arr; CHURN=ch.rows||[]; CHURNMETA=ch;
     VINI=(vc&&vc.grain)||[]; EXEC=ex||null; SPROJ=(sp&&sp.rows)||[];
     SC_BY_EID={}; for(const r of SC){ if(!r.eid)continue; (SC_BY_EID[r.eid]=SC_BY_EID[r.eid]||[]).push(r); }
@@ -12746,7 +12760,21 @@ const churnF=()=>CHURN.filter(r=>prodOk(r)&&
    Churn MTD = churn tracker (gid 1421999984), Category "Churn", current month,
                with "Attempting Revival" rows already excluded by the fetch script.
    New Live MTD = OB sheet Live rooftops whose Live Month is the current month. */
-const csLive=a=>a.filter(r=>r.stage==='Live');
+/* "Live" on the ARR sheet is not sufficient on its own. That sheet is maintained
+   by hand and lags real churn: Chapman Chevrolet was still marked Live there
+   while Metabase (etd.stage IN ('Live')) had already dropped it and the admin
+   tool showed it churned. 61 Studio enterprises were in that state, ~$593K.
+   studio_card IS the Metabase live feed and refreshes ~6-hourly, so a Studio
+   enterprise it no longer returns is not counted as live. Vini is absent from
+   that feed by design, so it is exempt — applying this to Vini would empty its
+   book entirely. Kept pure (no shared mutable state) because csLive runs from
+   more than one place. */
+const _mbStudioLive = eid => !!(typeof SC_BY_EID!=='undefined' && SC_BY_EID[eid] && SC_BY_EID[eid].length);
+const _liveOk = r => r.stage==='Live' && (r.productLine!=='Studio' || _mbStudioLive(r.eid));
+const csLive=a=>a.filter(_liveOk);
+/* The rows the cross-check removes — surfaced, not silently dropped, because
+   they are a signal that the ARR sheet needs correcting at source. */
+const csLiveDropped=a=>a.filter(r=>r.stage==='Live'&&r.productLine==='Studio'&&!_mbStudioLive(r.eid));
 const obIn=o=>o.filter(r=>r.stage==='In-OB');
 const newLiveMTD=o=>o.filter(r=>r.stage==='Live'&&parseMonth(r.liveMonth)===MTD);
 
@@ -13902,6 +13930,14 @@ function renderOverall(a,o,m,c){
     })(),
 
     panel('How these numbers are calculated','',
+      (()=>{const dr=csLiveDropped(a); if(!dr.length) return null;
+        return el('p',{class:'method',style:'margin-bottom:10px'},
+          el('b',{},num(dr.length)+' account'+(dr.length===1?'':'s')
+            +' excluded ('+moneyK(sum(dr,x=>x.arr))+'): '),
+          'marked Live on the ARR sheet but no longer returned as live by the product '
+          +'database (Metabase card 12114). The sheet lags real churn — these need '
+          +'correcting at source. Examples: '
+          +dr.slice(0,4).map(x=>x.ent||x.customer).filter(Boolean).join(', ')+'.');})(),
       el('div',{class:'method',html:
         '<b>Business Number</b> — CARR and LARR come live from the <b>Executive Report</b> API '
         +'(<code>/api/metrics</code>, same figures as executive-report.spyne.ai). LARR is a monthly walk: '

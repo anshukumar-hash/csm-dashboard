@@ -1045,9 +1045,21 @@ $studioManualSeg = @{
 
 $sRows = New-Object System.Collections.Generic.List[object]
 $idx = @{}; for ($i=0; $i -lt $sStudioSchema.Count; $i++) { $idx[$sStudioSchema[$i]] = $i }
+$sSkippedNotLive = 0
 foreach ($row in $studioCardRows) {
     $rid = [string]$row.rid
     if (-not $rid) { continue }
+
+    # Metabase is the authority on Studio liveness. fetch-studio-card.mjs tags
+    # every rooftop card 12114 returned (stage IN 'Live') as mbLive:true, and
+    # tags mbLive:false on the accounts it adds back purely because the
+    # hand-maintained ARR sheet still calls them Live. That back-filled set mixes
+    # real billing-only rooftops with accounts that have already churned and were
+    # never corrected on the sheet -- Chapman Chevrolet was counted live here for
+    # exactly that reason. Skip them so the dashboard's live book matches the
+    # product database. Feeds written before the tag existed have no mbLive
+    # property and pass through unchanged.
+    if ($row.PSObject.Properties['mbLive'] -and $row.mbLive -eq $false) { $sSkippedNotLive++; continue }
 
     # ARR + MRR (= ARR/12) are pre-computed per rooftop in studio_card.json:
     # each enterprise's ARR (ARR sheet, Studio + Live/Future-Churn) split equally
@@ -1120,6 +1132,7 @@ foreach ($row in $studioCardRows) {
     $sRows.Add($r)
 }
 Write-Host "  Studio: built $($sRows.Count) s_rows from studio_card.json (MRR = ARR/12)"
+Write-Host "  Studio: skipped $sSkippedNotLive rooftop(s) not live in Metabase (ARR-sheet-only)"
 
 # Guard: never overwrite Studio data with an empty/near-empty fetch. gviz can
 # hand back an empty table even after Fetch-Gviz's retries (seen 2026-06-22),
