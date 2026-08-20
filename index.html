@@ -1317,17 +1317,36 @@
 
 
 #view-overall .ssw-box {background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 40px rgba(11,11,11,.28);
-  width:100%;max-width:1080px;padding:18px 20px 20px}
-#view-overall .ssw-list {display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
-#view-overall .ssw-item {border:1px solid var(--border);border-radius:9px;overflow:hidden}
-#view-overall .ssw-row {display:flex;gap:12px;align-items:center;padding:9px 12px;cursor:pointer;background:var(--surface-2)}
+  width:100%;max-width:1080px;padding:18px 20px 20px;position:relative}
+/* The list is a flex column with a capped height. Without flex-shrink:0 on the
+   items, a long review list SQUASHES every row instead of scrolling — and with
+   overflow:hidden on .ssw-item that clipped each account mid-line. Items must
+   keep their natural height and let the container scroll. */
+#view-overall .ssw-list {display:flex;flex-direction:column;gap:8px;max-height:66vh;overflow-y:auto;
+  overscroll-behavior:contain;scrollbar-gutter:stable;padding:2px 6px 2px 2px;
+  border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+#view-overall .ssw-item {border:1px solid var(--border);border-radius:9px;overflow:hidden;flex:0 0 auto}
+#view-overall .ssw-list::-webkit-scrollbar {width:10px}
+#view-overall .ssw-list::-webkit-scrollbar-thumb {background:var(--border);border-radius:6px}
+#view-overall .ssw-list::-webkit-scrollbar-thumb:hover {background:var(--muted)}
+/* Back-to-top affordance — appears once the list is scrolled. */
+#view-overall .ssw-top {position:absolute;right:30px;bottom:28px;z-index:2;
+  border:1px solid var(--border);background:var(--surface);color:var(--ink-2);
+  border-radius:999px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;
+  box-shadow:0 3px 12px rgba(11,11,11,.18);opacity:0;pointer-events:none;transition:opacity .15s}
+#view-overall .ssw-top.on {opacity:1;pointer-events:auto}
+#view-overall .ssw-top:hover {background:var(--grid)}
+#view-overall .ssw-count {font-size:11.5px;color:var(--muted);margin:7px 2px 0}
+#view-overall .ssw-row {display:flex;gap:14px;align-items:flex-start;padding:9px 13px;cursor:pointer;background:var(--surface-2)}
 #view-overall .ssw-row:hover {background:var(--grid)}
 #view-overall .ssw-main {min-width:0;flex:1}
-#view-overall .ssw-acct {font-weight:650;font-size:13.5px}
-#view-overall .ssw-meta {font-size:11.5px;color:var(--muted)}
-#view-overall .ssw-side {display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+#view-overall .ssw-acct {font-weight:650;font-size:13.5px;line-height:1.35}
+#view-overall .ssw-meta {font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:2px}
+#view-overall .ssw-side {display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;
+  flex:0 0 auto;max-width:52%;row-gap:5px}
 #view-overall .ssw-when {font-size:11.5px;color:var(--muted)}
-#view-overall .ssw-detail {padding:8px 12px;font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
+#view-overall .ssw-detail {padding:7px 13px;font-size:12px;color:var(--ink-2);display:flex;flex-direction:column;gap:2px;line-height:1.45}
+#view-overall .ssw-detail b {color:var(--muted);font-weight:600}
 #view-overall .ssw-hist {border-top:1px dashed var(--border);padding:8px 12px;background:var(--plane)}
 #view-overall .ssw-histh {font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:5px}
 #view-overall .ssw-histrow {display:flex;gap:9px;align-items:center;font-size:12px;padding:3px 0;flex-wrap:wrap}
@@ -13610,8 +13629,39 @@ function renderOverall(a,o,m,c){
   const nlSeg={};
   for(const r of o.filter(x=>S(x)&&x.stage==='Live'&&goLiveYM(x.goLive)===MTD)){
     const k=r.seg||'Unsegmented'; (nlSeg[k]=nlSeg[k]||{n:0,arr:0}); nlSeg[k].n++; nlSeg[k].arr+=r.arr||0; }
-  /* Partner / reseller additions are deliberately EXCLUDED from new live
-     (user, 2026-08-18) — new live is D2D go-lives from the OB tabs only. */
+  /* Partnership / reseller movement — sheet 1kvvDbn…, gid 135115178, column S
+     "Delta (M-1 to M)". Positive = new addition, negative = churn/contraction;
+     ARR = delta × 12 because the sheet's revenue columns are MONTHLY. sync.ps1
+     already resolves that column BY HEADER NAME (positional fallback = col S)
+     and splits it by the sheet's Product column (E), so the dashboard's Product
+     filter scopes it exactly like the D2D rows.
+     These were excluded from new live by decision (2026-08-18); the user asked
+     for them to be folded in (2026-08-20), so reseller additions now land in the
+     Reseller segment of the walk and reseller losses in Churn this month.
+     Guarded on RES.month === MTD so a stale blob from a prior month cannot leak
+     into the current month's numbers. */
+  const RES=(window.__DASHBOARD_DATA__&&window.__DASHBOARD_DATA__.reseller)||null;
+  const resOn=!!(RES&&RES.month===MTD);
+  /* Per-product keys are emitted by sync.ps1. The *count* split was added later
+     than the ARR split, so fall back to the total count only when both products
+     are in scope — better to show no count than a wrong one. */
+  const resScoped=(sk,vk,totKey)=>{
+    if(!resOn) return 0;
+    if(RES[sk]==null&&RES[vk]==null)
+      return (inSel(state.product,'Studio')&&inSel(state.product,'Vini'))?(Number(RES[totKey])||0):0;
+    return (inSel(state.product,'Studio')?(Number(RES[sk])||0):0)
+         + (inSel(state.product,'Vini')  ?(Number(RES[vk])||0):0);
+  };
+  const resNewArr   = resScoped('newArrStudio','newArrVini','newArr');
+  const resChurnArr = resScoped('churnArrStudio','churnArrVini','churnArr');
+  const resNewN     = resScoped('newNStudio','newNVini','newN');
+  const resChurnN   = resScoped('churnNStudio','churnNVini','churnN');
+  /* Reseller is a real segment here, so the Segment filter cuts it out. */
+  const resSegOn=inSel(state.seg,'Reseller');
+  if(resSegOn&&resNewArr>0){
+    (nlSeg.Reseller=nlSeg.Reseller||{n:0,arr:0});
+    nlSeg.Reseller.arr+=resNewArr; nlSeg.Reseller.n+=resNewN;
+  }
 
   const segOrder=['Ent','Mid','SMB','Reseller'];
   const segColor={Ent:'#2a78d6',Mid:'#1baf7a',SMB:'#eda100',Reseller:'#8b5cf6',Unsegmented:'#898781'};
@@ -13658,11 +13708,18 @@ function renderOverall(a,o,m,c){
           +'<b>Reseller is included</b> — use the Segment filter to cut it out. '
           +'Opening book = the Studio live-ARR pivot at the start of '+MONTH_NAMES[TODAY.getMonth()]+"'"+String(TODAY.getFullYear()).slice(2)
           +' ('+money(sum(walkRows,x=>x.base))+' incl. Reseller), rolled forward each month-end. '
-          +'<b>New live MTD = D2D go-lives only ('+money(sum(walkRows,x=>x.new))+')</b>, read from the OB tabs\' go-live '
-          +'date column using the Executive Report\'s own column positions. '
-          +'<b>Partnership / reseller additions are excluded by decision</b>'
-          +(partnerNewLive()?' ('+money(partnerNewLive())+' this month)':'')
-          +' — the Executive Report includes them, which is why its Studio new live reads '
+          +'<b>New live MTD ('+money(sum(walkRows,x=>x.new))+')</b> = D2D go-lives read from the OB tabs\' go-live '
+          +'date column using the Executive Report\'s own column positions'
+          +(resNewArr>0?', <b>plus partnership / reseller additions ('+money(resNewArr)+')</b>':'')
+          +'. '
+          +(resOn
+            ? 'Reseller movement comes from the Partnership sheet\'s <b>Delta (M-1 to M)</b> column: '
+              +'positive = new addition, negative = churn/contraction, ARR = delta × 12 '
+              +'(the sheet\'s revenue columns are monthly). It is split by that sheet\'s Product '
+              +'column, so the Product filter applies. This month: <b>+'+money(resNewArr)+'</b> added'
+              +(resChurnArr>0?', <b>-'+money(resChurnArr)+'</b> churned/contracted':'')+'. '
+            : 'Reseller delta for this month is not in the current sync, so only D2D go-lives are counted. ')
+          +'The Executive Report also includes partner additions; its Studio new live reads '
           +(EXEC&&EXEC.metrics?money(EXEC.metrics.newLive.studio):'higher')+'.';
   /* The segment bars follow whichever CS scorecard is selected: LARR shows the
      opening→running walk; every other mode shows that metric split by segment. */
@@ -13725,7 +13782,18 @@ function renderOverall(a,o,m,c){
      figure reconciles exactly to the exec API's csChurn.studio. Churn includes
      Contraction (existing rule). "Future churn" is everything dated NEXT month onward. */
   const chStudio=c.filter(r=>S(r));
-  const churnNow=chStudio.filter(r=>r.month===MTD);
+  /* The reseller sheet gives a monthly AGGREGATE, not itemised logos, so each
+     side is surfaced as ONE synthetic row — same treatment as the Churn
+     Intelligence tab (caPartnerRows) so the two tabs tie out. Keeping them as
+     real rows means the scorecard totals and the tables they open reconcile. */
+  const resRow=(label,arr,n)=>[{ent:label+(n>1?' ('+n+')':''),customer:label,
+    rn:label,seg:'Reseller',arr:arr,month:MTD,productLine:'Studio',region:'—',
+    csm:'—',goLive:'—',obPoc:'—',rsn:'Reseller delta (M-1 to M)',resSynthetic:true}];
+  const resChurnRow=(resSegOn&&resChurnArr>0)
+    ? resRow('Partnership churn · reseller',resChurnArr,resChurnN) : [];
+  const resNewRow=(resSegOn&&resNewArr>0)
+    ? resRow('Partnership additions · reseller',resNewArr,resNewN) : [];
+  const churnNow=chStudio.filter(r=>r.month===MTD).concat(resChurnRow);
   const futureChurn=chStudio.filter(r=>r.month&&r.month>=NEXT_M);
   const futureMonths=[...new Set(futureChurn.map(r=>r.month))].sort();
   const newLiveRows=o.filter(x=>S(x)&&x.stage==='Live'&&goLiveYM(x.goLive)===MTD);
@@ -13762,8 +13830,12 @@ function renderOverall(a,o,m,c){
   /* Reseller is out of scope everywhere on this tab, so it is stripped from every
      dataset the CS scorecards drill into — not just the LARR headline. */
   const exR=rows=>rows.filter(r=>(r.seg||'')!=='Reseller');
-  CS_DETAIL_CTX={sLive:exR(sLive),newLiveRows:exR(newLiveRows),
-    churnNow:exR(churnNow),futureChurn:exR(futureChurn)};
+  /* New live and Churn now INCLUDE partnership movement in their headline, so
+     their drill-downs must show it too — otherwise the table under the tile does
+     not add up to the tile. exR still strips per-account Reseller rows; the
+     aggregate goes back on afterwards as the single synthetic row. */
+  CS_DETAIL_CTX={sLive:exR(sLive),newLiveRows:exR(newLiveRows).concat(resNewRow),
+    churnNow:exR(churnNow).concat(resChurnRow),futureChurn:exR(futureChurn)};
   /* The Red card must agree with the table it opens, so it uses THIS dashboard's
      enterprise-level RAG (ex-Reseller) — not the CSM dashboard's rooftop-level count. */
   const redRows=CS_DETAIL_CTX.sLive.filter(r=>accountRag(r.eid,r.productLine).rag==='Red');
@@ -13888,46 +13960,9 @@ function renderOverall(a,o,m,c){
       segPanelFor(state.csDetail),
       csDetailPanel()),
 
-    /* ================= Partnership / Reseller book =================
-       Partner-level detail from the Partnership sheet (1kvvDbn…, gid 135115178),
-       embedded by sync.ps1 as `partner_rows`. This is DETAIL ONLY — it is
-       deliberately NOT wired into the LARR walk, because the sheet's partner ARR
-       ($1,790,962 over 44 rows) does not reconcile with the live-book pivot's
-       reseller figure ($1,822,161.72 group / $1,700,961.72 Studio). The walk
-       stays on the pivot; this table explains WHO the reseller book is.
-       Honours the Product and Region filters; segment does not apply. */
-    (()=>{
-      const pr=(window.__DASHBOARD_DATA__&&window.__DASHBOARD_DATA__.partner_rows)||null;
-      const all=(pr&&pr.rows)||[];
-      if(!all.length) return null;
-      /* Sheet regions read "EMEA/APAC"; the dashboard buckets to "APAC/EMEA". */
-      const pReg=x=>/amer/i.test(x.r||'')?'AMER':(x.r?'APAC/EMEA':'Unknown');
-      const rows=all.filter(x=>inSel(state.product,x.pr)&&inSel(state.region,pReg(x)));
-      const tot=sum(rows,x=>x.arr);
-      const byRag=k=>rows.filter(x=>(x.rag||'')===k);
-      const ragChip=(k,cls)=>el('span',{class:'pill '+cls,style:'margin-right:6px'},
-        k+' '+byRag(k).length+' · '+moneyK(sum(byRag(k),x=>x.arr)));
-      return el('div',{class:'bsec'},
-        sec('Partnership / Reseller book',num(rows.length)+' partners · '+moneyK(tot)),
-        panel('Partners',
-          'From the Partnership sheet — detail only, not part of the LARR walk (see note below).',
-          el('p',{},ragChip('Green','g'),ragChip('Amber','w'),ragChip('Red','r')),
-          sortableTable('partnerBook',
-            [['p','Partner'],['pr','Product'],['r','Region'],['bt','Billing'],
-             ['rag','RAG'],['sent','PAM sentiment'],['use','Usage MTD','num'],
-             ['a3','3-mo avg','num'],['tix','Tickets','num'],['arr','ARR','num']],
-            rows, x=>[x.p||'—', x.pr||'—', x.r||'—', x.bt||'—',
-              el('span',{class:'pill '+(x.rag==='Green'?'g':x.rag==='Amber'?'w':x.rag==='Red'?'r':'')},x.rag||'—'),
-              x.sent||'—', num(x.use), num(x.a3), x.tix||0, money(x.arr)],
-            ['Total','','','','','','','','',money(tot)]),
-          el('p',{class:'method',html:
-            '<b>Detail only — this table does not feed the LARR walk.</b> The Partnership sheet totals '
-            +'<b>'+money(sum(all,x=>x.arr))+'</b> across '+all.length+' partners, while the live-book pivot puts reseller at '
-            +'<b>$1,822,162</b> (group) / <b>$1,700,962</b> (Studio) — a gap of about '
-            +money(Math.abs(1822161.72-sum(all,x=>x.arr)))+'. The walk stays on the pivot so the Studio opening book still '
-            +'reconciles to $6,905,905.44. The sheet\'s own summary block is also stale (it reports 36 partners / $1,690,762 '
-            +'against '+all.length+' rows / '+money(sum(all,x=>x.arr))+'), so treat its totals with care.'})));
-    })(),
+    /* The Partnership / Reseller book table was removed on request. The
+       reseller ARR still flows through the LARR walk from the live-book pivot;
+       only the partner-level detail table is gone. */
 
     panel('How these numbers are calculated','',
       (()=>{const dr=csLiveDropped(a); if(!dr.length) return null;
@@ -14899,6 +14934,10 @@ function openReviewsWindow(){
 
   const openRows={};
   const tbl=el('div',{class:'ssw-list'});
+  /* Back-to-top: the list can run long once the team has reviewed a full month. */
+  const toTop=el('button',{type:'button',class:'ssw-top',title:'Back to top',
+    onclick:()=>tbl.scrollTo({top:0,behavior:'smooth'})},'\u2191 Top');
+  tbl.addEventListener('scroll',()=>toTop.classList.toggle('on',tbl.scrollTop>140));
   const draw=()=>{
     tbl.replaceChildren(...(rows.length?rows.map(r=>{
       const key=r.eid+'|'+r.product;
@@ -14944,7 +14983,11 @@ function openReviewsWindow(){
       el('button',{type:'button',class:'ssf-add',style:'margin-left:auto',
         onclick:exportRedReviews},'Export CSV'),
       el('button',{type:'button',class:'ssf-x',onclick:closeReviewsWindow},'×')),
-    tbl);
+    tbl,
+    el('p',{class:'ssw-count'},rows.length>6
+      ? 'Scroll for all '+num(rows.length)+' reviews — newest first.'
+      : 'Newest first.'),
+    toTop);
   const modal=el('div',{id:'ssw-modal',class:'ssf-modal',
     onclick:e=>{ if(e.target&&e.target.id==='ssw-modal') closeReviewsWindow(); }},box);
   document.addEventListener('keydown',function esc(e){

@@ -1,0 +1,101 @@
+name: Refresh OB / ARR / exec feeds (every 4h)
+
+# WHY THIS EXISTS
+# ---------------
+# ob_data.json, arr_sheet.json, exec_metrics.json, churn_mtd.json and
+# sales_proj.json were NOT refreshed by anything. The fetchers lived only in the
+# standalone studio-dashboard repo and were run by hand, so the dashboard served
+# whatever was last copied across. On 2026-08-20 that showed up as Vini "Live
+# this month" reading $131,940 against the sheet's $176,940 — a $45,000 gap made
+# up entirely of rooftops that went live on 19-20 Aug, after the last manual run.
+#
+# The fetchers need no secrets and no dependencies: plain Node built-ins reading
+# published Google Sheet CSV. So this job just runs them on a schedule.
+#
+# SAFETY: the row-count guard below refuses to commit a feed that came back
+# suspiciously small. A truncated Google response must leave the last good data
+# in place rather than silently zeroing the dashboard.
+
+on:
+  schedule:
+    - cron: '5 */4 * * *'   # every 4 hours, offset from aws-promote (:20) and aws-refresh (:35)
+  workflow_dispatch: {}
+
+concurrency:
+  group: ob-feeds
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch every feed
+        run: |
+          set -euo pipefail
+          node scripts/fetch-ob.mjs
+          node scripts/fetch-arr-sheet.mjs
+          node scripts/fetch-exec.mjs
+          node scripts/fetch-churn.mjs
+          node scripts/fetch-sales-proj.mjs
+
+      - name: Guard — refuse to commit a truncated feed
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          // Floors are set well below the real counts, so they catch a wipe or a
+          // truncated response without tripping on ordinary week-to-week movement.
+          const MIN = { 'ob_data.json': 800, 'arr_sheet.json': 400, 'sales_proj.json': 5 };
+          let bad = 0;
+          for (const [file, floor] of Object.entries(MIN)) {
+            const rows = (JSON.parse(fs.readFileSync(file, 'utf8')).rows || []).length;
+            const ok = rows >= floor;
+            console.log(`${ok ? 'ok  ' : 'FAIL'} ${file}: ${rows} rows (floor ${floor})`);
+            if (!ok) bad++;
+          }
+          for (const file of ['exec_metrics.json', 'churn_mtd.json']) {
+            const n = fs.statSync(file).size;
+            const ok = n > 200;
+            console.log(`${ok ? 'ok  ' : 'FAIL'} ${file}: ${n} bytes`);
+            if (!ok) bad++;
+          }
+          if (bad) {
+            console.error(`::error::${bad} feed(s) came back truncated — refusing to commit. Last good data is preserved.`);
+            process.exit(1);
+          }
+          JS
+
+      - name: Commit refreshed feeds
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ob_data.json arr_sheet.json exec_metrics.json churn_mtd.json sales_proj.json
+          if git diff --cached --quiet; then
+            echo "no feed changes"
+            exit 0
+          fi
+          git commit -m "Auto-refresh OB / ARR / exec feeds ($(date -u '+%Y-%m-%d %H:%M UTC')) [skip ci]"
+          git push
+          echo "feeds updated"
+
+      # The static site serves these JSON files, so Vercel needs a rebuild to pick
+      # them up. `secrets` is NOT available in a step-level `if:`, so the check has
+      # to happen inside the script.
+      - name: Ping the Vercel deploy hook
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${HOOK:-}" ]; then
+            echo "::warning::VERCEL_DEPLOY_HOOK not set — feeds are committed but Vercel will not rebuild until the next sync."
+            exit 0
+          fi
+          curl -sS -X POST "$HOOK" -o /dev/null -w 'vercel hook: %{http_code}\n'

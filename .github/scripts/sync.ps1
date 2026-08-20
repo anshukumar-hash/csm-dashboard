@@ -1763,20 +1763,27 @@ try {
     $resNew = 0.0; $resChurn = 0.0; $resNewN = 0; $resChurnN = 0
     $resNewStudio = 0.0; $resNewVini = 0.0   # Partner EXPANSION split by Product (col E) for per-product NRR
     $script:resChurnStudio = 0.0; $script:resChurnVini = 0.0   # Partner loss split by Product (col E) for per-product NRR
+    # Per-product ROW COUNTS. The ARR split already existed; the Overall tab also
+    # shows "N partners", and without a per-product count it could only show a
+    # figure when both products were in scope. Column E carries both 'Vini' and
+    # 'VINI', so the comparison is lowercased.
+    $resNewNStudio = 0; $resNewNVini = 0; $resChurnNStudio = 0; $resChurnNVini = 0
     for ($ri = 1; $ri -lt $resRecs.Count; $ri++) {   # row 0 = header; data from row 1
         $row = $resRecs[$ri]
         $partner = ([string]$row."c0").Trim(); if (-not $partner) { continue }   # skips blank-name 115,644 artifact
         $dRaw = [string]$row."c$resDeltaIdx"; if (-not $dRaw) { continue }
         $d = NA-Money $dRaw; if ($d -eq 0) { continue }
         $arr = $d * 12.0
+        $isVini = ((([string]$row."c4").Trim().ToLower()) -eq 'vini')
         if ($arr -gt 0) { $resNew += $arr; $resNewN++
-            if ((([string]$row."c4").Trim().ToLower()) -eq 'vini') { $resNewVini += $arr } else { $resNewStudio += $arr } }
+            if ($isVini) { $resNewVini += $arr; $resNewNVini++ } else { $resNewStudio += $arr; $resNewNStudio++ } }
         else {
             $resChurn += [math]::Abs($arr); $resChurnN++
-            if ((([string]$row."c4").Trim().ToLower()) -eq 'vini') { $script:resChurnVini += [math]::Abs($arr) } else { $script:resChurnStudio += [math]::Abs($arr) }
+            if ($isVini) { $script:resChurnVini += [math]::Abs($arr); $resChurnNVini++ }
+            else { $script:resChurnStudio += [math]::Abs($arr); $resChurnNStudio++ }
         }
     }
-    $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + ',"newArrStudio":' + ([string][math]::Round($resNewStudio)) + ',"newArrVini":' + ([string][math]::Round($resNewVini)) + ',"churnArrStudio":' + ([string][math]::Round($script:resChurnStudio)) + ',"churnArrVini":' + ([string][math]::Round($script:resChurnVini)) + '}'
+    $resellerJson = '{"month":' + (JsEscape $naCurYM) + ',"newArr":' + ([string][math]::Round($resNew)) + ',"churnArr":' + ([string][math]::Round($resChurn)) + ',"newN":' + $resNewN + ',"churnN":' + $resChurnN + ',"newArrStudio":' + ([string][math]::Round($resNewStudio)) + ',"newArrVini":' + ([string][math]::Round($resNewVini)) + ',"churnArrStudio":' + ([string][math]::Round($script:resChurnStudio)) + ',"churnArrVini":' + ([string][math]::Round($script:resChurnVini)) + ',"newNStudio":' + $resNewNStudio + ',"newNVini":' + $resNewNVini + ',"churnNStudio":' + $resChurnNStudio + ',"churnNVini":' + $resChurnNVini + '}'
     Write-Host "  reseller (all products, csv): new `$$([math]::Round($resNew)) ($resNewN) | churn `$$([math]::Round($resChurn)) ($resChurnN)"
 
     # ---- partner-level DETAIL rows -> `partner_rows` -----------------------
